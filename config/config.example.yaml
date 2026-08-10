@@ -1,7 +1,7 @@
 # rustdesk-server-starry configuration example.
 # Copy the required sections to config.yaml. An empty or invalid config.yaml
 # keeps the exact upstream rustdesk-server behavior.
-version: 1
+version: 2
 
 # The complete HBBS relay pool. Keep one relay server on each line.
 relay_servers:
@@ -17,6 +17,45 @@ secure_tcp:
   handshake_timeout_ms: 18000
   idle_timeout_ms: 30000
   max_frame_bytes: 65536
+
+# WSS signalling is opt-in. Clients may keep WebSocket disabled for normal
+# native P2P performance and enable it only in restricted enterprise networks.
+# This setting makes /ws/id support persistent registration; it does not force
+# any client to use WebSocket.
+websocket_signal:
+  enabled: true
+  registration_timeout_ms: 10000
+  keepalive_interval_ms: 12000
+  idle_timeout_ms: 45000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 10000
+  max_sessions_per_effective_ip: 512
+  registration_rate_per_minute: 300
+
+  # Forwarded client IP headers are trusted only from these proxy networks.
+  trusted_proxies:
+    - 127.0.0.1/32
+    - ::1/128
+
+  # Native RustDesk clients send no Origin and remain accepted. If an Origin
+  # header is present, it must exactly match one item in this list.
+  allowed_origins: []
+
+  # Every relay_servers entry must have exactly one certificate-verified WSS
+  # endpoint. The path must be exactly /ws/relay.
+  relay_health:
+    interval_seconds: 60
+    timeout_ms: 5000
+    success_threshold: 1
+    failure_threshold: 2
+    endpoints:
+      - relay: jp-relay-1.example.com:21117
+        url: wss://jp-relay-1.example.com/ws/relay
+      - relay: jp-relay-2.example.com:21117
+        url: wss://jp-relay-2.example.com/ws/relay
+      - relay: us-relay-1.example.com:21117
+        url: wss://us-relay-1.example.com/ws/relay
 
 mmdb:
   update_interval_hours: 168

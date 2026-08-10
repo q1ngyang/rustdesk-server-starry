@@ -195,13 +195,29 @@ jobs:
             _upstream/src/starry_config.rs \
             _upstream/src/secure_tcp.rs \
             _upstream/src/geo_relay.rs \
-            _upstream/src/geo_relay/rules.rs
+            _upstream/src/geo_relay/rules.rs \
+            _upstream/src/websocket_signal.rs \
+            _upstream/src/websocket_signal/session.rs \
+            _upstream/src/websocket_signal/routing.rs \
+            _upstream/src/websocket_signal/relay_health.rs \
+            _upstream/tests/mixed_relay.rs \
+            _upstream/tests/websocket_signal.rs
 
       - name: Run all library tests serially
         run: cargo test --manifest-path _upstream/Cargo.toml --locked --lib -j 1
 
       - name: Check all server binaries serially
         run: cargo check --manifest-path _upstream/Cargo.toml --locked --bins -j 1
+
+      - name: Exercise HBBS WebSocket registration and cross-transport signalling
+        run: >-
+          cargo test --manifest-path _upstream/Cargo.toml --locked
+          --test websocket_signal -j 1 -- --nocapture
+
+      - name: Lock the official mixed WebSocket and native Relay contract
+        run: >-
+          cargo test --manifest-path _upstream/Cargo.toml --locked
+          --test mixed_relay -j 1 -- --nocapture
 
   linux:
     name: Linux ${{ matrix.arch }} static binaries
@@ -527,7 +543,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#docker-compose-deployment
             org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
-            org.opencontainers.image.description=Official rustdesk-server with the Starry GEO Relay and Secure TCP overlay
+            org.opencontainers.image.description=Official rustdesk-server with Starry GEO Relay, Secure TCP, and opt-in WebSocket Signal
 
       - name: Publish GitHub release assets
         env:
@@ -539,7 +555,13 @@ jobs:
           cat > release-notes.md <<EOF
           Based on official rustdesk/rustdesk-server ${UPSTREAM_REF}.
 
-          Includes ordered GEO Relay routing and native HBBS Secure TCP compatibility.
+          Includes ordered GEO Relay routing, native HBBS Secure TCP compatibility,
+          and opt-in persistent WebSocket Signal for restricted enterprise networks.
+
+          patch-v1.1.0 keeps native/P2P signalling as the default. When a client
+          explicitly enables WebSocket, HBBS supports persistent WSS registration,
+          bounded session routing, mixed WSS/native Relay sessions, trusted-proxy
+          source handling, and certificate-verified /ws/relay health filtering.
 
           ## Docker Compose
 
@@ -554,7 +576,8 @@ jobs:
           Starry creates the empty functional configuration at
           \`data/starry/config.yaml\` and the documented template at
           \`data/starry/config.example.yaml\`. GEO, MMDB, Secure TCP, and
-          Relay priority settings belong in that YAML file, not in \`.env\`.
+          Relay priority and WebSocket Signal settings belong in that YAML file,
+          not in \`.env\`.
 
           Documentation: https://github.com/${GITHUB_REPOSITORY}
 
@@ -563,7 +586,8 @@ jobs:
           下载 \`compose.yaml\` 与 \`compose.env.example\`，将后者复制为
           \`.env\` 后执行上面的 Compose 命令。功能配置仍写入
           \`data/starry/config.yaml\`，不要把 GEO、MMDB、Secure TCP 或 Relay
-          规则放入 ENV 文件。
+          规则或 WebSocket Signal 设置放入 ENV 文件。patch-v1.1.0 默认仍走原生
+          信令/P2P；只有客户端显式开启 WebSocket 时才走 WSS 与 Relay。
 
           中文文档：https://github.com/${GITHUB_REPOSITORY}/blob/main/README.zh-CN.md
 

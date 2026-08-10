@@ -8,12 +8,21 @@
 [`scripts/apply_overlay.py`](scripts/apply_overlay.py)
 在固定锚点注入 Starry 模块。
 
-Starry 只增加两类能力：
+Starry 增加三类能力：
 
 - 按连接双方的国家、城市、ASN 和运营商信息选择 Relay，并严格按配置顺序故障切换。
 - 在原生 HBBS TCP `21116` 上提供 RustDesk 客户端兼容的 Secure TCP 握手与加密收发，解决 API 登录后仍无法完成信令交互的连接超时问题。
+- 为受限企业网络中的客户端提供按需持久 `/ws/id` WebSocket 信令，并支持 WSS/原生混合 Relay 与经过证书验证的 `/ws/relay` 健康过滤。
 
 这不是通过补充 `session_id` 字段规避问题。API 身份认证与 HBBS 信令连接是两个独立层；Starry 补齐的是登录后客户端所需的 HBBS Secure TCP 兼容能力。
+
+当前 overlay 版本为 **patch-v1.1.0**；完整新特性与升级摘要见
+[`RELEASE-NOTES-patch-v1.1.0.md`](RELEASE-NOTES-patch-v1.1.0.md)。
+
+当前开发状态：核心代码与核心自动化验收已完成，正式发布由仓库 Release 工作流
+门禁；GitHub Release 成功不等于生产环境已经上线。完整 TLS 反向代理、1,000
+session/30 分钟压力测试、真实客户端桌面控制和七个生产 Relay 验收仍待执行，详见
+[`PATCH-V1.1.0-WEBSOCKET-DEVELOPMENT-PLAN.md`](PATCH-V1.1.0-WEBSOCKET-DEVELOPMENT-PLAN.md)。
 
 > 这是非官方社区项目，与 RustDesk、MaxMind 或 MMDB 镜像提供方没有隶属关系。镜像不内置 GeoLite2 数据库；部署者应自行选择合法、可信的数据源并遵守相应许可证。
 
@@ -23,7 +32,9 @@ Starry 只增加两类能力：
 - 同目录自动创建 `config.example.yaml`，且已有文件永不覆盖。
 - 配置为空、YAML 无法解析或任一字段验证失败时，整份 Starry 配置不生效，HBBS 使用官方行为和官方命令行参数。
 - `secure_tcp.mode: off` 保留官方原生明文 TCP；`auto` 才启用兼容协商。
-- Secure TCP 仅注入原生 TCP `21116`；WebSocket/WSS `21118` 保持官方实现。
+- Secure TCP 仅注入原生 TCP `21116`，绝不会叠加到 WSS 上。
+- schema `version: 1` 继续兼容且 WebSocket Signal 默认关闭；`version: 2` 才允许经过严格校验的 `websocket_signal` 配置。
+- 客户端关闭 WebSocket 时继续走原生/P2P；只有该客户端显式开启时才走 WSS，任一端使用 WSS 的会话都只走 Relay。
 - 客户端发送合法的首个明文 Protobuf 帧时，`auto` 会兼容回退到明文；一旦客户端发送 Key Exchange，认证失败会立即关闭连接，不会不安全地降级。
 - 没有 Geo 规则命中、所需 MMDB 不可用或规则中没有在线 Relay 时，继续走官方 Relay 选择逻辑。
 
@@ -49,7 +60,7 @@ mkdir -p data
 docker compose --env-file .env -f compose.yaml up -d
 ```
 
-`.env` 只控制镜像标签、持久化目录、Compose 项目名、容器名和重启策略，不会注入 HBBS/HBBR。GEO、MMDB、Secure TCP 和 Relay 优先级始终由外部 YAML 管理。
+`.env` 只控制镜像标签、持久化目录、Compose 项目名、容器名和重启策略，不会注入 HBBS/HBBR。GEO、MMDB、Secure TCP、WebSocket Signal 和 Relay 优先级始终由外部 YAML 管理。
 
 示例使用 `network_mode: host`，面向 Linux Docker 主机，开放端口与官方版本一致。首次启动后会生成：
 
@@ -74,13 +85,15 @@ printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115
 
 客户端仍配置同一套 ID Server、API Server 和公钥。客户端的 Relay Server 应留空；静态客户端 Relay 地址会绕过 HBBS 的动态分配。
 
+日常使用时请关闭客户端的“使用 WebSocket”，以保留原生 P2P 优先级和速度；仅当该客户端所在网络无法通过原生信令时才开启。另一端可以继续使用原生模式，Starry 会选择同时满足双方传输条件的同一 Relay。
+
 ## 外部配置
 
 完整、可直接复制的说明见
 [`config/config.example.yaml`](config/config.example.yaml)。Relay 地址始终一行一个：
 
 ```yaml
-version: 1
+version: 2
 
 relay_servers:
   - jp-relay-1.example.com:21117
@@ -92,6 +105,31 @@ secure_tcp:
   handshake_timeout_ms: 18000
   idle_timeout_ms: 30000
   max_frame_bytes: 65536
+
+websocket_signal:
+  enabled: true
+  registration_timeout_ms: 10000
+  keepalive_interval_ms: 12000
+  idle_timeout_ms: 45000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 10000
+  max_sessions_per_effective_ip: 512
+  registration_rate_per_minute: 300
+  trusted_proxies: [127.0.0.1/32, "::1/128"]
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 60
+    timeout_ms: 5000
+    success_threshold: 1
+    failure_threshold: 2
+    endpoints:
+      - relay: jp-relay-1.example.com:21117
+        url: wss://jp-relay-1.example.com/ws/relay
+      - relay: jp-relay-2.example.com:21117
+        url: wss://jp-relay-2.example.com/ws/relay
+      - relay: us-relay-1.example.com:21117
+        url: wss://us-relay-1.example.com/ws/relay
 
 mmdb:
   update_interval_hours: 168
@@ -125,6 +163,48 @@ geo:
 相对 MMDB 路径以 HBBS 工作目录为基准。在 Compose 中工作目录为 `/root`，所以上例会保存到 `./data/mmdb/`。
 
 MMDB 下载先写临时文件，再校验最小体积、MaxMind 标记及数据库可读性，最后替换旧文件。下载或验证失败时保留上一份可用数据库。`force_update: true` 会在每个更新周期强制重新下载；`update_interval_hours: 0` 关闭周期更新。
+
+## 按需 WebSocket Signal
+
+`websocket_signal.enabled: true` 会让现有 HBBS WebSocket listener 支持持久、经过身份校验的信令注册，但不会替任何客户端自动打开 WebSocket。客户端可独立选择：
+
+- WebSocket 关闭：原生信令，优先 P2P，必要时走原生 Relay。
+- WebSocket 开启：WSS 信令与 WSS Relay，不再尝试 P2P。
+- 一端 WSS、一端原生：双方进入同一 HBBR 节点和同一 Relay UUID，WSS 端走 `/ws/relay`，原生端走 `21117`。
+
+每个 `relay_servers` 条目必须恰好对应一个 `relay_health.endpoints`。WSS 探测会正常执行 DNS、TCP、TLS 证书链/域名校验以及精确 `/ws/relay` WebSocket Upgrade；普通 HTTPS 200、ping 或跳过证书校验都不算健康。混合会话还要求同一节点同时出现在 HBBS 的原生在线 Relay 列表中。
+
+只有直接 TCP 来源属于 `trusted_proxies` 时才接受转发 IP 头。反向代理连接的唯一源端口只作为内部响应关联标识，不会被当成客户端 NAT 端口。原生 RustDesk 客户端不发送 Origin，可以直接接受；一旦存在 Origin，就必须与 `allowed_origins` 中某项完全一致。
+
+请在可信反向代理上终止 TLS，并保持两条官方路径不被改写：
+
+```nginx
+location = /ws/id {
+    proxy_pass http://127.0.0.1:21118;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 120s;
+}
+
+location = /ws/relay {
+    proxy_pass http://127.0.0.1:21119;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 120s;
+}
+```
+
+生产环境应通过主机防火墙限制只有反向代理网络能直连 `21118`。可通过仅限 loopback 的 `21115` 管理端口查看状态：
+
+```sh
+printf 'websocket-status\n' | nc -w 2 127.0.0.1 21115
+```
+
+输出只含聚合 session/计数器与各 Relay 的原生/WSS 健康状态，不包含完整 Peer ID、公钥、Token 或原始客户端 IP 列表。
 
 ## GEO 表达式
 
@@ -231,11 +311,13 @@ printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115
 
 ### 输入两个 IP，预览将分配的 Relay
 
-`test-geo`（简写 `tg`）接受两个字面 IP 地址，并按当前 MMDB、规则和 Relay 可达状态执行与真实信令相同的选择函数：
+`test-geo`（简写 `tg`）接受两个字面 IP 地址和可选传输要求，并按当前 MMDB、规则和 Relay 健康状态执行与真实信令相同的选择函数：
 
 ```text
-test-geo <IP_A> <IP_B>
+test-geo <IP_A> <IP_B> [native|wss|mixed]
 ```
+
+省略最后一个参数时保持 patch-v1.0.0 的 `native` 行为；`wss` 要求 `/ws/relay` 健康，`mixed` 同时要求 WSS 健康和同一节点的原生在线状态。
 
 第一个 IP 对应规则的 `client_a`，第二个对应 `client_b`。当规则使用默认的 `symmetric: true` 时，交换双方后也会尝试匹配；方向敏感规则应分别测试 `A B` 和 `B A`。请使用 HBBS 实际看到的客户端公网出口 IP，而不是客户端的 `192.168.x.x`、`10.x.x.x` 等内网地址；两个客户端位于同一公网 NAT 后时，两个参数应填写相同的公网 IP。
 
@@ -243,13 +325,13 @@ Compose 示例（请替换成两个客户端的真实公网 IP）：
 
 ```sh
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'test-geo 1.1.1.1 8.8.8.8\n' | nc -w 2 127.0.0.1 21115"
+  "printf 'test-geo 1.1.1.1 8.8.8.8 mixed\n' | nc -w 2 127.0.0.1 21115"
 ```
 
 Linux 二进制或 DEB 示例：
 
 ```sh
-printf 'test-geo 1.1.1.1 8.8.8.8\n' | nc -w 2 127.0.0.1 21115
+printf 'test-geo 1.1.1.1 8.8.8.8 mixed\n' | nc -w 2 127.0.0.1 21115
 ```
 
 Windows 本地二进制可以在 PowerShell 中先定义一个本机命令函数：
@@ -279,7 +361,7 @@ function Invoke-StarryHbbsCommand {
 }
 
 Invoke-StarryHbbsCommand 'relay-servers'
-Invoke-StarryHbbsCommand 'test-geo 1.1.1.1 8.8.8.8'
+Invoke-StarryHbbsCommand 'test-geo 1.1.1.1 8.8.8.8 mixed'
 ```
 
 正常选择结果带有双引号，例如：

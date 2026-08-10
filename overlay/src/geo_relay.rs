@@ -1,6 +1,9 @@
 mod rules;
 
-use crate::starry_config::{self, DatabaseConfig, GeoConfig, MmdbConfig};
+use crate::{
+    starry_config::{self, DatabaseConfig, GeoConfig, MmdbConfig},
+    websocket_signal::RelayRequirement,
+};
 use hbb_common::log;
 use maxminddb::{geoip2, Reader};
 use once_cell::sync::Lazy;
@@ -177,19 +180,25 @@ pub fn reload() -> String {
     }
 }
 
-pub fn select_relay(pa: IpAddr, pb: IpAddr, online_relays: &[String]) -> Option<String> {
+pub fn select_relay(
+    pa: IpAddr,
+    pb: IpAddr,
+    eligible_relays: &[String],
+    requirement: RelayRequirement,
+) -> Option<String> {
     let state = STATE.read().ok()?;
-    if !state.enabled || online_relays.is_empty() {
+    if !state.enabled || eligible_relays.is_empty() {
         return None;
     }
 
     let facts_a = state.readers.lookup(pa);
     let facts_b = state.readers.lookup(pb);
-    let selection = state.rules.select(&facts_a, &facts_b, online_relays)?;
+    let selection = state.rules.select(&facts_a, &facts_b, eligible_relays)?;
     log::debug!(
-        "Geo relay selected {} for {pa}/{pb} by rule '{}' (a={facts_a:?}, b={facts_b:?})",
+        "Geo relay selected {} by rule '{}' for requirement {:?}",
         selection.relay,
-        selection.rule_name
+        selection.rule_name,
+        requirement
     );
     Some(selection.relay)
 }
@@ -347,9 +356,10 @@ fn next_update_at(config: &MmdbConfig) -> Option<Instant> {
 fn update_and_reload(config: &MmdbConfig, force: bool) {
     let (updated, errors) = update_all(config, force);
     if updated > 0 {
+        let reload_status = reload();
         log::info!(
             "Starry MMDB update finished: {updated} database(s); {}",
-            reload()
+            reload_status
         );
     } else if errors.is_empty() {
         log::debug!("Starry MMDB update check finished: no changes");

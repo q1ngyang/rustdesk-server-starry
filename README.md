@@ -9,14 +9,26 @@ source. Each build fetches an exact official revision, then
 [`scripts/apply_overlay.py`](scripts/apply_overlay.py) injects the Starry
 modules at fixed, verified anchors.
 
-Starry adds only two feature groups:
+Starry adds three feature groups:
 
 - Select a Relay from the country, city, ASN, and ISP information of both endpoints, with strict ordered failover.
 - Provide a RustDesk-client-compatible Secure TCP handshake and encrypted transport on native HBBS TCP `21116`, fixing the signalling timeout that can occur after a successful API login.
+- Provide opt-in persistent WebSocket signalling on `/ws/id` for clients in restricted enterprise networks, including mixed WSS/native Relay routing and certificate-verified `/ws/relay` health filtering.
 
 This is not a workaround that merely adds a `session_id` field. API
 authentication and the HBBS signalling connection are separate layers. Starry
 adds the HBBS Secure TCP compatibility required by an authenticated client.
+
+Current overlay version: **patch-v1.1.0**. See
+[`RELEASE-NOTES-patch-v1.1.0.md`](RELEASE-NOTES-patch-v1.1.0.md) for the complete
+new-feature and upgrade summary.
+
+Development status: core code and core automated acceptance are complete.
+Publication is gated by the repository release workflow; a successful GitHub
+Release is not evidence of a production rollout. Full TLS reverse-proxy
+coverage, the 1,000-session/30-minute stress gate, real-client desktop control,
+and all seven production Relay checks remain pending; see
+[`PATCH-V1.1.0-WEBSOCKET-DEVELOPMENT-PLAN.md`](PATCH-V1.1.0-WEBSOCKET-DEVELOPMENT-PLAN.md).
 
 > This is an unofficial community project and is not affiliated with RustDesk,
 > MaxMind, or any MMDB mirror provider. The image does not contain a GeoLite2
@@ -29,7 +41,9 @@ adds the HBBS Secure TCP compatibility required by an authenticated client.
 - `config.example.yaml` is created beside it and an existing file is never overwritten.
 - If the configuration is empty, cannot be parsed as YAML, or fails any field validation, the entire Starry configuration is disabled and HBBS uses the official behaviour and command-line arguments.
 - `secure_tcp.mode: off` preserves the official native plaintext TCP transport. `auto` enables compatible negotiation.
-- Secure TCP is injected only into native TCP `21116`. WebSocket/WSS `21118` keeps the official implementation.
+- Secure TCP is injected only into native TCP `21116`; it is never layered over WSS.
+- Schema `version: 1` remains compatible and keeps WebSocket Signal disabled. Schema `version: 2` enables the new validated `websocket_signal` section.
+- A client with WebSocket disabled keeps the native/P2P path. WebSocket is used only when that client explicitly enables it, and any session with a WSS endpoint is Relay-only.
 - In `auto` mode, a valid plaintext first Protobuf frame falls back compatibly to plaintext. Once a client sends a Key Exchange, an authentication failure closes the connection and never causes an insecure downgrade.
 - If no GEO rule matches, a required MMDB is unavailable, or no Relay in the matching rules is online, selection continues through the official Relay logic.
 
@@ -58,7 +72,7 @@ docker compose --env-file .env -f compose.yaml up -d
 
 The `.env` file controls only Compose interpolation: the image tag, persistent
 directory, Compose project name, container names, and restart policy. It is not
-injected into HBBS or HBBR. GEO, MMDB, Secure TCP, and Relay priority settings
+injected into HBBS or HBBR. GEO, MMDB, Secure TCP, WebSocket Signal, and Relay priority settings
 always belong in the external YAML file.
 
 The example uses `network_mode: host` and targets a Linux Docker host. It
@@ -88,6 +102,11 @@ Clients continue to use the same ID Server, API Server, and public key. Leave
 the client's Relay Server field empty: a static client-side Relay address
 bypasses dynamic allocation by HBBS.
 
+For routine use, leave the client's **Use WebSocket** option disabled to retain
+native P2P preference and performance. Enable it only on a client whose current
+network cannot pass native signalling. The other endpoint may remain native;
+Starry will choose a Relay that is healthy for both required transports.
+
 ## External configuration
 
 See the complete, copy-ready
@@ -95,7 +114,7 @@ See the complete, copy-ready
 always written one per line:
 
 ```yaml
-version: 1
+version: 2
 
 relay_servers:
   - jp-relay-1.example.com:21117
@@ -107,6 +126,31 @@ secure_tcp:
   handshake_timeout_ms: 18000
   idle_timeout_ms: 30000
   max_frame_bytes: 65536
+
+websocket_signal:
+  enabled: true
+  registration_timeout_ms: 10000
+  keepalive_interval_ms: 12000
+  idle_timeout_ms: 45000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 10000
+  max_sessions_per_effective_ip: 512
+  registration_rate_per_minute: 300
+  trusted_proxies: [127.0.0.1/32, "::1/128"]
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 60
+    timeout_ms: 5000
+    success_threshold: 1
+    failure_threshold: 2
+    endpoints:
+      - relay: jp-relay-1.example.com:21117
+        url: wss://jp-relay-1.example.com/ws/relay
+      - relay: jp-relay-2.example.com:21117
+        url: wss://jp-relay-2.example.com/ws/relay
+      - relay: us-relay-1.example.com:21117
+        url: wss://us-relay-1.example.com/ws/relay
 
 mmdb:
   update_interval_hours: 168
@@ -146,6 +190,62 @@ MaxMind marker, and database readability, then used to replace the old file.
 The last usable database is retained when download or validation fails.
 `force_update: true` downloads again on every update cycle.
 `update_interval_hours: 0` disables periodic updates.
+
+## Opt-in WebSocket Signal
+
+`websocket_signal.enabled: true` upgrades the existing HBBS WebSocket listener
+into a persistent, identity-validated signalling path. It does not turn
+WebSocket on for any client. Clients choose the transport independently:
+
+- WebSocket off: native signalling, P2P preferred, native Relay when needed.
+- WebSocket on: WSS signalling and WSS Relay; P2P is intentionally not offered.
+- One endpoint WSS and one native: both use the same HBBR node and Relay UUID,
+  with WSS on one side and native `21117` on the other.
+
+Each `relay_servers` entry must have exactly one `relay_health.endpoints` item.
+WSS probes perform normal DNS, TCP, TLS certificate/hostname validation, and an
+exact `/ws/relay` WebSocket Upgrade. An HTTPS 200 response, ping, or an insecure
+TLS connection is not considered healthy. A mixed session additionally
+requires the same node to be present in HBBS's native online Relay list.
+
+Forwarded IP headers are accepted only when the direct TCP peer belongs to
+`trusted_proxies`. The proxy connection's unique source port is retained only
+as an internal reply correlation token and never treated as a client NAT port.
+A missing Origin is accepted for native RustDesk clients. If an Origin header
+is present, it must exactly match one `allowed_origins` entry.
+
+Terminate TLS at a trusted reverse proxy and forward the two native WebSocket
+paths without rewriting them:
+
+```nginx
+location = /ws/id {
+    proxy_pass http://127.0.0.1:21118;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 120s;
+}
+
+location = /ws/relay {
+    proxy_pass http://127.0.0.1:21119;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 120s;
+}
+```
+
+Restrict direct access to port `21118` to the configured proxy network in
+production. Review runtime status through loopback-only management port 21115:
+
+```sh
+printf 'websocket-status\n' | nc -w 2 127.0.0.1 21115
+```
+
+The output contains aggregate session/counter data and per-Relay native/WSS
+health, but no full Peer ID, public key, token, or raw client-IP list.
 
 ## GEO expressions
 
@@ -279,13 +379,17 @@ printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115
 
 ### Provide two IPs and preview the selected Relay
 
-`test-geo`, abbreviated as `tg`, accepts two literal IP addresses. It invokes
-the same selection function used by live signalling with the current MMDB
-readers, rules, and Relay reachability state:
+`test-geo`, abbreviated as `tg`, accepts two literal IP addresses and an
+optional transport requirement. It invokes the same selection function used by
+live signalling with the current MMDB readers, rules, and Relay health state:
 
 ```text
-test-geo <IP_A> <IP_B>
+test-geo <IP_A> <IP_B> [native|wss|mixed]
 ```
+
+Omitting the final argument preserves the patch-v1.0.0 `native` behaviour.
+`wss` requires a healthy `/ws/relay`; `mixed` requires both WSS health and the
+same node's native online status.
 
 The first address maps to `client_a` and the second to `client_b`. A rule with
 the default `symmetric: true` is also evaluated after swapping both endpoints.
@@ -298,13 +402,13 @@ Compose example; replace the addresses with the clients' real public IPs:
 
 ```sh
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'test-geo 1.1.1.1 8.8.8.8\n' | nc -w 2 127.0.0.1 21115"
+  "printf 'test-geo 1.1.1.1 8.8.8.8 mixed\n' | nc -w 2 127.0.0.1 21115"
 ```
 
 Linux binary or DEB example:
 
 ```sh
-printf 'test-geo 1.1.1.1 8.8.8.8\n' | nc -w 2 127.0.0.1 21115
+printf 'test-geo 1.1.1.1 8.8.8.8 mixed\n' | nc -w 2 127.0.0.1 21115
 ```
 
 For a local Windows binary, first define this PowerShell helper:
