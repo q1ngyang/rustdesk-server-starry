@@ -1,23 +1,30 @@
 mod rules;
 
+use crate::starry_config::{self, DatabaseConfig, GeoConfig, MmdbConfig};
 use hbb_common::log;
-use maxminddb::{geoip2, Mmap, Reader};
+use maxminddb::{geoip2, Reader};
 use once_cell::sync::Lazy;
 use std::{
-    env,
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
     net::IpAddr,
-    path::Path,
-    sync::{atomic::AtomicUsize, RwLock},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        RwLock,
+    },
+    thread,
+    time::{Duration, Instant, SystemTime},
 };
 
 use rules::{DbRequirements, RuleSet};
 
-const DEFAULT_COUNTRY_DB_PATH: &str = "/root/geoip/GeoLite2-Country.mmdb";
-const DEFAULT_CITY_DB_PATH: &str = "/root/geoip/GeoLite2-City.mmdb";
-const DEFAULT_ASN_DB_PATH: &str = "/root/geoip/GeoLite2-ASN.mmdb";
+const MMDB_MARKER: &[u8] = b"\xAB\xCD\xEFMaxMind.com";
+const MMDB_MARKER_WINDOW: u64 = 128 * 1024;
 
 static STATE: Lazy<RwLock<GeoState>> = Lazy::new(|| RwLock::new(GeoState::disabled()));
-static ROTATION: AtomicUsize = AtomicUsize::new(0);
+static UPDATER_STARTED: AtomicBool = AtomicBool::new(false);
+static DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct GeoState {
     enabled: bool,
@@ -36,16 +43,14 @@ impl GeoState {
         }
     }
 
-    fn from_env() -> Result<Self, String> {
-        if !parse_bool_env("GEO_RELAY_ENABLED", true) {
+    fn from_config(config: &crate::starry_config::StarryConfig) -> Result<Self, String> {
+        if !config.geo.enabled {
             return Ok(Self::disabled());
         }
 
-        let raw_rules = env::var("GEO_RELAY_RULES").unwrap_or_default();
-        let rules = RuleSet::parse(&raw_rules)?;
-        let readers = GeoReaders::from_env()?;
+        let rules = RuleSet::compile(&config.geo)?;
+        let readers = GeoReaders::from_config(&config.mmdb)?;
         let warnings = readers.missing_requirements(rules.requirements());
-
         Ok(Self {
             enabled: true,
             readers,
@@ -57,36 +62,27 @@ impl GeoState {
 
 #[derive(Default)]
 struct GeoReaders {
-    country: Option<Reader<Mmap>>,
-    city: Option<Reader<Mmap>>,
-    asn: Option<Reader<Mmap>>,
+    country: Option<Reader<Vec<u8>>>,
+    city: Option<Reader<Vec<u8>>>,
+    asn: Option<Reader<Vec<u8>>>,
     loaded: Vec<String>,
 }
 
 impl GeoReaders {
-    fn from_env() -> Result<Self, String> {
-        let country_path = env_path_with_legacy(
-            "GEOIP_COUNTRY_DB_PATH",
-            "GEOIP_DB_PATH",
-            DEFAULT_COUNTRY_DB_PATH,
-        );
-        let city_path = env_path("GEOIP_CITY_DB_PATH", DEFAULT_CITY_DB_PATH);
-        let asn_path = env_path("GEOIP_ASN_DB_PATH", DEFAULT_ASN_DB_PATH);
-
-        let country = open_optional_reader("Country", &country_path)?;
-        let city = open_optional_reader("City", &city_path)?;
-        let asn = open_optional_reader("ASN", &asn_path)?;
+    fn from_config(config: &MmdbConfig) -> Result<Self, String> {
+        let country = open_optional_reader("Country", &config.country.path)?;
+        let city = open_optional_reader("City", &config.city.path)?;
+        let asn = open_optional_reader("ASN", &config.asn.path)?;
         let mut loaded = Vec::new();
         if country.is_some() {
-            loaded.push(format!("Country={country_path}"));
+            loaded.push(format!("Country={}", config.country.path));
         }
         if city.is_some() {
-            loaded.push(format!("City={city_path}"));
+            loaded.push(format!("City={}", config.city.path));
         }
         if asn.is_some() {
-            loaded.push(format!("ASN={asn_path}"));
+            loaded.push(format!("ASN={}", config.asn.path));
         }
-
         Ok(Self {
             country,
             city,
@@ -112,14 +108,14 @@ impl GeoReaders {
     fn missing_requirements(&self, requirements: DbRequirements) -> Vec<String> {
         let mut warnings = Vec::new();
         if requirements.city && self.city.is_none() {
-            warnings.push("rules use City fields but the City database is unavailable".to_owned());
+            warnings.push("rules use City fields but the City MMDB is unavailable".to_owned());
         }
         if requirements.asn && self.asn.is_none() {
-            warnings.push("rules use ASN fields but the ASN database is unavailable".to_owned());
+            warnings.push("rules use ASN/ISP fields but the ASN MMDB is unavailable".to_owned());
         }
         if requirements.country && self.country.is_none() && self.city.is_none() {
             warnings.push(
-                "rules use Country/Continent fields but neither Country nor City database is available"
+                "rules use Country/Continent fields but neither Country nor City MMDB is available"
                     .to_owned(),
             );
         }
@@ -139,43 +135,45 @@ pub(super) struct GeoFacts {
     pub(super) asn_org: Option<String>,
 }
 
+pub(crate) fn validate_config(config: &GeoConfig) -> Result<(), String> {
+    RuleSet::compile(config).map(|_| ())
+}
+
 pub fn reload() -> String {
-    match GeoState::from_env() {
+    let Some(config) = starry_config::snapshot() else {
+        return replace_state(
+            GeoState::disabled(),
+            "Geo relay disabled because Starry config is unavailable; using upstream relay selection"
+                .to_owned(),
+        );
+    };
+
+    match GeoState::from_config(&config) {
         Ok(new_state) => {
             let enabled = new_state.enabled;
             let rule_count = new_state.rules.len();
-            let syntax = new_state.rules.syntax_name();
             let databases = if new_state.readers.loaded.is_empty() {
                 "none".to_owned()
             } else {
                 new_state.readers.loaded.join(", ")
             };
             let warnings = new_state.warnings.clone();
-            match STATE.write() {
-                Ok(mut state) => {
-                    *state = new_state;
-                    if !enabled {
-                        return "Geo relay disabled by GEO_RELAY_ENABLED".to_owned();
-                    }
-                    let mut message = format!(
-                        "Geo relay loaded: {rule_count} ordered rules ({syntax}), databases={databases}"
-                    );
-                    if !warnings.is_empty() {
-                        message.push_str(&format!("; warnings: {}", warnings.join("; ")));
-                    }
-                    message
+            let message = if enabled {
+                let mut message =
+                    format!("Geo relay loaded: {rule_count} ordered rules, databases={databases}");
+                if !warnings.is_empty() {
+                    message.push_str(&format!("; warnings: {}", warnings.join("; ")));
                 }
-                Err(err) => format!("Geo relay state lock failed: {err}"),
-            }
-        }
-        Err(err) => {
-            let keeping_previous = STATE.read().map(|state| state.enabled).unwrap_or(false);
-            if keeping_previous {
-                format!("Geo relay reload failed; keeping previous data: {err}")
+                message
             } else {
-                format!("Geo relay unavailable; using upstream round-robin: {err}")
-            }
+                "Geo relay disabled by Starry config; using upstream relay selection".to_owned()
+            };
+            replace_state(new_state, message)
         }
+        Err(err) => replace_state(
+            GeoState::disabled(),
+            format!("Geo relay config is invalid; using upstream relay selection: {err}"),
+        ),
     }
 }
 
@@ -187,9 +185,7 @@ pub fn select_relay(pa: IpAddr, pb: IpAddr, online_relays: &[String]) -> Option<
 
     let facts_a = state.readers.lookup(pa);
     let facts_b = state.readers.lookup(pb);
-    let selection = state
-        .rules
-        .select(&facts_a, &facts_b, online_relays, &ROTATION)?;
+    let selection = state.rules.select(&facts_a, &facts_b, online_relays)?;
     log::debug!(
         "Geo relay selected {} for {pa}/{pb} by rule '{}' (a={facts_a:?}, b={facts_b:?})",
         selection.relay,
@@ -198,19 +194,42 @@ pub fn select_relay(pa: IpAddr, pb: IpAddr, online_relays: &[String]) -> Option<
     Some(selection.relay)
 }
 
-fn open_optional_reader(label: &str, path: &str) -> Result<Option<Reader<Mmap>>, String> {
-    if path.trim().is_empty() || !Path::new(path).is_file() {
-        return Ok(None);
+pub fn start_mmdb_updater() -> String {
+    if UPDATER_STARTED.swap(true, Ordering::SeqCst) {
+        return "MMDB updater already started".to_owned();
     }
-
-    // SAFETY: the bundled updater always writes a new temporary file and atomically renames it.
-    // It never modifies or truncates an inode while an existing Reader still maps that inode.
-    let reader = unsafe { Reader::open_mmap(path) }
-        .map_err(|err| format!("cannot open {label} MMDB {path}: {err}"))?;
-    Ok(Some(reader))
+    match thread::Builder::new()
+        .name("starry-mmdb-updater".to_owned())
+        .spawn(mmdb_update_loop)
+    {
+        Ok(_) => "MMDB updater thread started".to_owned(),
+        Err(err) => {
+            UPDATER_STARTED.store(false, Ordering::SeqCst);
+            format!("cannot start MMDB updater thread: {err}")
+        }
+    }
 }
 
-fn lookup_city(reader: &Reader<Mmap>, ip: IpAddr, facts: &mut GeoFacts) {
+fn replace_state(new_state: GeoState, message: String) -> String {
+    match STATE.write() {
+        Ok(mut state) => {
+            *state = new_state;
+            message
+        }
+        Err(err) => format!("Geo relay state lock failed: {err}"),
+    }
+}
+
+fn open_optional_reader(label: &str, path: &str) -> Result<Option<Reader<Vec<u8>>>, String> {
+    if !Path::new(path).is_file() {
+        return Ok(None);
+    }
+    Reader::open_readfile(path)
+        .map(Some)
+        .map_err(|err| format!("cannot open {label} MMDB {path}: {err}"))
+}
+
+fn lookup_city(reader: &Reader<Vec<u8>>, ip: IpAddr, facts: &mut GeoFacts) {
     let Ok(result) = reader.lookup(ip) else {
         return;
     };
@@ -230,7 +249,7 @@ fn lookup_city(reader: &Reader<Mmap>, ip: IpAddr, facts: &mut GeoFacts) {
     }
 }
 
-fn lookup_country(reader: &Reader<Mmap>, ip: IpAddr, facts: &mut GeoFacts) {
+fn lookup_country(reader: &Reader<Vec<u8>>, ip: IpAddr, facts: &mut GeoFacts) {
     let Ok(result) = reader.lookup(ip) else {
         return;
     };
@@ -241,7 +260,7 @@ fn lookup_country(reader: &Reader<Mmap>, ip: IpAddr, facts: &mut GeoFacts) {
     set_if_empty(&mut facts.country, record.country.iso_code);
 }
 
-fn lookup_asn(reader: &Reader<Mmap>, ip: IpAddr, facts: &mut GeoFacts) {
+fn lookup_asn(reader: &Reader<Vec<u8>>, ip: IpAddr, facts: &mut GeoFacts) {
     let Ok(result) = reader.lookup(ip) else {
         return;
     };
@@ -288,23 +307,258 @@ fn set_if_empty(target: &mut Option<String>, value: Option<&str>) {
     }
 }
 
-fn env_path(name: &str, default: &str) -> String {
-    env::var(name).unwrap_or_else(|_| default.to_owned())
+fn mmdb_update_loop() {
+    let mut active_config: Option<MmdbConfig> = None;
+    let mut next_update: Option<Instant> = None;
+    loop {
+        if let Some(config) = starry_config::snapshot() {
+            let mmdb = config.mmdb.clone();
+            if active_config.as_ref() != Some(&mmdb) {
+                if mmdb.update_on_start {
+                    update_and_reload(&mmdb, mmdb.force_update);
+                }
+                next_update = next_update_at(&mmdb);
+                active_config = Some(mmdb);
+            } else if next_update
+                .map(|deadline| Instant::now() >= deadline)
+                .unwrap_or(false)
+            {
+                update_and_reload(&mmdb, mmdb.force_update);
+                next_update = next_update_at(&mmdb);
+            }
+        } else {
+            active_config = None;
+            next_update = None;
+        }
+        thread::sleep(Duration::from_secs(60));
+    }
 }
 
-fn env_path_with_legacy(name: &str, legacy_name: &str, default: &str) -> String {
-    env::var(name)
-        .or_else(|_| env::var(legacy_name))
-        .unwrap_or_else(|_| default.to_owned())
+fn next_update_at(config: &MmdbConfig) -> Option<Instant> {
+    if config.update_interval_hours == 0 {
+        None
+    } else {
+        Instant::now().checked_add(Duration::from_secs(
+            config.update_interval_hours.saturating_mul(3_600),
+        ))
+    }
 }
 
-fn parse_bool_env(name: &str, default: bool) -> bool {
-    match env::var(name) {
-        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" | "yes" | "y" | "on" => true,
-            "0" | "false" | "no" | "n" | "off" => false,
-            _ => default,
-        },
-        Err(_) => default,
+fn update_and_reload(config: &MmdbConfig, force: bool) {
+    let (updated, errors) = update_all(config, force);
+    if updated > 0 {
+        log::info!(
+            "Starry MMDB update finished: {updated} database(s); {}",
+            reload()
+        );
+    } else if errors.is_empty() {
+        log::debug!("Starry MMDB update check finished: no changes");
+    }
+    if !errors.is_empty() {
+        log::error!(
+            "Starry MMDB update failed for {} database(s); failed databases kept their existing files: {}",
+            errors.len(),
+            errors.join("; ")
+        );
+    }
+}
+
+fn update_all(config: &MmdbConfig, force: bool) -> (usize, Vec<String>) {
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(config.download_timeout_seconds))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => return (0, vec![format!("cannot create HTTP client: {err}")]),
+    };
+    let interval = Duration::from_secs(config.update_interval_hours.saturating_mul(3_600));
+    let mut updated = 0;
+    let mut errors = Vec::new();
+    for (label, database) in [
+        ("Country", &config.country),
+        ("City", &config.city),
+        ("ASN", &config.asn),
+    ] {
+        if database.url.is_empty() || !database_due(&database.path, interval, force) {
+            continue;
+        }
+        match download_database(&client, label, database, config.minimum_bytes) {
+            Ok(()) => updated += 1,
+            Err(err) => errors.push(err),
+        }
+    }
+    (updated, errors)
+}
+
+fn database_due(path: &str, interval: Duration, force: bool) -> bool {
+    if force || !Path::new(path).is_file() {
+        return true;
+    }
+    if interval.is_zero() {
+        return false;
+    }
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .map(|age| age >= interval)
+        .unwrap_or(true)
+}
+
+fn download_database(
+    client: &reqwest::blocking::Client,
+    label: &str,
+    database: &DatabaseConfig,
+    minimum_bytes: u64,
+) -> Result<(), String> {
+    let target = Path::new(&database.path);
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+    let temporary = temporary_path(target);
+    let result = download_to_temporary(client, label, database, &temporary, minimum_bytes)
+        .and_then(|()| replace_database(&temporary, target));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn download_to_temporary(
+    client: &reqwest::blocking::Client,
+    label: &str,
+    database: &DatabaseConfig,
+    temporary: &Path,
+    minimum_bytes: u64,
+) -> Result<(), String> {
+    log::info!("Downloading Starry {label} MMDB");
+    let mut response = client
+        .get(&database.url)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|err| {
+            let detail = if let Some(status) = err.status() {
+                format!("HTTP {status}")
+            } else if err.is_timeout() {
+                "request timed out".to_owned()
+            } else if err.is_connect() {
+                "connection failed".to_owned()
+            } else {
+                "request failed".to_owned()
+            };
+            format!("{label} download failed: {detail}")
+        })?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temporary)
+        .map_err(|err| format!("cannot create {}: {err}", temporary.display()))?;
+    response
+        .copy_to(&mut file)
+        .map_err(|err| format!("cannot write {}: {err}", temporary.display()))?;
+    file.flush()
+        .map_err(|err| format!("cannot flush {}: {err}", temporary.display()))?;
+    let size = file
+        .metadata()
+        .map_err(|err| format!("cannot inspect {}: {err}", temporary.display()))?
+        .len();
+    drop(file);
+    if size < minimum_bytes {
+        return Err(format!(
+            "{label} download is too small: {size} bytes, expected at least {minimum_bytes}"
+        ));
+    }
+    if !contains_mmdb_marker(temporary)? {
+        return Err(format!(
+            "{label} download has no MaxMind DB metadata marker"
+        ));
+    }
+    Reader::open_readfile(temporary)
+        .map(|_: Reader<Vec<u8>>| ())
+        .map_err(|err| format!("{label} download is not a readable MMDB: {err}"))
+}
+
+fn contains_mmdb_marker(path: &Path) -> Result<bool, String> {
+    let mut file = File::open(path)
+        .map_err(|err| format!("cannot open {} for validation: {err}", path.display()))?;
+    let size = file
+        .metadata()
+        .map_err(|err| format!("cannot inspect {}: {err}", path.display()))?
+        .len();
+    let window = size.min(MMDB_MARKER_WINDOW);
+    file.seek(SeekFrom::End(-(window as i64)))
+        .map_err(|err| format!("cannot seek {}: {err}", path.display()))?;
+    let mut tail = Vec::with_capacity(window as usize);
+    file.read_to_end(&mut tail)
+        .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
+    Ok(tail
+        .windows(MMDB_MARKER.len())
+        .any(|window| window == MMDB_MARKER))
+}
+
+fn temporary_path(target: &Path) -> PathBuf {
+    let sequence = DOWNLOAD_SEQUENCE.fetch_add(1, Ordering::SeqCst);
+    let file_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("database.mmdb");
+    target.with_file_name(format!(
+        ".{file_name}.download.{}.{}",
+        std::process::id(),
+        sequence
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_database(temporary: &Path, target: &Path) -> Result<(), String> {
+    fs::rename(temporary, target).map_err(|err| {
+        format!(
+            "cannot atomically replace {} with {}: {err}",
+            target.display(),
+            temporary.display()
+        )
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn replace_database(temporary: &Path, target: &Path) -> Result<(), String> {
+    let backup = target.with_extension("mmdb.previous");
+    if backup.exists() {
+        fs::remove_file(&backup)
+            .map_err(|err| format!("cannot remove stale {}: {err}", backup.display()))?;
+    }
+    if target.exists() {
+        fs::rename(target, &backup)
+            .map_err(|err| format!("cannot stage {} for replacement: {err}", target.display()))?;
+    }
+    if let Err(err) = fs::rename(temporary, target) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, target);
+        }
+        return Err(format!("cannot replace {}: {err}", target.display()));
+    }
+    if backup.exists() {
+        let _ = fs::remove_file(backup);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_mmdb_marker_only_in_the_tail_window() {
+        let directory =
+            std::env::temp_dir().join(format!("starry-mmdb-marker-{}", std::process::id()));
+        let path = directory.join("test.mmdb");
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let mut file = File::create(&path).unwrap();
+        file.write_all(&vec![0; 70 * 1024]).unwrap();
+        file.write_all(MMDB_MARKER).unwrap();
+        drop(file);
+        assert!(contains_mmdb_marker(&path).unwrap());
+        let _ = fs::remove_dir_all(directory);
     }
 }

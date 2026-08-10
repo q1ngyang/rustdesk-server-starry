@@ -1,175 +1,474 @@
-# rustdesk-server-geo
+# rustdesk-server-starry
 
-在官方 [rustdesk/rustdesk-server](https://github.com/rustdesk/rustdesk-server) OSS `hbbs` 上增加按连接双方 Country、City、ASN 信息选择 `hbbr` 的扩展。规则、三个 MMDB 下载地址和更新周期全部通过环境变量配置，不需要维护完整 RustDesk Server 分支。
+**English** | [简体中文](README.zh-CN.md)
 
-> 这是非官方社区项目，与 RustDesk、MaxMind 或 MMDB 镜像提供方没有隶属关系。镜像不会内置 GeoLite2 数据库；部署者需要自行选择合法、可信的数据源并遵守其许可证。
+`rustdesk-server-starry` is a lightweight overlay for the official
+[`rustdesk/rustdesk-server`](https://github.com/rustdesk/rustdesk-server).
+This repository does not maintain a permanently modified copy of the upstream
+source. Each build fetches an exact official revision, then
+[`scripts/apply_overlay.py`](scripts/apply_overlay.py) injects the Starry
+modules at fixed, verified anchors.
 
-## 工作方式
+Starry adds only two feature groups:
 
-- RustDesk 仍然先尝试直连和 NAT 打洞；打洞成功后数据不经过 `hbbr`。
-- 只有需要中继时，`hbbs` 才查询双方公网 IP，并从上到下检查有序规则。
-- 首条匹配且包含在线节点的规则生效；同级节点轮询，节点不可用时尝试下一 tier。
-- 某条规则匹配但其所有节点都离线时，继续检查下一条规则。
-- 没有可用规则时回退到官方在线 Relay 轮询逻辑。
-- 所有客户端继续使用同一套 ID Server、API Server 和公钥配置。
+- Select a Relay from the country, city, ASN, and ISP information of both endpoints, with strict ordered failover.
+- Provide a RustDesk-client-compatible Secure TCP handshake and encrypted transport on native HBBS TCP `21116`, fixing the signalling timeout that can occur after a successful API login.
 
-> 客户端配置中的“中继服务器 / Relay Server”必须留空。RustDesk 客户端的静态 `relay-server` 选项优先于 `hbbs` 动态下发；填写固定地址会绕过本项目的选择逻辑。
+This is not a workaround that merely adds a `session_id` field. API
+authentication and the HBBS signalling connection are separate layers. Starry
+adds the HBBS Secure TCP compatibility required by an authenticated client.
 
-## 镜像
+> This is an unofficial community project and is not affiliated with RustDesk,
+> MaxMind, or any MMDB mirror provider. The image does not contain a GeoLite2
+> database. Operators must choose a lawful, trusted data source and comply with
+> its licence.
 
-```yaml
-image: ghcr.io/q1ngyang/rustdesk-server-geo:latest
-```
+## Compatibility and fallback guarantees
 
-支持 `linux/amd64` 和 `linux/arm64`。镜像包含 `hbbs`、`hbbr` 和 `rustdesk-utils`，但 Geo 选择只作用于中心 `hbbs`；其他中继节点可以继续运行官方 `rustdesk/rustdesk-server` 镜像。
+- `starry/config.yaml` is created as an empty file on the first run.
+- `config.example.yaml` is created beside it and an existing file is never overwritten.
+- If the configuration is empty, cannot be parsed as YAML, or fails any field validation, the entire Starry configuration is disabled and HBBS uses the official behaviour and command-line arguments.
+- `secure_tcp.mode: off` preserves the official native plaintext TCP transport. `auto` enables compatible negotiation.
+- Secure TCP is injected only into native TCP `21116`. WebSocket/WSS `21118` keeps the official implementation.
+- In `auto` mode, a valid plaintext first Protobuf frame falls back compatibly to plaintext. Once a client sends a Key Exchange, an authentication failure closes the connection and never causes an insecure downgrade.
+- If no GEO rule matches, a required MMDB is unavailable, or no Relay in the matching rules is online, selection continues through the official Relay logic.
 
-完整配置见 [`examples/compose.yaml`](examples/compose.yaml) 和 [`examples/.env.example`](examples/.env.example)。
+## Docker Compose deployment
 
-## 环境变量
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `GEO_RELAY_ENABLED` | `true` | 是否启用 Geo Relay 选择。 |
-| `GEO_RELAY_RULES` | 无 | YAML v2 多行有序规则；启用时必填。 |
-| `GEOIP_COUNTRY_DB_URL` | 无 | GeoLite2 Country MMDB 直链。 |
-| `GEOIP_CITY_DB_URL` | 无 | GeoLite2 City MMDB 直链；不使用城市规则时可留空。 |
-| `GEOIP_ASN_DB_URL` | 无 | GeoLite2 ASN MMDB 直链；不使用 ASN 规则时可留空。 |
-| `GEOIP_COUNTRY_DB_PATH` | `/root/geoip/GeoLite2-Country.mmdb` | Country 数据库持久化路径。 |
-| `GEOIP_CITY_DB_PATH` | `/root/geoip/GeoLite2-City.mmdb` | City 数据库持久化路径。 |
-| `GEOIP_ASN_DB_PATH` | `/root/geoip/GeoLite2-ASN.mmdb` | ASN 数据库持久化路径。 |
-| `GEOIP_UPDATE_INTERVAL` | `168h` | 更新周期；支持 `m`、`h`、`d`、`s`，`0` 关闭。 |
-| `GEOIP_UPDATE_ON_START` | `true` | 启动时检查缺失或过期数据库。 |
-| `GEOIP_FORCE_UPDATE_ON_START` | `false` | 是否忽略文件年龄并在每次启动时强制下载。 |
-| `GEOIP_DOWNLOAD_TIMEOUT` | `600` | 每个数据库的单次下载超时秒数。 |
-| `GEOIP_MIN_BYTES` | `65536` | 最小文件体积校验。 |
-
-旧版 `GEOIP_DB_URL`、`GEOIP_DB_PATH` 仍作为 Country 变量的兼容别名；旧的一行式 `CN-CN=...;DEFAULT=...` 规则也仍可解析。建议迁移到 YAML v2。
-
-## YAML v2 规则
-
-`.env` 支持单引号包裹的多行值，因此每个国家组合、城市或运营商规则都可以独立成块：
-
-```dotenv
-GEO_RELAY_RULES='version: 2
-rules:
-  - name: "上海电信到东京"
-    match:
-      client_a:
-        all:
-          - country: CN
-          - city: [Shanghai, 上海]
-          - any:
-              - asn: 4134
-              - asn_org_contains: "China Telecom"
-      client_b:
-        all:
-          - country: JP
-          - city: [Tokyo, 東京]
-    relay_tiers:
-      - [relay-tokyo-1.example.com, relay-tokyo-2.example.com]
-      - [relay-osaka.example.com]
-
-  - name: "CN-JP"
-    match:
-      client_a: { country: CN }
-      client_b: { country: JP }
-    relay_tiers:
-      - [relay-jp.example.com]
-      - [relay-cn.example.com]
-
-  - name: "DEFAULT"
-    match: {}
-    relay_tiers:
-      - [relay-jp.example.com]
-      - [relay-us.example.com]
-'
-```
-
-### 匹配字段
-
-每个 `client_a` / `client_b` 支持：
-
-| 字段 | 数据库 | 含义 |
-| --- | --- | --- |
-| `continent` | Country 或 City | 两位洲代码，例如 `AS`、`NA`。 |
-| `country` | Country 或 City | ISO 3166-1 两位国家代码。 |
-| `subdivision` | City | 省、州等 ISO 3166-2 子区域代码或数据库名称。 |
-| `city` | City | 城市名称，支持数据库中的英文、简体中文、日文等名称。 |
-| `city_geoname_id` | City | GeoNames 城市 ID；比文本名称更稳定。 |
-| `asn` | ASN | 自治系统编号，例如 `4134`。 |
-| `asn_org_contains` | ASN | 运营商名称的忽略大小写包含匹配。 |
-
-同一字段写多个值表示“或”，同一个 matcher 中不同字段表示“且”。`all`、`any`、`not` 可以递归嵌套：
-
-```yaml
-client_a:
-  all:
-    - country: CN
-    - any:
-        - city: Shanghai
-        - asn: [4134, 4809]
-  not:
-    asn_org_contains: "China Mobile"
-```
-
-规则默认 `symmetric: true`，即 `client_a/client_b` 交换后仍可匹配。需要方向敏感时可在规则中设置 `symmetric: false`。
-
-`relay_tiers` 从上到下表示故障转移优先级；同一行数组中的多个在线节点轮询。节点名称必须与传给 `hbbs -r/--relay-servers` 的列表完全对应，如包含端口，规则也必须包含相同端口。不要使用下划线形式的 `RELAY_SERVERS`，OSS `hbbs` 不会读取它；如改用环境变量，官方名称是带连字符的 `RELAY-SERVERS`。
-
-## MMDB 自动更新与内存
-
-默认更新周期为 `168h`，即每周一次。还可以使用 `30m`、`12h`、`7d`；为兼容旧配置，纯数字仍按秒解释。
-
-启动检查会根据持久化文件修改时间判断是否过期，不会因为容器重启而重复下载。下载器会写入临时文件，检查体积及 MaxMind DB 标记，再原子替换；失败时保留旧文件，成功后通知 `hbbs` 热加载。
-
-三个数据库使用 mmap 按需分页，避免把约 80–90 MB 数据重复复制到 Rust 堆内存。原子替换不会修改仍被旧 Reader 映射的 inode，热加载完成后旧映射才释放。
-
-示例使用第三方 [P3TERX/GeoLite.mmdb](https://github.com/P3TERX/GeoLite.mmdb) 的三个直链：
-
-```dotenv
-GEOIP_COUNTRY_DB_URL=https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb
-GEOIP_CITY_DB_URL=https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb
-GEOIP_ASN_DB_URL=https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb
-```
-
-这些是第三方服务，稳定性、准确性和许可证合规由部署者自行评估。
-
-## 关于延迟和丢包路由
-
-当前 RustDesk OSS 协议没有把客户端到各 `hbbr` 的延迟、丢包或中继失败结果上报给 `hbbs`。`hbbs` 只负责在连接前下发一个 Relay 地址，连接之后也收不到质量反馈，因此仅修改 OSS `hbbs` 无法真实完成“尝试节点、按质量继续回退、再选择历史最优”的闭环。
-
-本项目不会使用 `hbbs -> hbbr` 的 ping 冒充客户端链路质量，因为中心服务器到节点的延迟不能代表中国、日本、美国客户端到节点的体验。可行扩展有两类：
-
-1. 部署在代表性地区/ASN 内的外部探针，向 `hbbs` 提供带有效期的分区质量矩阵；不修改 RustDesk 客户端，但属于区域近似值。
-2. 扩展 RustDesk 客户端和协议，由双方客户端测量候选 `hbbr` 并回报结果；数据最准确，但会显著增加客户端发布和上游同步维护成本。
-
-在没有可信质量数据源时，处理顺序保持为：有序 Geo 规则 → 官方在线 Relay 轮询。
-
-## 多节点部署
-
-1. 中心服务器运行本镜像的 `hbbs`，通过 `-r`/`--relay-servers` 传入全部中继节点。
-2. 中国、日本、美国等服务器分别运行 `hbbr`，可以继续使用官方镜像。
-3. 所有节点使用同一套 RustDesk 密钥；Cloudflare 记录使用“仅 DNS”。
-4. `hbbs` 先剔除健康检查失败的中继，规则只从剩余在线节点中选择。
-
-测试两个公网 IP 的最终选择结果：
+Docker Compose is the preferred deployment method on a Linux server. The
+repository provides complete, heavily commented
+[`examples/compose.yaml`](examples/compose.yaml) and
+[`examples/.env.example`](examples/.env.example) files:
 
 ```sh
-docker exec rustdesk-hbbs sh -c "printf 'test-geo 1.1.1.1 8.8.8.8\n' | nc -w 2 127.0.0.1 21115"
+cp examples/.env.example .env
+cp examples/compose.yaml compose.yaml
+mkdir -p data
+docker compose --env-file .env up -d
 ```
 
-## 自动同步和构建
+Every GitHub Release attaches the same examples as `compose.yaml` and
+`compose.env.example`:
 
-GitHub Actions 每天检查官方最新正式 Release，也支持手动指定标签、分支或提交：
+```sh
+cp compose.env.example .env
+mkdir -p data
+docker compose --env-file .env -f compose.yaml up -d
+```
 
-1. 克隆官方源码及子模块。
-2. 严格匹配补丁锚点；上游结构改变时立即失败。
-3. 运行 YAML、嵌套匹配和旧规则兼容性单元测试。
-4. 交叉编译 `amd64`、`arm64` 的 musl 静态二进制。
-5. 发布版本标签和 `latest` 多架构镜像到 GHCR。
+The `.env` file controls only Compose interpolation: the image tag, persistent
+directory, Compose project name, container names, and restart policy. It is not
+injected into HBBS or HBBR. GEO, MMDB, Secure TCP, and Relay priority settings
+always belong in the external YAML file.
 
-扩展行为变化时增加 [`PATCH_VERSION`](PATCH_VERSION)，生成新的 `上游版本-geo.补丁版本` 标签。
+The example uses `network_mode: host` and targets a Linux Docker host. It
+exposes the same ports as the official server. The first start creates:
 
-## 与上游的关系
+```text
+data/
+└── starry/
+    ├── config.yaml
+    └── config.example.yaml
+```
 
-本仓库只保存补丁层、构建脚本和部署示例，不复制或长期维护完整上游源码。构建产物和本项目继续遵循 AGPL-3.0。
+Edit `data/starry/config.yaml` and restart HBBS:
+
+```sh
+docker compose restart hbbs
+```
+
+The configuration can also be reloaded through the loopback HBBS management
+command:
+
+```sh
+printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115
+```
+
+Clients continue to use the same ID Server, API Server, and public key. Leave
+the client's Relay Server field empty: a static client-side Relay address
+bypasses dynamic allocation by HBBS.
+
+## External configuration
+
+See the complete, copy-ready
+[`config/config.example.yaml`](config/config.example.yaml). Relay addresses are
+always written one per line:
+
+```yaml
+version: 1
+
+relay_servers:
+  - jp-relay-1.example.com:21117
+  - jp-relay-2.example.com:21117
+  - us-relay-1.example.com:21117
+
+secure_tcp:
+  mode: auto
+  handshake_timeout_ms: 18000
+  idle_timeout_ms: 30000
+  max_frame_bytes: 65536
+
+mmdb:
+  update_interval_hours: 168
+  update_on_start: true
+  force_update: false
+  download_timeout_seconds: 600
+  minimum_bytes: 65536
+  country:
+    path: mmdb/GeoLite2-Country.mmdb
+    url: https://example.com/GeoLite2-Country.mmdb
+  city:
+    path: mmdb/GeoLite2-City.mmdb
+    url: https://example.com/GeoLite2-City.mmdb
+  asn:
+    path: mmdb/GeoLite2-ASN.mmdb
+    url: https://example.com/GeoLite2-ASN.mmdb
+
+geo:
+  enabled: true
+  rules:
+    - name: East Asia
+      symmetric: true
+      match:
+        client_a: "CN/JP/KR/TW"
+        client_b: "*"
+      relays:
+        - jp-relay-1.example.com:21117
+        - jp-relay-2.example.com:21117
+```
+
+Relative MMDB paths are resolved from the HBBS working directory. The Compose
+working directory is `/root`, so the example stores the databases in
+`./data/mmdb/` on the host.
+
+An MMDB download is written to a temporary file, checked for minimum size, the
+MaxMind marker, and database readability, then used to replace the old file.
+The last usable database is retained when download or validation fails.
+`force_update: true` downloads again on every update cycle.
+`update_interval_hours: 0` disables periodic updates.
+
+## GEO expressions
+
+The expression operators are:
+
+- `/`: OR.
+- `+`: AND, with higher precedence than `/`.
+- `(...)`: explicit grouping with arbitrary nesting.
+- `*`: match any location.
+
+For example:
+
+```yaml
+match:
+  client_a: "(city:City A+isp:Carrier B)/city:City C"
+  client_b: "*"
+```
+
+This means `(City A AND Carrier B) OR City C`.
+
+```yaml
+match:
+  client_a: "((city:City A+isp:Carrier B)/(city:City C+isp:Carrier D))+country:CN"
+  client_b: "*"
+```
+
+This means `((City A AND Carrier B) OR (City C AND Carrier D)) AND country CN`.
+
+A bare two-letter ASCII token is treated as an ISO 3166-1 country code, so
+multiple countries can be combined as:
+
+```yaml
+client_a: "CN/JP/KR/TW"
+```
+
+Supported explicit fields:
+
+| Field | Database | Match behaviour |
+| --- | --- | --- |
+| `continent` | Country/City | Two-letter continent code, case-insensitive |
+| `country` | Country/City | Two-letter country code, case-insensitive |
+| `subdivision` / `region` | City | Subdivision code or name |
+| `city` | City | Any localised city name present in the database |
+| `geoname` / `city_id` | City | Non-zero GeoNames ID |
+| `asn` | ASN | Non-zero ASN; `AS4134` is accepted |
+| `isp` / `asn_org` | ASN | Case-insensitive substring match on organisation name |
+
+Wrap a value in single or double quotes if the value itself contains `/`,
+`+`, or parentheses:
+
+```yaml
+client_a: "city:\"A/B\"+isp:'Carrier X+Y'"
+```
+
+Each rule matches `client_a` and `client_b` separately. `symmetric: true` is
+the default and also evaluates the rule after swapping both endpoints. Set it
+to `false` for a direction-sensitive rule.
+
+## Relay ordering and failover
+
+Rules are evaluated from top to bottom. Relays inside a rule are also selected
+strictly from top to bottom:
+
+```yaml
+relays:
+  - relay-priority-1.example.com:21117
+  - relay-priority-2.example.com:21117
+  - relay-priority-3.example.com:21117
+```
+
+The first Relay remains preferred whenever it is present in the official HBBS
+online list. Starry does not round-robin inside a matching rule. The next Relay
+is selected only after the preceding Relay fails the official health check. If
+all Relays in a matching rule are offline, Starry checks subsequent rules and
+finally falls back to official selection.
+
+Here, a failure means reachability from HBBS to the Relay. The RustDesk OSS
+protocol does not report each client's Relay latency, packet loss, or connection
+failure back to HBBS. Starry therefore does not present a ping from the centre
+server to HBBR as if it represented client-side path quality.
+
+## Inspecting assignable Relays and testing two IPs
+
+HBBS exposes management commands on local `21115/TCP`. Docker and local
+deployments use exactly the same commands and selection logic; only the access
+method differs. With Compose, run the command inside the HBBS container. A
+Linux/DEB or Windows binary is queried directly on its host.
+
+Management commands are accepted only from a loopback address in the network
+namespace that contains HBBS. Do not add a public proxy or remote forwarding
+endpoint for these commands.
+
+### List the Relays HBBS can currently assign
+
+`relay_servers` in the configuration file is the complete candidate pool. For
+Compose, inspect `data/starry/config.yaml`. The DEB uses
+`/etc/rustdesk-server-starry/config.yaml`. A directly launched binary uses the
+path supplied through `--starry-config`, which defaults to
+`starry/config.yaml` under its current working directory.
+
+The `relay-servers` command, abbreviated as `rs`, takes no argument when used
+as a query. It prints the Relays currently participating in HBBS allocation,
+one per line:
+
+```text
+jp-relay-1.example.com:21117
+jp-relay-2.example.com:21117
+```
+
+With multiple Relays, official HBBS refreshes reachability approximately every
+three seconds. Wait a few seconds after startup or reload before querying. The
+output order is not the Starry priority order; priority always comes from the
+`relays` list in the matching rule. This is also an HBBS allocation view, not a
+measurement of end-to-end quality from either client.
+
+Compose deployment:
+
+If `STARRY_HBBS_CONTAINER_NAME` was changed in `.env`, replace
+`rustdesk-starry-hbbs` below with that value.
+
+```sh
+docker exec rustdesk-starry-hbbs sh -c \
+  "printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115"
+```
+
+Linux binary or DEB deployment:
+
+```sh
+printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115
+```
+
+### Provide two IPs and preview the selected Relay
+
+`test-geo`, abbreviated as `tg`, accepts two literal IP addresses. It invokes
+the same selection function used by live signalling with the current MMDB
+readers, rules, and Relay reachability state:
+
+```text
+test-geo <IP_A> <IP_B>
+```
+
+The first address maps to `client_a` and the second to `client_b`. A rule with
+the default `symmetric: true` is also evaluated after swapping both endpoints.
+For a direction-sensitive rule, test both `A B` and `B A`. Use the public
+egress addresses that HBBS actually observes, not client-side
+`192.168.x.x` or `10.x.x.x` addresses. If both clients share the same public
+NAT, supply that same public IP twice.
+
+Compose example; replace the addresses with the clients' real public IPs:
+
+```sh
+docker exec rustdesk-starry-hbbs sh -c \
+  "printf 'test-geo 1.1.1.1 8.8.8.8\n' | nc -w 2 127.0.0.1 21115"
+```
+
+Linux binary or DEB example:
+
+```sh
+printf 'test-geo 1.1.1.1 8.8.8.8\n' | nc -w 2 127.0.0.1 21115
+```
+
+For a local Windows binary, first define this PowerShell helper:
+
+```powershell
+function Invoke-StarryHbbsCommand {
+    param([Parameter(Mandatory)][string]$Command)
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $result = [System.IO.MemoryStream]::new()
+    try {
+        $client.Connect('127.0.0.1', 21115)
+        $stream = $client.GetStream()
+        $stream.ReadTimeout = 2000
+        $request = [System.Text.Encoding]::UTF8.GetBytes("$Command`n")
+        $stream.Write($request, 0, $request.Length)
+        $buffer = [byte[]]::new(4096)
+        while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $result.Write($buffer, 0, $count)
+        }
+        [System.Text.Encoding]::UTF8.GetString($result.ToArray())
+    }
+    finally {
+        $result.Dispose()
+        $client.Dispose()
+    }
+}
+
+Invoke-StarryHbbsCommand 'relay-servers'
+Invoke-StarryHbbsCommand 'test-geo 1.1.1.1 8.8.8.8'
+```
+
+A normal result is quoted:
+
+```text
+"jp-relay-1.example.com:21117"
+```
+
+- `""` means that HBBS currently has no Relay to assign.
+- No output at all usually means that the command syntax or an IP address could not be parsed.
+- When a Starry rule matches, the result remains the first online Relay in that rule until reachability changes.
+- If a matching rule has no online Relay, later rules are checked. Only after no rule can provide a Relay does the result come from official fallback. Repeated tests can return different nodes when official fallback round-robin has multiple Relays.
+
+This command previews the allocation decision at that instant. It does not
+create a connection, force either client to use a Relay, or prove client-to-Relay
+reachability. A real session may still establish P2P. HBBS sends this selection
+only after a session enters the Relay path. A later configuration reload, MMDB
+update, or health-state change can also change the live result.
+
+## Secure TCP state machine
+
+With `secure_tcp.mode: auto`, native TCP `21116` follows this state machine:
+
+```text
+HBBS sends a Curve25519 public key signed by the server Ed25519 identity
+  → the client verifies the signature
+  → the client sends its Curve25519 public key and sealed symmetric key
+  → both sides use independent send/receive nonce sequences for Secretbox frames
+```
+
+Starry reuses the official HBBS identity key and introduces no second shared
+key. HBBS generates the required identity by default. If the server identity
+key is explicitly disabled, `auto` cannot offer Secure TCP and retains the
+official plaintext transport.
+
+Compatibility tests cover the signed public-key format, two-element Key
+Exchange, sealed-key authentication, independent send and receive counters,
+ciphertext authentication failure, a real TCP encrypted round trip, and valid
+plaintext-first-frame fallback.
+
+## Local release artifacts
+
+Each Starry Release provides only these platforms and architectures:
+
+| Platform | Architecture | Artifacts |
+| --- | --- | --- |
+| Docker | `linux/amd64`, `linux/arm64` | One multi-architecture GHCR image |
+| Linux | `amd64`, `arm64` | Separate `hbbs`, `hbbr`, and `rustdesk-utils` binaries plus a tar.gz |
+| Debian/Ubuntu | `amd64`, `arm64` | Three independently installable DEB packages |
+| Windows | `amd64` | Three separate `.exe` files plus a zip |
+
+DEB package names:
+
+```text
+rustdesk-server-starry-hbbs
+rustdesk-server-starry-hbbr
+rustdesk-server-starry-utils
+```
+
+The HBBS DEB installs an empty configuration and its example:
+
+```text
+/etc/rustdesk-server-starry/config.yaml
+/etc/rustdesk-server-starry/config.example.yaml
+```
+
+The services are managed by systemd:
+
+```sh
+sudo systemctl status rustdesk-server-starry-hbbs
+sudo systemctl status rustdesk-server-starry-hbbr
+```
+
+Windows can run a standalone executable from the release page:
+
+```powershell
+& .\hbbs-<release>-windows-amd64.exe --starry-config=.\starry\config.yaml
+```
+
+The first run creates `starry\config.yaml` and
+`starry\config.example.yaml` under the current directory.
+
+## Automatic upstream release tracking
+
+The version format is:
+
+```text
+<official-version>-patch-vX.Y.Z
+```
+
+- `X` is the Starry major version and changes only for a major feature or compatibility break.
+- `Y` is incremented for routine feature releases.
+- `Z` is incremented only for an urgent fix to the current patch release.
+
+The scheduled release flow is:
+
+```text
+discover the latest official formal Release
+  → fetch the exact upstream source and submodules
+  → verify and apply the overlay twice
+  → lock dependencies and run all tests
+  → build amd64, arm64, Windows, and independent DEBs
+  → start and smoke-test both container architectures
+  → publish the GitHub Release and GHCR image only when everything succeeds
+```
+
+A functional or architecture failure stops the release and creates a GitHub
+Issue. If logs classify the failure as GitHub Runner resource exhaustion,
+communication loss, or timeout, the controller retries at 10, 30, and 90
+minutes. It stops and notifies only after all three retries fail.
+
+The first Starry release is excluded from automatic retries and is not
+published until the README, Release content, and image preview are approved.
+After that release succeeds, setting the repository variable
+`STARRY_RELEASE_ENABLED=true` enables unattended publication for later formal
+upstream releases.
+
+## Overlay development
+
+This repository stores the overlay modules, injection script, configuration
+template, packaging files, and workflows. To validate an official checkout:
+
+```sh
+python3 scripts/apply_overlay.py /path/to/clean/rustdesk-server
+python3 scripts/apply_overlay.py /path/to/clean/rustdesk-server
+git -C /path/to/clean/rustdesk-server diff --check
+```
+
+The script must be idempotent. A missing or duplicated fixed anchor causes an
+immediate failure so an upstream structural change stops publication instead
+of producing an incomplete hard fork.
+
+## Licence
+
+The upstream RustDesk Server and this project remain under `AGPL-3.0`.
+Published artifacts are built from the corresponding official revision plus
+this repository's overlay.

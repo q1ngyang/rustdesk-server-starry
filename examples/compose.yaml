@@ -1,43 +1,67 @@
-name: rustdesk-server-geo-example
+# Complete Docker Compose example for rustdesk-server-starry.
+#
+# Repository checkout:
+#   cp examples/.env.example .env
+#   cp examples/compose.yaml compose.yaml
+#   mkdir -p data
+#   docker compose --env-file .env up -d
+#
+# GitHub Release assets:
+#   cp compose.env.example .env
+#   mkdir -p data
+#   docker compose --env-file .env up -d
+#
+# This file uses host networking and is intended for a Linux Docker host.
+# No ports section is needed: HBBS and HBBR listen directly on the host on the
+# same ports as the official rustdesk-server image.
+
+name: ${STARRY_COMPOSE_PROJECT_NAME:-rustdesk-server-starry}
 
 services:
   hbbs:
-    image: ghcr.io/q1ngyang/rustdesk-server-geo:latest
-    container_name: rustdesk-hbbs
+    # STARRY_IMAGE must not include a tag. Pin STARRY_VERSION to a release such
+    # as 1.1.16-patch-v1.0.0 for reproducible production deployments.
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-latest}
+    container_name: ${STARRY_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
+
+    # Starry feature settings are read from the external YAML file. They are
+    # deliberately not passed as container environment variables.
     command:
       - hbbs
-      - -r
-      - "${RUSTDESK_RELAY_SERVERS}"
-    environment:
-      GEO_RELAY_ENABLED: "${GEO_RELAY_ENABLED:-true}"
-      GEO_RELAY_RULES: "${GEO_RELAY_RULES}"
-      GEOIP_COUNTRY_DB_URL: "${GEOIP_COUNTRY_DB_URL}"
-      GEOIP_CITY_DB_URL: "${GEOIP_CITY_DB_URL:-}"
-      GEOIP_ASN_DB_URL: "${GEOIP_ASN_DB_URL:-}"
-      GEOIP_COUNTRY_DB_PATH: "${GEOIP_COUNTRY_DB_PATH:-/root/geoip/GeoLite2-Country.mmdb}"
-      GEOIP_CITY_DB_PATH: "${GEOIP_CITY_DB_PATH:-/root/geoip/GeoLite2-City.mmdb}"
-      GEOIP_ASN_DB_PATH: "${GEOIP_ASN_DB_PATH:-/root/geoip/GeoLite2-ASN.mmdb}"
-      GEOIP_UPDATE_INTERVAL: "${GEOIP_UPDATE_INTERVAL:-168h}"
-      GEOIP_UPDATE_ON_START: "${GEOIP_UPDATE_ON_START:-true}"
-      GEOIP_FORCE_UPDATE_ON_START: "${GEOIP_FORCE_UPDATE_ON_START:-false}"
-      GEOIP_DOWNLOAD_TIMEOUT: "${GEOIP_DOWNLOAD_TIMEOUT:-600}"
-      GEOIP_MIN_BYTES: "${GEOIP_MIN_BYTES:-65536}"
+      - --starry-config=/root/starry/config.yaml
+
+    # HBBS and HBBR must share this directory so that they use the same server
+    # identity key. It also stores the SQLite database, logs, MMDB files, and
+    # the generated starry/config.yaml plus starry/config.example.yaml files.
     volumes:
-      - /www/wwwroot/rustdesk/server:/root
+      - type: bind
+        source: ${STARRY_DATA_DIR:-./data}
+        target: /root
+
+    # Linux host networking exposes the official ports directly:
+    #   21115/tcp       NAT test and loopback-only management commands
+    #   21116/tcp+udp   HBBS rendezvous/signalling
+    #   21117/tcp       HBBR relay
+    #   21118/tcp       HBBS WebSocket
+    #   21119/tcp       HBBR WebSocket
     network_mode: host
+
+    # This controls start order only. HBBS performs its own Relay reachability
+    # checks and does not depend on a Docker health status from HBBR.
     depends_on:
       - hbbr
-    restart: unless-stopped
-    labels:
-      com.centurylinklabs.watchtower.enable: "true"
+    restart: ${STARRY_RESTART_POLICY:-unless-stopped}
+    stop_grace_period: 20s
 
   hbbr:
-    image: rustdesk/rustdesk-server:latest
-    container_name: rustdesk-hbbr
-    command: hbbr
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-latest}
+    container_name: ${STARRY_HBBR_CONTAINER_NAME:-rustdesk-starry-hbbr}
+    command:
+      - hbbr
     volumes:
-      - /www/wwwroot/rustdesk/server:/root
+      - type: bind
+        source: ${STARRY_DATA_DIR:-./data}
+        target: /root
     network_mode: host
-    restart: unless-stopped
-    labels:
-      com.centurylinklabs.watchtower.enable: "true"
+    restart: ${STARRY_RESTART_POLICY:-unless-stopped}
+    stop_grace_period: 20s

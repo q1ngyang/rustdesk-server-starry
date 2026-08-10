@@ -1,0 +1,21 @@
+[Unit]
+Description=RustDesk Starry Relay Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rustdesk-starry
+Group=rustdesk-starry
+WorkingDirectory=/var/lib/rustdesk-server-starry
+ExecStart=/usr/bin/hbbr
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rustdesk-server-starry
+
+[Install]
+WantedBy=multi-user.target

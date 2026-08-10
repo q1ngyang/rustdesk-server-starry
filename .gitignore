@@ -3,8 +3,14 @@ patched-source.tar.gz
 docker/hbbs
 docker/hbbr
 docker/rustdesk-utils
+docker/amd64/
+docker/arm64/
 .env
+data/
 .idea/
 .vscode/
 __pycache__/
 *.pyc
+starry/config.yaml
+starry/config.example.yaml
+starry/mmdb/

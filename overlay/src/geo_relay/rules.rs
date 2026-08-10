@@ -1,13 +1,9 @@
-use serde::{de::DeserializeOwned, Deserialize, Deserializer};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::starry_config::{GeoConfig, GeoRuleConfig};
 
 use super::GeoFacts;
 
-const RULE_VERSION: u8 = 2;
-
 pub(super) struct RuleSet {
     rules: Vec<RelayRule>,
-    syntax: RuleSyntax,
     requirements: DbRequirements,
 }
 
@@ -23,39 +19,31 @@ pub(super) struct DbRequirements {
     pub(super) asn: bool,
 }
 
-#[derive(Clone, Copy)]
-enum RuleSyntax {
-    YamlV2,
-    Legacy,
-}
-
 impl RuleSet {
     pub(super) fn empty() -> Self {
         Self {
             rules: Vec::new(),
-            syntax: RuleSyntax::YamlV2,
             requirements: DbRequirements::default(),
         }
     }
 
-    pub(super) fn parse(raw: &str) -> Result<Self, String> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Err("GEO_RELAY_RULES is empty".to_owned());
-        }
-        if looks_like_legacy(raw) {
-            return Self::parse_legacy(raw);
+    pub(super) fn compile(config: &GeoConfig) -> Result<Self, String> {
+        if !config.enabled {
+            return Ok(Self::empty());
         }
 
-        let document: RuleDocument = serde_yml::from_str(raw)
-            .map_err(|err| format!("invalid GEO_RELAY_RULES YAML: {err}"))?;
-        if document.version != RULE_VERSION {
-            return Err(format!(
-                "unsupported GEO_RELAY_RULES version {}; expected {RULE_VERSION}",
-                document.version
-            ));
+        let mut rules = Vec::with_capacity(config.rules.len());
+        let mut requirements = DbRequirements::default();
+        for rule in &config.rules {
+            let compiled = RelayRule::compile(rule)?;
+            requirements.merge(compiled.client_a.requirements());
+            requirements.merge(compiled.client_b.requirements());
+            rules.push(compiled);
         }
-        Self::compile(document.rules, RuleSyntax::YamlV2)
+        Ok(Self {
+            rules,
+            requirements,
+        })
     }
 
     pub(super) fn select(
@@ -63,13 +51,12 @@ impl RuleSet {
         facts_a: &GeoFacts,
         facts_b: &GeoFacts,
         online_relays: &[String],
-        rotation: &AtomicUsize,
     ) -> Option<Selection> {
         for rule in &self.rules {
             if !rule.matches(facts_a, facts_b) {
                 continue;
             }
-            if let Some(relay) = select_from_tiers(&rule.relay_tiers, online_relays, rotation) {
+            if let Some(relay) = select_ordered(&rule.relays, online_relays) {
                 return Some(Selection {
                     relay,
                     rule_name: rule.name.clone(),
@@ -83,91 +70,8 @@ impl RuleSet {
         self.rules.len()
     }
 
-    pub(super) fn syntax_name(&self) -> &'static str {
-        match self.syntax {
-            RuleSyntax::YamlV2 => "YAML v2",
-            RuleSyntax::Legacy => "legacy single-line",
-        }
-    }
-
     pub(super) fn requirements(&self) -> DbRequirements {
         self.requirements
-    }
-
-    fn compile(configs: Vec<RelayRuleConfig>, syntax: RuleSyntax) -> Result<Self, String> {
-        if configs.is_empty() {
-            return Err("GEO_RELAY_RULES has no rules".to_owned());
-        }
-
-        let mut rules = Vec::with_capacity(configs.len());
-        let mut requirements = DbRequirements::default();
-        for (index, config) in configs.into_iter().enumerate() {
-            let name = config.name.trim().to_owned();
-            if name.is_empty() {
-                return Err(format!("rule {} has an empty name", index + 1));
-            }
-            if rules.iter().any(|rule: &RelayRule| rule.name == name) {
-                return Err(format!("duplicate rule name: {name}"));
-            }
-            config.matches.client_a.validate(&name)?;
-            config.matches.client_b.validate(&name)?;
-            requirements.merge(config.matches.client_a.requirements());
-            requirements.merge(config.matches.client_b.requirements());
-
-            let relay_tiers = normalize_tiers(config.relay_tiers, &name)?;
-            rules.push(RelayRule {
-                name,
-                symmetric: config.symmetric,
-                client_a: config.matches.client_a,
-                client_b: config.matches.client_b,
-                relay_tiers,
-            });
-        }
-
-        Ok(Self {
-            rules,
-            syntax,
-            requirements,
-        })
-    }
-
-    fn parse_legacy(raw: &str) -> Result<Self, String> {
-        let mut configs = Vec::new();
-        for item in raw
-            .split(';')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            let (raw_key, raw_value) = item
-                .split_once('=')
-                .ok_or_else(|| format!("invalid legacy rule without '=': {item}"))?;
-            let key = raw_key.trim().to_ascii_uppercase();
-            let matches = if key == "DEFAULT" {
-                EndpointPair::default()
-            } else {
-                let (country_a, country_b) = key
-                    .split_once('-')
-                    .ok_or_else(|| format!("invalid legacy country pair: {raw_key}"))?;
-                if !is_country_code(country_a) || !is_country_code(country_b) {
-                    return Err(format!("invalid legacy country pair: {raw_key}"));
-                }
-                EndpointPair {
-                    client_a: Matcher::country(country_a),
-                    client_b: Matcher::country(country_b),
-                }
-            };
-            let relay_tiers = parse_legacy_tiers(raw_value)?
-                .into_iter()
-                .map(RelayTierConfig::Many)
-                .collect();
-            configs.push(RelayRuleConfig {
-                name: format!("legacy-{key}"),
-                symmetric: true,
-                matches,
-                relay_tiers,
-            });
-        }
-        Self::compile(configs, RuleSyntax::Legacy)
     }
 }
 
@@ -182,12 +86,34 @@ impl DbRequirements {
 struct RelayRule {
     name: String,
     symmetric: bool,
-    client_a: Matcher,
-    client_b: Matcher,
-    relay_tiers: Vec<Vec<String>>,
+    client_a: Expression,
+    client_b: Expression,
+    relays: Vec<String>,
 }
 
 impl RelayRule {
+    fn compile(config: &GeoRuleConfig) -> Result<Self, String> {
+        let client_a = ExpressionParser::parse(&config.matches.client_a).map_err(|err| {
+            format!(
+                "Geo rule '{}' has invalid client_a expression: {err}",
+                config.name
+            )
+        })?;
+        let client_b = ExpressionParser::parse(&config.matches.client_b).map_err(|err| {
+            format!(
+                "Geo rule '{}' has invalid client_b expression: {err}",
+                config.name
+            )
+        })?;
+        Ok(Self {
+            name: config.name.clone(),
+            symmetric: config.symmetric,
+            client_a,
+            client_b,
+            relays: config.relays.clone(),
+        })
+    }
+
     fn matches(&self, facts_a: &GeoFacts, facts_b: &GeoFacts) -> bool {
         let direct = self.client_a.matches(facts_a) && self.client_b.matches(facts_b);
         direct
@@ -195,297 +121,337 @@ impl RelayRule {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuleDocument {
-    version: u8,
-    rules: Vec<RelayRuleConfig>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Expression {
+    Any,
+    Predicate(Predicate),
+    And(Box<Expression>, Box<Expression>),
+    Or(Box<Expression>, Box<Expression>),
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RelayRuleConfig {
-    name: String,
-    #[serde(default = "default_true")]
-    symmetric: bool,
-    #[serde(rename = "match")]
-    matches: EndpointPair,
-    relay_tiers: Vec<RelayTierConfig>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum RelayTierConfig {
-    One(String),
-    Many(Vec<String>),
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EndpointPair {
-    #[serde(default)]
-    client_a: Matcher,
-    #[serde(default)]
-    client_b: Matcher,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Matcher {
-    #[serde(default)]
-    all: Vec<Matcher>,
-    #[serde(default)]
-    any: Vec<Matcher>,
-    #[serde(default)]
-    not: Option<Box<Matcher>>,
-    #[serde(default, deserialize_with = "one_or_many")]
-    continent: Vec<String>,
-    #[serde(default, deserialize_with = "one_or_many")]
-    country: Vec<String>,
-    #[serde(default, deserialize_with = "one_or_many")]
-    subdivision: Vec<String>,
-    #[serde(default, deserialize_with = "one_or_many")]
-    city: Vec<String>,
-    #[serde(default, deserialize_with = "one_or_many")]
-    city_geoname_id: Vec<u32>,
-    #[serde(default, deserialize_with = "one_or_many")]
-    asn: Vec<u32>,
-    #[serde(default, deserialize_with = "one_or_many")]
-    asn_org_contains: Vec<String>,
-}
-
-impl Matcher {
-    fn country(country: &str) -> Self {
-        Self {
-            country: vec![country.trim().to_ascii_uppercase()],
-            ..Self::default()
-        }
-    }
-
+impl Expression {
     fn matches(&self, facts: &GeoFacts) -> bool {
-        if !matches_optional(&facts.continent, &self.continent)
-            || !matches_optional(&facts.country, &self.country)
-            || !matches_any_value(
-                &facts.subdivision_codes,
-                &facts.subdivision_names,
-                &self.subdivision,
-            )
-            || !matches_values(&facts.city_names, &self.city)
-            || !matches_number(facts.city_geoname_id, &self.city_geoname_id)
-            || !matches_number(facts.asn, &self.asn)
-            || !matches_contains(&facts.asn_org, &self.asn_org_contains)
-        {
-            return false;
+        match self {
+            Self::Any => true,
+            Self::Predicate(predicate) => predicate.matches(facts),
+            Self::And(left, right) => left.matches(facts) && right.matches(facts),
+            Self::Or(left, right) => left.matches(facts) || right.matches(facts),
         }
-        if !self.all.iter().all(|matcher| matcher.matches(facts)) {
-            return false;
-        }
-        if !self.any.is_empty() && !self.any.iter().any(|matcher| matcher.matches(facts)) {
-            return false;
-        }
-        if self
-            .not
-            .as_ref()
-            .map(|matcher| matcher.matches(facts))
-            .unwrap_or(false)
-        {
-            return false;
-        }
-        true
-    }
-
-    fn validate(&self, rule_name: &str) -> Result<(), String> {
-        validate_strings(&self.continent, "continent", rule_name)?;
-        validate_strings(&self.country, "country", rule_name)?;
-        validate_strings(&self.subdivision, "subdivision", rule_name)?;
-        validate_strings(&self.city, "city", rule_name)?;
-        validate_strings(&self.asn_org_contains, "asn_org_contains", rule_name)?;
-        if self.asn.contains(&0) {
-            return Err(format!("rule '{rule_name}' contains invalid ASN 0"));
-        }
-        for matcher in self.all.iter().chain(self.any.iter()) {
-            matcher.validate(rule_name)?;
-        }
-        if let Some(matcher) = self.not.as_ref() {
-            matcher.validate(rule_name)?;
-        }
-        Ok(())
     }
 
     fn requirements(&self) -> DbRequirements {
-        let mut requirements = DbRequirements {
-            country: !self.country.is_empty() || !self.continent.is_empty(),
-            city: !self.subdivision.is_empty()
-                || !self.city.is_empty()
-                || !self.city_geoname_id.is_empty(),
-            asn: !self.asn.is_empty() || !self.asn_org_contains.is_empty(),
+        match self {
+            Self::Any => DbRequirements::default(),
+            Self::Predicate(predicate) => predicate.requirements(),
+            Self::And(left, right) | Self::Or(left, right) => {
+                let mut requirements = left.requirements();
+                requirements.merge(right.requirements());
+                requirements
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Predicate {
+    Continent(String),
+    Country(String),
+    Subdivision(String),
+    City(String),
+    Geoname(u32),
+    Asn(u32),
+    Isp(String),
+}
+
+impl Predicate {
+    fn compile(raw: &str) -> Result<Expression, String> {
+        let raw = raw.trim();
+        if raw == "*" {
+            return Ok(Expression::Any);
+        }
+        if is_country_code(raw) {
+            return Ok(Expression::Predicate(Self::Country(
+                raw.to_ascii_uppercase(),
+            )));
+        }
+
+        let (field, value) = raw
+            .split_once(':')
+            .ok_or_else(|| format!("'{raw}' must be '*' or field:value"))?;
+        let field = field.trim().to_ascii_lowercase();
+        let value = decode_value(value)?;
+        if value.is_empty() {
+            return Err(format!("field '{field}' has an empty value"));
+        }
+        let predicate = match field.as_str() {
+            "continent" => Self::Continent(value.to_ascii_uppercase()),
+            "country" => {
+                if !is_country_code(&value) {
+                    return Err(format!("country '{value}' must be a two-letter code"));
+                }
+                Self::Country(value.to_ascii_uppercase())
+            }
+            "subdivision" | "region" => Self::Subdivision(value),
+            "city" => Self::City(value),
+            "geoname" | "city_id" => Self::Geoname(parse_nonzero_u32(&field, &value)?),
+            "asn" => {
+                let value = value
+                    .strip_prefix("AS")
+                    .or_else(|| value.strip_prefix("as"))
+                    .unwrap_or(&value);
+                Self::Asn(parse_nonzero_u32(&field, value)?)
+            }
+            "isp" | "asn_org" => Self::Isp(value),
+            _ => {
+                return Err(format!(
+                    "unsupported field '{field}'; use continent, country, subdivision, city, geoname, asn, or isp"
+                ))
+            }
         };
-        for matcher in self.all.iter().chain(self.any.iter()) {
-            requirements.merge(matcher.requirements());
+        Ok(Expression::Predicate(predicate))
+    }
+
+    fn matches(&self, facts: &GeoFacts) -> bool {
+        match self {
+            Self::Continent(expected) => matches_optional(&facts.continent, expected),
+            Self::Country(expected) => matches_optional(&facts.country, expected),
+            Self::Subdivision(expected) => {
+                matches_values(&facts.subdivision_codes, expected)
+                    || matches_values(&facts.subdivision_names, expected)
+            }
+            Self::City(expected) => matches_values(&facts.city_names, expected),
+            Self::Geoname(expected) => facts.city_geoname_id == Some(*expected),
+            Self::Asn(expected) => facts.asn == Some(*expected),
+            Self::Isp(expected) => matches_contains(&facts.asn_org, expected),
         }
-        if let Some(matcher) = self.not.as_ref() {
-            requirements.merge(matcher.requirements());
+    }
+
+    fn requirements(&self) -> DbRequirements {
+        match self {
+            Self::Continent(_) | Self::Country(_) => DbRequirements {
+                country: true,
+                ..DbRequirements::default()
+            },
+            Self::Subdivision(_) | Self::City(_) | Self::Geoname(_) => DbRequirements {
+                city: true,
+                ..DbRequirements::default()
+            },
+            Self::Asn(_) | Self::Isp(_) => DbRequirements {
+                asn: true,
+                ..DbRequirements::default()
+            },
         }
-        requirements
     }
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum OneOrMany<T> {
-    One(T),
-    Many(Vec<T>),
+struct ExpressionParser<'a> {
+    source: &'a str,
+    position: usize,
 }
 
-fn one_or_many<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: DeserializeOwned,
-{
-    match OneOrMany::<T>::deserialize(deserializer)? {
-        OneOrMany::One(value) => Ok(vec![value]),
-        OneOrMany::Many(values) => Ok(values),
-    }
-}
-
-fn normalize_tiers(
-    tiers: Vec<RelayTierConfig>,
-    rule_name: &str,
-) -> Result<Vec<Vec<String>>, String> {
-    let mut normalized = Vec::new();
-    for tier in tiers {
-        let relays = match tier {
-            RelayTierConfig::One(relay) => vec![relay],
-            RelayTierConfig::Many(relays) => relays,
+impl<'a> ExpressionParser<'a> {
+    fn parse(source: &'a str) -> Result<Expression, String> {
+        let mut parser = Self {
+            source,
+            position: 0,
         };
-        let relays: Vec<String> = relays
-            .into_iter()
-            .map(|relay| relay.trim().to_owned())
-            .filter(|relay| !relay.is_empty())
-            .collect();
-        if relays.is_empty() {
-            return Err(format!("rule '{rule_name}' contains an empty relay tier"));
+        let expression = parser.parse_or()?;
+        parser.skip_whitespace();
+        if parser.position != source.len() {
+            return Err(format!("unexpected token at byte {}", parser.position));
         }
-        normalized.push(relays);
+        Ok(expression)
     }
-    if normalized.is_empty() {
-        return Err(format!("rule '{rule_name}' has no relay_tiers"));
+
+    fn parse_or(&mut self) -> Result<Expression, String> {
+        let mut expression = self.parse_and()?;
+        loop {
+            self.skip_whitespace();
+            if !self.consume('/') {
+                break;
+            }
+            let right = self.parse_and()?;
+            expression = Expression::Or(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
     }
-    Ok(normalized)
+
+    fn parse_and(&mut self) -> Result<Expression, String> {
+        let mut expression = self.parse_primary()?;
+        loop {
+            self.skip_whitespace();
+            if !self.consume('+') {
+                break;
+            }
+            let right = self.parse_primary()?;
+            expression = Expression::And(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_primary(&mut self) -> Result<Expression, String> {
+        self.skip_whitespace();
+        if self.consume('(') {
+            let expression = self.parse_or()?;
+            self.skip_whitespace();
+            if !self.consume(')') {
+                return Err(format!("missing ')' at byte {}", self.position));
+            }
+            return Ok(expression);
+        }
+        let raw = self.read_predicate()?;
+        Predicate::compile(raw)
+    }
+
+    fn read_predicate(&mut self) -> Result<&'a str, String> {
+        self.skip_whitespace();
+        let start = self.position;
+        let mut quote = None;
+        let mut escaped = false;
+        while let Some(ch) = self.peek() {
+            if let Some(active_quote) = quote {
+                self.advance(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+            if ch == '\'' || ch == '"' {
+                quote = Some(ch);
+                self.advance(ch);
+                continue;
+            }
+            if matches!(ch, '+' | '/' | '(' | ')') {
+                break;
+            }
+            self.advance(ch);
+        }
+        if quote.is_some() {
+            return Err(format!("unterminated quoted value at byte {start}"));
+        }
+        let value = self.source[start..self.position].trim();
+        if value.is_empty() {
+            Err(format!("missing expression term at byte {start}"))
+        } else {
+            Ok(value)
+        }
+    }
+
+    fn skip_whitespace(&mut self) {
+        while let Some(ch) = self.peek() {
+            if !ch.is_whitespace() {
+                break;
+            }
+            self.advance(ch);
+        }
+    }
+
+    fn consume(&mut self, expected: char) -> bool {
+        if self.peek() == Some(expected) {
+            self.advance(expected);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.source[self.position..].chars().next()
+    }
+
+    fn advance(&mut self, ch: char) {
+        self.position += ch.len_utf8();
+    }
 }
 
-fn select_from_tiers(
-    tiers: &[Vec<String>],
-    online_relays: &[String],
-    rotation: &AtomicUsize,
-) -> Option<String> {
-    for tier in tiers {
-        let available: Vec<&String> = tier
+fn decode_value(raw: &str) -> Result<String, String> {
+    let raw = raw.trim();
+    let Some(first) = raw.chars().next() else {
+        return Ok(String::new());
+    };
+    if first != '\'' && first != '"' {
+        return Ok(raw.to_owned());
+    }
+    if raw.len() < first.len_utf8() * 2 || !raw.ends_with(first) {
+        return Err("quoted value must end with the same quote".to_owned());
+    }
+    let body_start = first.len_utf8();
+    let body_end = raw.len() - first.len_utf8();
+    let mut value = String::new();
+    let mut escaped = false;
+    for ch in raw[body_start..body_end].chars() {
+        if escaped {
+            value.push(ch);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else {
+            value.push(ch);
+        }
+    }
+    if escaped {
+        return Err("quoted value ends with an incomplete escape".to_owned());
+    }
+    Ok(value.trim().to_owned())
+}
+
+fn parse_nonzero_u32(field: &str, value: &str) -> Result<u32, String> {
+    let value = value
+        .parse::<u32>()
+        .map_err(|_| format!("{field} '{value}' is not a valid integer"))?;
+    if value == 0 {
+        Err(format!("{field} must be greater than zero"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn select_ordered(configured_relays: &[String], online_relays: &[String]) -> Option<String> {
+    for configured in configured_relays {
+        if let Some(online) = online_relays
             .iter()
-            .filter_map(|configured| {
-                online_relays
-                    .iter()
-                    .find(|online| online.eq_ignore_ascii_case(configured))
-            })
-            .collect();
-        if !available.is_empty() {
-            let index = rotation.fetch_add(1, Ordering::SeqCst) % available.len();
-            return Some(available[index].clone());
+            .find(|online| online.eq_ignore_ascii_case(configured))
+        {
+            return Some(online.clone());
         }
     }
     None
 }
 
-fn matches_optional(actual: &Option<String>, allowed: &[String]) -> bool {
-    allowed.is_empty()
-        || actual
-            .as_ref()
-            .map(|actual| {
-                allowed
-                    .iter()
-                    .any(|allowed| actual.eq_ignore_ascii_case(allowed.trim()))
-            })
-            .unwrap_or(false)
+fn matches_optional(actual: &Option<String>, expected: &str) -> bool {
+    actual
+        .as_ref()
+        .map(|actual| actual.eq_ignore_ascii_case(expected))
+        .unwrap_or(false)
 }
 
-fn matches_values(actual: &[String], allowed: &[String]) -> bool {
-    allowed.is_empty()
-        || actual.iter().any(|actual| {
-            allowed
-                .iter()
-                .any(|allowed| actual.eq_ignore_ascii_case(allowed.trim()))
-        })
+fn matches_values(actual: &[String], expected: &str) -> bool {
+    actual
+        .iter()
+        .any(|actual| actual.eq_ignore_ascii_case(expected))
 }
 
-fn matches_any_value(first: &[String], second: &[String], allowed: &[String]) -> bool {
-    allowed.is_empty() || matches_values(first, allowed) || matches_values(second, allowed)
-}
-
-fn matches_number(actual: Option<u32>, allowed: &[u32]) -> bool {
-    allowed.is_empty()
-        || actual
-            .map(|actual| allowed.contains(&actual))
-            .unwrap_or(false)
-}
-
-fn matches_contains(actual: &Option<String>, needles: &[String]) -> bool {
-    if needles.is_empty() {
-        return true;
-    }
+fn matches_contains(actual: &Option<String>, expected: &str) -> bool {
     let Some(actual) = actual.as_ref() else {
         return false;
     };
-    let actual = actual.to_ascii_lowercase();
-    needles.iter().any(|needle| {
-        let needle = needle.trim().to_ascii_lowercase();
-        !needle.is_empty() && actual.contains(&needle)
-    })
-}
-
-fn validate_strings(values: &[String], field: &str, rule_name: &str) -> Result<(), String> {
-    if values.iter().any(|value| value.trim().is_empty()) {
-        Err(format!(
-            "rule '{rule_name}' contains an empty value in {field}"
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn looks_like_legacy(raw: &str) -> bool {
-    !raw.contains('\n') && raw.contains('=') && !raw.trim_start().starts_with('{')
-}
-
-fn parse_legacy_tiers(raw: &str) -> Result<Vec<Vec<String>>, String> {
-    let tiers: Vec<Vec<String>> = raw
-        .split('>')
-        .map(|tier| {
-            tier.split(',')
-                .map(str::trim)
-                .filter(|relay| !relay.is_empty())
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .filter(|tier| !tier.is_empty())
-        .collect();
-    if tiers.is_empty() {
-        Err(format!("legacy rule has no relay servers: {raw}"))
-    } else {
-        Ok(tiers)
-    }
+    actual
+        .to_ascii_lowercase()
+        .contains(&expected.to_ascii_lowercase())
 }
 
 fn is_country_code(value: &str) -> bool {
     value.len() == 2 && value.bytes().all(|ch| ch.is_ascii_alphabetic())
 }
 
-fn default_true() -> bool {
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::starry_config::{EndpointExpressions, GeoRuleConfig};
 
     fn facts(country: &str, city: &str, asn: u32, org: &str) -> GeoFacts {
         GeoFacts {
@@ -497,117 +463,86 @@ mod tests {
         }
     }
 
+    fn config(expression: &str, relays: &[&str]) -> GeoConfig {
+        GeoConfig {
+            enabled: true,
+            rules: vec![GeoRuleConfig {
+                name: "test".to_owned(),
+                symmetric: false,
+                matches: EndpointExpressions {
+                    client_a: expression.to_owned(),
+                    client_b: "*".to_owned(),
+                },
+                relays: relays.iter().map(|relay| (*relay).to_owned()).collect(),
+            }],
+        }
+    }
+
     #[test]
-    fn parses_multiline_yaml_and_uses_first_matching_rule() {
-        let rules = RuleSet::parse(
-            r#"
-version: 2
-rules:
-  - name: China Telecom to Tokyo
-    match:
-      client_a:
-        country: CN
-        asn: 4134
-      client_b:
-        country: JP
-        city: [Tokyo, 東京]
-    relay_tiers:
-      - [tokyo-1, tokyo-2]
-      - osaka
-  - name: CN-JP general
-    match:
-      client_a: { country: CN }
-      client_b: { country: JP }
-    relay_tiers: [general]
-"#,
+    fn slash_is_or_plus_is_and_and_parentheses_nest() {
+        let expression = ExpressionParser::parse(
+            "((city:上海+isp:China Telecom)/(city:首尔+isp:KT))+country:CN",
         )
         .unwrap();
-        let online = vec!["tokyo-1".to_owned(), "general".to_owned()];
-        let rotation = AtomicUsize::new(0);
+        assert!(expression.matches(&facts("CN", "上海", 4134, "China Telecom")));
+        assert!(!expression.matches(&facts("KR", "首尔", 4766, "KT")));
+        assert!(!expression.matches(&facts("CN", "上海", 9808, "China Mobile")));
+    }
+
+    #[test]
+    fn plus_has_higher_precedence_than_slash() {
+        let expression = ExpressionParser::parse("city:上海+isp:Telecom/city:东京").unwrap();
+        assert!(expression.matches(&facts("JP", "东京", 2516, "KDDI")));
+        assert!(expression.matches(&facts("CN", "上海", 4134, "China Telecom")));
+        assert!(!expression.matches(&facts("CN", "上海", 9808, "China Mobile")));
+    }
+
+    #[test]
+    fn country_list_uses_or() {
+        let expression = ExpressionParser::parse("CN/JP/KR/TW").unwrap();
+        assert!(expression.matches(&facts("TW", "台北", 3462, "HiNet")));
+        assert!(!expression.matches(&facts("US", "Seattle", 7922, "Comcast")));
+    }
+
+    #[test]
+    fn relays_are_strictly_ordered_without_round_robin() {
+        let rules = RuleSet::compile(&config("CN", &["relay-a", "relay-b"])).unwrap();
+        let online = vec!["relay-b".to_owned(), "relay-a".to_owned()];
+        for _ in 0..10 {
+            let selected = rules
+                .select(
+                    &facts("CN", "上海", 4134, "China Telecom"),
+                    &facts("US", "Seattle", 7922, "Comcast"),
+                    &online,
+                )
+                .unwrap();
+            assert_eq!(selected.relay, "relay-a");
+        }
+    }
+
+    #[test]
+    fn uses_next_relay_only_if_the_first_is_offline() {
+        let rules = RuleSet::compile(&config("CN", &["relay-a", "relay-b"])).unwrap();
         let selected = rules
             .select(
-                &facts("CN", "Shanghai", 4134, "China Telecom"),
-                &facts("JP", "Tokyo", 2516, "KDDI"),
-                &online,
-                &rotation,
+                &facts("CN", "上海", 4134, "China Telecom"),
+                &facts("US", "Seattle", 7922, "Comcast"),
+                &["relay-b".to_owned()],
             )
             .unwrap();
-        assert_eq!(selected.relay, "tokyo-1");
-        assert_eq!(selected.rule_name, "China Telecom to Tokyo");
+        assert_eq!(selected.relay, "relay-b");
     }
 
     #[test]
-    fn supports_recursive_all_any_and_not() {
-        let matcher: Matcher = serde_yml::from_str(
-            r#"
-all:
-  - country: CN
-  - any:
-      - city: Shanghai
-      - asn: 4134
-not:
-  asn_org_contains: China Mobile
-"#,
-        )
-        .unwrap();
-        assert!(matcher.matches(&facts("CN", "Beijing", 4134, "China Telecom")));
-        assert!(!matcher.matches(&facts("CN", "Shanghai", 9808, "China Mobile")));
+    fn quoted_values_may_contain_operator_characters() {
+        let expression = ExpressionParser::parse(r#"city:"A/B"+isp:'X+Y'"#).unwrap();
+        assert!(expression.matches(&facts("US", "A/B", 64512, "Carrier X+Y")));
     }
 
     #[test]
-    fn symmetric_rules_match_reversed_clients() {
-        let rules = RuleSet::parse("CN-JP=jp>hk;DEFAULT=us").unwrap();
-        let online = vec!["jp".to_owned(), "us".to_owned()];
-        let selected = rules
-            .select(
-                &facts("JP", "Tokyo", 2516, "KDDI"),
-                &facts("CN", "Shanghai", 4134, "China Telecom"),
-                &online,
-                &AtomicUsize::new(0),
-            )
-            .unwrap();
-        assert_eq!(selected.relay, "jp");
-    }
-
-    #[test]
-    fn continues_to_lower_rule_if_matching_relays_are_offline() {
-        let rules = RuleSet::parse(
-            r#"
-version: 2
-rules:
-  - name: preferred
-    match:
-      client_a: { country: CN }
-      client_b: { country: JP }
-    relay_tiers: [offline]
-  - name: default
-    match: {}
-    relay_tiers: [online]
-"#,
-        )
-        .unwrap();
-        let selected = rules
-            .select(
-                &facts("CN", "Shanghai", 4134, "China Telecom"),
-                &facts("JP", "Tokyo", 2516, "KDDI"),
-                &["online".to_owned()],
-                &AtomicUsize::new(0),
-            )
-            .unwrap();
-        assert_eq!(selected.relay, "online");
-        assert_eq!(selected.rule_name, "default");
-    }
-
-    #[test]
-    fn rejects_unknown_fields_and_duplicate_names() {
-        let unknown = RuleSet::parse(
-            "version: 2\nrules:\n  - name: bad\n    match: { client_a: { isp: x } }\n    relay_tiers: [x]",
-        );
-        assert!(unknown.is_err());
-
-        let duplicate = RuleSet::parse(
-            "version: 2\nrules:\n  - { name: same, match: {}, relay_tiers: [a] }\n  - { name: same, match: {}, relay_tiers: [b] }",
-        );
-        assert!(duplicate.is_err());
+    fn rejects_malformed_expressions() {
+        for expression in ["CN/", "(CN/JP", "city:", "unknown:value", "USA"] {
+            assert!(ExpressionParser::parse(expression).is_err(), "{expression}");
+        }
     }
 }

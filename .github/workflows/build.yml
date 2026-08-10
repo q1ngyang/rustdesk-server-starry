@@ -1,288 +1,593 @@
-name: 同步上游并构建镜像
+name: Starry upstream release
+run-name: Starry ${{ inputs.upstream_ref || 'latest upstream' }} (${{ github.event_name }})
 
 on:
   push:
     branches:
       - main
   schedule:
-    - cron: "23 3 * * *"
+    - cron: "17 20 * * *"
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: "要构建的 rustdesk-server 标签、分支或提交；留空使用最新正式 Release"
+        description: "Official rustdesk-server release tag; blank uses the latest formal release"
         required: false
         type: string
+      publish:
+        description: "Publish release assets and GHCR image after every check succeeds"
+        required: false
+        default: false
+        type: boolean
       force:
-        description: "即使版本标签已经存在也重新构建"
+        description: "Rebuild even if this Starry release tag already exists"
         required: false
         default: false
         type: boolean
 
+concurrency:
+  group: starry-upstream-release
+  cancel-in-progress: false
+
 permissions:
   contents: read
-  packages: write
 
 env:
   CARGO_TERM_COLOR: always
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/rustdesk-server-geo
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/rustdesk-server-starry
 
 jobs:
   resolve:
-    name: 解析上游版本
+    name: Resolve upstream and Starry versions
     runs-on: ubuntu-24.04
     outputs:
       upstream_ref: ${{ steps.version.outputs.upstream_ref }}
-      version: ${{ steps.version.outputs.version }}
-      image_tag: ${{ steps.version.outputs.image_tag }}
-      skip: ${{ steps.existing.outputs.skip }}
+      upstream_version: ${{ steps.version.outputs.upstream_version }}
+      patch_version: ${{ steps.version.outputs.patch_version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      deb_version: ${{ steps.version.outputs.deb_version }}
+      publish: ${{ steps.version.outputs.publish }}
+      skip: ${{ steps.version.outputs.skip }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: 读取上游和补丁版本
+      - name: Resolve release policy
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_REF: ${{ inputs.upstream_ref }}
+          REQUESTED_PUBLISH: ${{ inputs.publish }}
+          FORCE_BUILD: ${{ inputs.force }}
+          AUTO_ENABLED: ${{ vars.STARRY_RELEASE_ENABLED }}
         run: |
           set -euo pipefail
           upstream_ref="${REQUESTED_REF:-}"
           if [ -z "$upstream_ref" ]; then
             upstream_ref="$(gh api repos/rustdesk/rustdesk-server/releases/latest --jq .tag_name)"
           fi
+
           patch_version="$(tr -d '[:space:]' < PATCH_VERSION)"
-          version="${upstream_ref#v}"
-          safe_version="$(printf '%s' "$version" | tr '/:@ ' '----' | tr -cd 'A-Za-z0-9._-')"
-          if [ -z "$safe_version" ]; then
-            echo "无法从上游引用生成镜像版本" >&2
+          if ! printf '%s' "$patch_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "PATCH_VERSION must use X.Y.Z" >&2
             exit 1
           fi
-          echo "upstream_ref=$upstream_ref" >> "$GITHUB_OUTPUT"
-          echo "version=$safe_version" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${safe_version}-geo.${patch_version}" >> "$GITHUB_OUTPUT"
 
-      - name: 登录 GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: 检查版本是否已经发布
-        id: existing
-        env:
-          IMAGE_TAG: ${{ steps.version.outputs.image_tag }}
-          FORCE_BUILD: ${{ inputs.force }}
-        run: |
-          set -euo pipefail
-          skip=false
-          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] && [ "${FORCE_BUILD:-false}" != "true" ]; then
-            if docker manifest inspect "${IMAGE_NAME}:${IMAGE_TAG}" >/dev/null 2>&1; then
-              skip=true
-            fi
+          upstream_version="${upstream_ref#v}"
+          if ! printf '%s' "$upstream_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([._-][A-Za-z0-9.-]+)?$'; then
+            echo "Automatic releases require a version-like upstream ref: $upstream_ref" >&2
+            exit 1
           fi
-          echo "skip=$skip" >> "$GITHUB_OUTPUT"
-          echo "skip=$skip"
+          release_tag="${upstream_version}-patch-v${patch_version}"
+          deb_upstream="$(printf '%s' "$upstream_version" | tr '-' '~')"
+          deb_version="${deb_upstream}+patch.${patch_version}-1"
+
+          publish=false
+          if [ "${GITHUB_EVENT_NAME}" = schedule ] && [ "${AUTO_ENABLED:-false}" = true ]; then
+            publish=true
+          elif [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${REQUESTED_PUBLISH:-false}" = true ]; then
+            publish=true
+          fi
+
+          skip=false
+          if [ "${GITHUB_EVENT_NAME}" = schedule ] && [ "${AUTO_ENABLED:-false}" != true ]; then
+            skip=true
+          elif [ "${GITHUB_EVENT_NAME}" != push ] && [ "${FORCE_BUILD:-false}" != true ] \
+            && gh release view "$release_tag" >/dev/null 2>&1; then
+            skip=true
+          fi
+
+          {
+            echo "upstream_ref=$upstream_ref"
+            echo "upstream_version=$upstream_version"
+            echo "patch_version=$patch_version"
+            echo "release_tag=$release_tag"
+            echo "deb_version=$deb_version"
+            echo "publish=$publish"
+            echo "skip=$skip"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Starry release resolution"
+            echo
+            echo "- Upstream: \`rustdesk/rustdesk-server@$upstream_ref\`"
+            echo "- Starry tag: \`$release_tag\`"
+            echo "- Publish after validation: \`$publish\`"
+            echo "- Skip: \`$skip\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   source:
-    name: 准备带 Geo 补丁的上游源码
+    name: Apply and verify the overlay
     needs: resolve
     if: needs.resolve.outputs.skip != 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
-      - name: 克隆官方上游
+      - name: Validate the published Compose examples
+        run: >-
+          docker compose
+          --env-file examples/.env.example
+          -f examples/compose.yaml
+          config --quiet
+
+      - name: Fetch the exact official source
         env:
           UPSTREAM_REF: ${{ needs.resolve.outputs.upstream_ref }}
         run: |
-          git clone --recurse-submodules --depth 1 --branch "$UPSTREAM_REF" \
-            https://github.com/rustdesk/rustdesk-server.git _upstream
+          set -euo pipefail
+          git init _upstream
+          git -C _upstream remote add origin https://github.com/rustdesk/rustdesk-server.git
+          git -C _upstream fetch --depth 1 origin "$UPSTREAM_REF"
+          git -C _upstream checkout --detach FETCH_HEAD
+          git -C _upstream submodule update --init --recursive --depth 1
 
-      - name: 应用 Geo Relay 扩展
+      - name: Apply the Starry overlay twice
         run: |
+          set -euo pipefail
           python3 scripts/apply_overlay.py _upstream
+          python3 scripts/apply_overlay.py _upstream
+          python3 -m py_compile scripts/apply_overlay.py
           git -C _upstream diff --check
 
-      - name: 打包修改后的源码
-        run: tar -czf patched-source.tar.gz -C _upstream .
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Lock the patched dependency graph
+        run: |
+          cargo metadata --manifest-path _upstream/Cargo.toml \
+            --format-version 1 >/dev/null
+          cargo metadata --manifest-path _upstream/Cargo.toml \
+            --format-version 1 --locked >/dev/null
+
+      - name: Archive patched source
+        run: tar --exclude=.git -czf patched-source.tar.gz -C _upstream .
 
       - uses: actions/upload-artifact@v7
         with:
           name: patched-source
           path: patched-source.tar.gz
           if-no-files-found: error
-          retention-days: 2
+          retention-days: 3
+          compression-level: 0
+          overwrite: true
 
   test:
-    name: 测试 Geo 规则和上游兼容性
+    name: Protocol, rules, fallback, and binary checks
     needs:
       - resolve
       - source
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
-
       - uses: actions/download-artifact@v8
         with:
           name: patched-source
 
-      - name: 测试 MMDB 下载校验
-        run: sh tests/test_geo_entrypoint.sh
-
-      - name: 解压源码
+      - name: Extract source
         run: mkdir _upstream && tar -xzf patched-source.tar.gz -C _upstream
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
-      - name: 检查 Rust 格式
+      - name: Verify overlay formatting
         run: |
           rustfmt --edition 2021 --check \
+            _upstream/src/starry_config.rs \
+            _upstream/src/secure_tcp.rs \
             _upstream/src/geo_relay.rs \
             _upstream/src/geo_relay/rules.rs
 
-      - name: 运行 Geo Relay 单元测试
-        run: cargo test --manifest-path _upstream/Cargo.toml --lib geo_relay
+      - name: Run all library tests serially
+        run: cargo test --manifest-path _upstream/Cargo.toml --locked --lib -j 1
 
-  build:
-    name: 构建 ${{ matrix.arch }}
+      - name: Check all server binaries serially
+        run: cargo check --manifest-path _upstream/Cargo.toml --locked --bins -j 1
+
+  linux:
+    name: Linux ${{ matrix.arch }} static binaries
     needs:
       - resolve
       - source
       - test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
             target: x86_64-unknown-linux-musl
-            platform: linux/amd64
           - arch: arm64
             target: aarch64-unknown-linux-musl
-            platform: linux/arm64
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: patched-source
 
-      - name: 解压源码
+      - name: Extract source
         run: mkdir _upstream && tar -xzf patched-source.tar.gz -C _upstream
 
-      - name: 交叉编译静态二进制
+      - name: Cross-compile static binaries
         uses: houseabsolute/actions-rust-cross@v1
         with:
           command: build
           target: ${{ matrix.target }}
           toolchain: stable
           working-directory: _upstream
-          args: "--release --all-features"
+          args: "--locked --release --bins"
           force-use-cross: true
 
-      - name: 收集二进制
+      - name: Collect Linux release assets
+        env:
+          ARCH: ${{ matrix.arch }}
+          TARGET: ${{ matrix.target }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
-          mkdir binaries
-          cp "_upstream/target/${{ matrix.target }}/release/hbbs" binaries/
-          cp "_upstream/target/${{ matrix.target }}/release/hbbr" binaries/
-          cp "_upstream/target/${{ matrix.target }}/release/rustdesk-utils" binaries/
-          chmod +x binaries/*
+          set -euo pipefail
+          mkdir artifact
+          for binary in hbbs hbbr rustdesk-utils; do
+            install -m 0755 "_upstream/target/${TARGET}/release/${binary}" \
+              "artifact/${binary}-${RELEASE_TAG}-linux-${ARCH}"
+          done
+          tar -czf "artifact/rustdesk-server-starry-${RELEASE_TAG}-linux-${ARCH}.tar.gz" \
+            -C "_upstream/target/${TARGET}/release" hbbs hbbr rustdesk-utils
 
       - uses: actions/upload-artifact@v7
         with:
-          name: binaries-${{ matrix.arch }}
-          path: binaries/
+          name: linux-${{ matrix.arch }}
+          path: artifact/
           if-no-files-found: error
-          retention-days: 2
+          retention-days: 3
+          compression-level: 0
+          overwrite: true
 
-  image:
-    name: 发布 ${{ matrix.arch }} 镜像
+  windows:
+    name: Windows amd64 binaries
     needs:
       - resolve
-      - build
+      - source
+      - test
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: patched-source
+
+      - name: Extract source
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path _upstream | Out-Null
+          tar -xzf patched-source.tar.gz -C _upstream
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Windows binaries
+        run: cargo build --manifest-path _upstream/Cargo.toml --locked --release --bins
+
+      - name: Collect Windows release assets
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          New-Item -ItemType Directory -Path artifact | Out-Null
+          foreach ($binary in @('hbbs', 'hbbr', 'rustdesk-utils')) {
+            Copy-Item -LiteralPath "_upstream/target/release/$binary.exe" -Destination "artifact/$binary-$env:RELEASE_TAG-windows-amd64.exe"
+          }
+          Compress-Archive -Path artifact/*.exe -DestinationPath "artifact/rustdesk-server-starry-$env:RELEASE_TAG-windows-amd64.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-amd64
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+          overwrite: true
+
+  deb:
+    name: Debian ${{ matrix.arch }} packages
+    needs:
+      - resolve
+      - linux
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-          - arch: arm64
-            platform: linux/arm64
+        arch:
+          - amd64
+          - arm64
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
-          name: binaries-${{ matrix.arch }}
-          path: docker
+          name: linux-${{ matrix.arch }}
+          path: input
 
-      - name: 设置二进制权限
-        run: chmod +x docker/hbbs docker/hbbr docker/rustdesk-utils docker/geo-entrypoint.sh
+      - name: Build independent DEB packages
+        env:
+          ARCH: ${{ matrix.arch }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          DEB_VERSION: ${{ needs.resolve.outputs.deb_version }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_deb.sh
+          scripts/build_deb.sh hbbs "input/hbbs-${RELEASE_TAG}-linux-${ARCH}" \
+            "$ARCH" "$DEB_VERSION" artifact
+          scripts/build_deb.sh hbbr "input/hbbr-${RELEASE_TAG}-linux-${ARCH}" \
+            "$ARCH" "$DEB_VERSION" artifact
+          scripts/build_deb.sh utils "input/rustdesk-utils-${RELEASE_TAG}-linux-${ARCH}" \
+            "$ARCH" "$DEB_VERSION" artifact
+          for package in artifact/*.deb; do
+            dpkg-deb --info "$package" >/dev/null
+            dpkg-deb --contents "$package" >/dev/null
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-${{ matrix.arch }}
+          path: artifact/*.deb
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+          overwrite: true
+
+  image-test:
+    name: Docker image smoke test ${{ matrix.arch }}
+    needs:
+      - resolve
+      - linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+          - arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-${{ matrix.arch }}
+          path: input
+
+      - name: Prepare Docker context
+        env:
+          ARCH: ${{ matrix.arch }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "docker/${ARCH}"
+          install -m 0755 "input/hbbs-${RELEASE_TAG}-linux-${ARCH}" "docker/${ARCH}/hbbs"
+          install -m 0755 "input/hbbr-${RELEASE_TAG}-linux-${ARCH}" "docker/${ARCH}/hbbr"
+          install -m 0755 "input/rustdesk-utils-${RELEASE_TAG}-linux-${ARCH}" \
+            "docker/${ARCH}/rustdesk-utils"
+
+      - uses: docker/setup-qemu-action@v4
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: 登录 GHCR
-        uses: docker/login-action@v4
+      - name: Build the architecture image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker buildx build --load --platform "linux/${ARCH}" \
+            --build-arg "TARGETARCH=${ARCH}" \
+            --tag "starry-smoke:${ARCH}" docker
+
+      - name: Smoke-test all commands
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" hbbs --help
+          docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" hbbr --help
+          docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" \
+            rustdesk-utils genkeypair >/dev/null
+
+          state_dir="$(mktemp -d)"
+          container="$(docker run -d --platform "linux/${ARCH}" \
+            -v "${state_dir}:/root" "starry-smoke:${ARCH}" \
+            hbbs --starry-config=/root/starry/config.yaml)"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 20); do
+            if [ -f "${state_dir}/starry/config.yaml" ] \
+              && [ -f "${state_dir}/starry/config.example.yaml" ]; then
+              break
+            fi
+            if [ "$(docker inspect --format '{{.State.Running}}' "$container")" != true ]; then
+              echo "HBBS stopped before generating the external configuration" >&2
+              docker logs "$container" >&2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+          test -f "${state_dir}/starry/config.yaml"
+          test ! -s "${state_dir}/starry/config.yaml"
+          cmp "${state_dir}/starry/config.example.yaml" config/config.example.yaml
+          cleanup
+          trap - EXIT
+
+  publish:
+    name: Publish release and multi-architecture image
+    needs:
+      - resolve
+      - source
+      - test
+      - linux
+      - windows
+      - deb
+      - image-test
+    if: needs.resolve.outputs.skip != 'true' && needs.resolve.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-amd64
+          path: _artifacts/linux-amd64
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-arm64
+          path: _artifacts/linux-arm64
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-amd64
+          path: _artifacts/windows-amd64
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: deb-*
+          path: _artifacts/deb
+          merge-multiple: true
+
+      - name: Prepare image context and release files
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p docker/amd64 docker/arm64 release-assets
+          for arch in amd64 arm64; do
+            install -m 0755 "_artifacts/linux-${arch}/hbbs-${RELEASE_TAG}-linux-${arch}" \
+              "docker/${arch}/hbbs"
+            install -m 0755 "_artifacts/linux-${arch}/hbbr-${RELEASE_TAG}-linux-${arch}" \
+              "docker/${arch}/hbbr"
+            install -m 0755 \
+              "_artifacts/linux-${arch}/rustdesk-utils-${RELEASE_TAG}-linux-${arch}" \
+              "docker/${arch}/rustdesk-utils"
+          done
+          cp _artifacts/linux-amd64/* release-assets/
+          cp _artifacts/linux-arm64/* release-assets/
+          cp _artifacts/windows-amd64/* release-assets/
+          cp _artifacts/deb/* release-assets/
+          cp config/config.example.yaml release-assets/config.example.yaml
+          cp examples/compose.yaml release-assets/compose.yaml
+          cp examples/.env.example release-assets/compose.env.example
+          cp README.md release-assets/README.md
+          cp README.zh-CN.md release-assets/README.zh-CN.md
+          (cd release-assets && sha256sum -- * > SHA256SUMS)
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: 构建并推送单架构镜像
+      - name: Push the final amd64 and arm64 image
         uses: docker/build-push-action@v7
         with:
           context: docker
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64
           push: true
-          provenance: true
+          provenance: mode=max
           sbom: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ needs.resolve.outputs.image_tag }}-${{ matrix.arch }}
-            ${{ env.IMAGE_NAME }}:latest-${{ matrix.arch }}
+            ${{ env.IMAGE_NAME }}:${{ needs.resolve.outputs.release_tag }}
+            ${{ env.IMAGE_NAME }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.version=${{ needs.resolve.outputs.image_tag }}
-            org.opencontainers.image.description=RustDesk Server OSS with environment-driven Geo Relay selection
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#docker-compose-deployment
+            org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
+            org.opencontainers.image.description=Official rustdesk-server with the Starry GEO Relay and Secure TCP overlay
 
-  manifest:
-    name: 发布多架构清单
-    needs:
-      - resolve
-      - image
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: docker/setup-buildx-action@v4
-
-      - name: 登录 GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: 创建版本和 latest 清单
+      - name: Publish GitHub release assets
         env:
-          IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
-        run: |
-          docker buildx imagetools create \
-            --tag "${IMAGE_NAME}:${IMAGE_TAG}" \
-            "${IMAGE_NAME}:${IMAGE_TAG}-amd64" \
-            "${IMAGE_NAME}:${IMAGE_TAG}-arm64"
-          docker buildx imagetools create \
-            --tag "${IMAGE_NAME}:latest" \
-            "${IMAGE_NAME}:latest-amd64" \
-            "${IMAGE_NAME}:latest-arm64"
-
-      - name: 写入任务摘要
-        env:
-          IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
           UPSTREAM_REF: ${{ needs.resolve.outputs.upstream_ref }}
         run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          Based on official rustdesk/rustdesk-server ${UPSTREAM_REF}.
+
+          Includes ordered GEO Relay routing and native HBBS Secure TCP compatibility.
+
+          ## Docker Compose
+
+          Download \`compose.yaml\` and \`compose.env.example\`, then run:
+
+          \`\`\`sh
+          cp compose.env.example .env
+          mkdir -p data
+          docker compose --env-file .env -f compose.yaml up -d
+          \`\`\`
+
+          Starry creates the empty functional configuration at
+          \`data/starry/config.yaml\` and the documented template at
+          \`data/starry/config.example.yaml\`. GEO, MMDB, Secure TCP, and
+          Relay priority settings belong in that YAML file, not in \`.env\`.
+
+          Documentation: https://github.com/${GITHUB_REPOSITORY}
+
+          ## 简体中文
+
+          下载 \`compose.yaml\` 与 \`compose.env.example\`，将后者复制为
+          \`.env\` 后执行上面的 Compose 命令。功能配置仍写入
+          \`data/starry/config.yaml\`，不要把 GEO、MMDB、Secure TCP 或 Relay
+          规则放入 ENV 文件。
+
+          中文文档：https://github.com/${GITHUB_REPOSITORY}/blob/main/README.zh-CN.md
+
+          Verify local binaries and DEB packages against \`SHA256SUMS\` before installation.
+          EOF
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+            gh release edit "$RELEASE_TAG" --notes-file release-notes.md --latest
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --target "$GITHUB_SHA" \
+              --title "rustdesk-server-starry $RELEASE_TAG" \
+              --notes-file release-notes.md \
+              --latest
+          fi
+
+      - name: Write publication summary
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
           {
-            echo "## 构建完成"
+            echo "## Starry publication completed"
             echo
-            echo "- 上游：\`rustdesk/rustdesk-server@${UPSTREAM_REF}\`"
-            echo "- 镜像：\`${IMAGE_NAME}:${IMAGE_TAG}\`"
-            echo "- 滚动标签：\`${IMAGE_NAME}:latest\`"
+            echo "- Release: \`$RELEASE_TAG\`"
+            echo "- Image: \`${IMAGE_NAME}:$RELEASE_TAG\`"
+            echo "- Rolling image: \`${IMAGE_NAME}:latest\`"
           } >> "$GITHUB_STEP_SUMMARY"

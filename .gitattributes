@@ -4,4 +4,6 @@
 *.yaml text eol=lf
 *.py text eol=lf
 *.rs text eol=lf
+*.md text eol=lf
+examples/.env.example text eol=lf
 PATCH_VERSION text eol=lf

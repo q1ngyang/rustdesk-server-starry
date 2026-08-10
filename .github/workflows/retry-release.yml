@@ -1,0 +1,94 @@
+name: Starry release retry controller
+
+on:
+  workflow_run:
+    workflows:
+      - Starry upstream release
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  retry-or-notify:
+    name: Retry resource failures or notify
+    if: >-
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.conclusion != 'success' &&
+      vars.STARRY_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    steps:
+      - name: Classify the failed run
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          gh run view "$RUN_ID" --log-failed > failed.log 2>&1 || true
+          resource_failure=false
+          if [ "$RUN_CONCLUSION" = timed_out ]; then
+            resource_failure=true
+          elif grep -Eiq \
+            'runner has received a shutdown signal|lost communication with the runner|no space left on device|the job running on runner .* exceeded the maximum execution time|502 bad gateway|503 service unavailable|504 gateway timeout|connection reset by peer|tls handshake timeout|failed to download action' \
+            failed.log; then
+            resource_failure=true
+          fi
+
+          retry_number="$RUN_ATTEMPT"
+          can_retry=false
+          if [ "$resource_failure" = true ] && [ "$RUN_ATTEMPT" -lt 4 ]; then
+            can_retry=true
+          fi
+          {
+            echo "resource_failure=$resource_failure"
+            echo "can_retry=$can_retry"
+            echo "retry_number=$retry_number"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Wait outside the peak window
+        if: steps.classify.outputs.can_retry == 'true'
+        env:
+          RETRY_NUMBER: ${{ steps.classify.outputs.retry_number }}
+        run: |
+          set -euo pipefail
+          case "$RETRY_NUMBER" in
+            1) delay=600 ;;
+            2) delay=1800 ;;
+            3) delay=5400 ;;
+            *) exit 1 ;;
+          esac
+          echo "Resource/timeout failure: retry $RETRY_NUMBER of 3 after ${delay}s"
+          sleep "$delay"
+
+      - name: Re-run failed jobs
+        if: steps.classify.outputs.can_retry == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: gh run rerun "$RUN_ID" --failed
+
+      - name: Notify after a functional failure or exhausted retries
+        if: steps.classify.outputs.can_retry != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RESOURCE_FAILURE: ${{ steps.classify.outputs.resource_failure }}
+        run: |
+          set -euo pipefail
+          title="Starry automatic release failed (run ${RUN_ID})"
+          body="Automatic publication stopped. Resource/timeout classification: ${RESOURCE_FAILURE}. Run attempt: ${RUN_ATTEMPT}. Details: ${RUN_URL}"
+          existing="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
