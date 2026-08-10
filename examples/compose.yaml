@@ -1,67 +1,80 @@
-# Complete Docker Compose example for rustdesk-server-starry.
+# Recommended single-host deployment for rustdesk-server-starry.
+#
+# Starry modifies HBBS only. This example therefore runs Starry HBBS and an
+# unmodified official HBBR built for the matching upstream version.
 #
 # Repository checkout:
 #   cp examples/.env.example .env
 #   cp examples/compose.yaml compose.yaml
 #   mkdir -p data
-#   docker compose --env-file .env up -d
+#   docker compose --env-file .env -f compose.yaml config --quiet
+#   docker compose --env-file .env -f compose.yaml up -d
 #
 # GitHub Release assets:
 #   cp compose.env.example .env
 #   mkdir -p data
-#   docker compose --env-file .env up -d
+#   docker compose --env-file .env -f compose.yaml config --quiet
+#   docker compose --env-file .env -f compose.yaml up -d
 #
-# This file uses host networking and is intended for a Linux Docker host.
-# No ports section is needed: HBBS and HBBR listen directly on the host on the
-# same ports as the official rustdesk-server image.
+# Linux host networking is intentional: HBBS needs the real peer address for
+# NAT and Geo decisions. Do not use this file unchanged on Docker Desktop.
 
 name: ${STARRY_COMPOSE_PROJECT_NAME:-rustdesk-server-starry}
 
 services:
   hbbs:
-    # STARRY_IMAGE must not include a tag. Pin STARRY_VERSION to a release such
-    # as 1.1.16-patch-v1.1.0 for reproducible production deployments.
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-latest}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.1.0}
     container_name: ${STARRY_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
-
-    # Starry feature settings are read from the external YAML file. They are
-    # deliberately not passed as container environment variables.
     command:
       - hbbs
       - --starry-config=/root/starry/config.yaml
-
-    # HBBS and HBBR must share this directory so that they use the same server
-    # identity key. It also stores the SQLite database, logs, MMDB files, and
-    # the generated starry/config.yaml plus starry/config.example.yaml files.
+    environment:
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
     volumes:
       - type: bind
         source: ${STARRY_DATA_DIR:-./data}
         target: /root
-
-    # Linux host networking exposes the official ports directly:
-    #   21115/tcp       NAT test and loopback-only management commands
-    #   21116/tcp+udp   HBBS rendezvous/signalling
-    #   21117/tcp       HBBR relay
-    #   21118/tcp       HBBS WebSocket
-    #   21119/tcp       HBBR WebSocket
     network_mode: host
-
-    # This controls start order only. HBBS performs its own Relay reachability
-    # checks and does not depend on a Docker health status from HBBR.
-    depends_on:
-      - hbbr
     restart: ${STARRY_RESTART_POLICY:-unless-stopped}
     stop_grace_period: 20s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -s /root/id_ed25519 &&
+          test -s /root/id_ed25519.pub &&
+          nc -w 2 127.0.0.1 21116 </dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
 
   hbbr:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-latest}
-    container_name: ${STARRY_HBBR_CONTAINER_NAME:-rustdesk-starry-hbbr}
+    image: ${RUSTDESK_SERVER_IMAGE:-rustdesk/rustdesk-server}:${RUSTDESK_SERVER_VERSION:-1.1.16}
+    container_name: ${STARRY_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
     command:
       - hbbr
+      - -k
+      - _
+    environment:
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
     volumes:
       - type: bind
         source: ${STARRY_DATA_DIR:-./data}
         target: /root
     network_mode: host
+    depends_on:
+      hbbs:
+        condition: service_healthy
     restart: ${STARRY_RESTART_POLICY:-unless-stopped}
-    stop_grace_period: 20s
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "5"

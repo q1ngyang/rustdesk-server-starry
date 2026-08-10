@@ -1,0 +1,214 @@
+# Upgrade and rollback
+
+**English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Upgrade-and-Rollback)
+
+An upgrade changes two versions: the official RustDesk Server base and the
+Starry patch. A tag such as `1.1.16-patch-v1.1.0` means official server
+`1.1.16` plus Starry patch `1.1.0`. Pin that complete tag, and record the image
+digest used in production.
+
+## Upgrade rules
+
+- Read both the Starry release notes and the upstream RustDesk Server changes.
+- Back up the persistent data directory before pulling or replacing anything.
+- Preserve `id_ed25519`; changing it changes the server identity.
+- Keep the previous image tag, binary/package, config, and verified Compose
+  file available until acceptance is complete.
+- Change the binary/image before enabling a new schema or transport feature.
+- Roll out one centre at a time; do not run duplicate HBBS instances against
+  the same public ports and data directory.
+- Mark untested paths as untested. Static checks are not runtime acceptance.
+
+## Read the current patch notes
+
+- [patch-v1.1.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/RELEASE-NOTES-patch-v1.1.0.md)
+- [Changelog](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CHANGELOG.md)
+
+Patch v1.1.0 adds opt-in persistent `/ws/id` signalling, WSS/native mixed
+sessions, certificate-verified WSS Relay health, schema v2 limits, and
+transport-aware selection. Schema v1 remains accepted and leaves WebSocket
+Signal disabled.
+
+## 1. Inventory and backup
+
+From the deployment directory:
+
+```sh
+set -eu
+date -u
+docker compose --env-file .env -f compose.yaml ps
+docker compose --env-file .env -f compose.yaml config --images
+docker inspect rustdesk-starry-hbbs --format '{{.Config.Image}} {{json .Image}}'
+
+backup_dir="../rustdesk-starry-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$backup_dir"
+cp -a data "$backup_dir/data"
+cp -a .env compose.yaml "$backup_dir/"
+sha256sum "$backup_dir/data/id_ed25519" \
+  "$backup_dir/data/id_ed25519.pub" \
+  "$backup_dir/data/starry/config.yaml"
+```
+
+Protect the backup: it contains the private server identity and may contain
+database or account-related state. Verify that files are non-empty and that
+the backup resides outside the live bind directory.
+
+For an optional third-party API, follow that project's database-consistent
+backup procedure separately. Starry cannot guarantee another project's state
+format or migration behaviour.
+
+## 2. Prepare a candidate configuration
+
+For patch v1.0.0 to v1.1.0, keep the existing schema v1 file for the first
+binary/image replacement. Prepare schema v2 as a separate candidate:
+
+```yaml
+version: 2
+
+# Existing relay_servers, secure_tcp, mmdb, and geo sections stay here.
+
+websocket_signal:
+  enabled: false
+  # Define limits, trusted proxies, and exact Relay health endpoints here.
+```
+
+Endpoint Relay names must cover `relay_servers` exactly before WebSocket is
+enabled. Do not overwrite the active config yet.
+
+## 3. Pull and inspect without starting
+
+Set the new immutable version in `.env`:
+
+```dotenv
+STARRY_VERSION=1.1.16-patch-v1.1.0
+RUSTDESK_SERVER_VERSION=1.1.16
+```
+
+Then:
+
+```sh
+docker compose --env-file .env -f compose.yaml config --quiet
+docker compose --env-file .env -f compose.yaml pull
+docker compose --env-file .env -f compose.yaml images
+```
+
+If your policy pins digests, compare the pulled digest with the reviewed
+release/package value. Do not infer identity from a mutable `latest` tag.
+
+## 4. Replace only the intended services
+
+```sh
+docker compose --env-file .env -f compose.yaml up -d hbbs hbbr
+docker compose --env-file .env -f compose.yaml ps
+docker compose --env-file .env -f compose.yaml logs --tail 200 hbbs hbbr
+```
+
+With the old schema v1 config, verify:
+
+- both services remain stable and use the existing key;
+- native registration works;
+- API-authenticated native Secure TCP works when an API is deployed;
+- P2P and native Relay work; and
+- the expected native Geo and failover decisions remain unchanged.
+
+Stop here if the native baseline regresses.
+
+## 5. Introduce schema v2 with WebSocket disabled
+
+Install the candidate as `data/starry/config.yaml`, then reload:
+
+```sh
+docker exec rustdesk-starry-hbbs sh -c \
+  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+docker logs --tail 200 rustdesk-starry-hbbs
+```
+
+The response and logs must say the complete config was accepted. Validate
+native sessions again. A schema change is not accepted merely because HBBS did
+not exit; invalid Starry config deliberately falls back to upstream behaviour.
+
+## 6. Stage TLS and enable WebSocket
+
+1. Deploy exact Nginx `/ws/id` and `/ws/relay` locations.
+2. Run `nginx -t`, reload Nginx, and verify the public certificate names.
+3. Confirm HTTP Upgrade on every endpoint.
+4. Set `websocket_signal.enabled: true` and reload Starry.
+5. Wait one health interval and inspect `websocket-status`.
+6. Run `test-geo` for `native`, `wss`, and `mixed`.
+7. Test WSS-to-WSS and both mixed directions with real clients.
+8. Test Relay failure and recovery before expanding rollout.
+
+Use the complete checklist in
+[Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification).
+
+## Feature rollback
+
+If only WebSocket Signal regresses and native behaviour remains sound:
+
+1. set `websocket_signal.enabled: false`;
+2. run `reload-starry-config`;
+3. confirm the management response and HBBS drain log;
+4. disable WebSocket on clients or remove the rollout policy; and
+5. re-verify native registration, P2P, Secure TCP, and native Relay.
+
+Keep the public Nginx locations closed or unused according to your rollback
+policy. Existing WSS sessions are drained when the feature is disabled.
+
+## Image rollback
+
+Restore the previous `.env` and configuration from the reviewed backup:
+
+```sh
+cp -a ../rustdesk-starry-backup-YYYYMMDDTHHMMSSZ/.env .env
+cp -a ../rustdesk-starry-backup-YYYYMMDDTHHMMSSZ/compose.yaml compose.yaml
+cp -a ../rustdesk-starry-backup-YYYYMMDDTHHMMSSZ/data/starry/config.yaml \
+  data/starry/config.yaml
+
+docker compose --env-file .env -f compose.yaml config --quiet
+docker compose --env-file .env -f compose.yaml up -d hbbs hbbr
+docker compose --env-file .env -f compose.yaml logs --tail 200 hbbs hbbr
+```
+
+Replace the placeholder backup path only after verifying its resolved location
+and contents. Do not copy an entire old data directory over a live deployment
+unless data-format compatibility requires it and the services are stopped.
+Usually preserving the current key/state and restoring only the compatible
+config plus previous image is the safer first rollback.
+
+After rollback, repeat the native and applicable API/Relay acceptance tests.
+
+## DEB or standalone binary upgrade
+
+For DEB packages, download the matching architecture, verify the release
+checksum, back up `/var/lib/rustdesk-server-starry`, then install the packages
+with your package manager. Restart and inspect one service at a time:
+
+```sh
+sudo systemctl restart rustdesk-server-starry-hbbs
+sudo systemctl status rustdesk-server-starry-hbbs --no-pager
+sudo journalctl -u rustdesk-server-starry-hbbs -n 200 --no-pager
+
+sudo systemctl restart rustdesk-server-starry-hbbr
+sudo systemctl status rustdesk-server-starry-hbbr --no-pager
+```
+
+The HBBR package is an unmodified upstream HBBR built from the pinned official
+revision. Rollback requires the previous package files or repository snapshot;
+do not assume a package cache still contains them.
+
+For standalone binaries, keep versioned filenames and atomically update a
+service symlink or service path. Never overwrite the only known-good binary
+before its checksum and backup are recorded.
+
+## Stop and roll back when
+
+- the Starry config is rejected or unexpectedly falls back;
+- existing keys change or persistent files disappear;
+- native registration or native Relay regresses;
+- Secure TCP fails for previously working authenticated clients;
+- no eligible Relay exists for a required transport;
+- WSS health never becomes ready after the documented threshold; or
+- a two-client session cannot complete the required control/data test.
+
+Publication checks and CI results are useful release evidence, but they do not
+replace acceptance on your DNS, certificates, proxies, networks, and clients.

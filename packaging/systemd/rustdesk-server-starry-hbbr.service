@@ -1,5 +1,5 @@
 [Unit]
-Description=RustDesk Starry Relay Server
+Description=Unmodified RustDesk HBBR bundled by Starry
 After=network-online.target
 Wants=network-online.target
 

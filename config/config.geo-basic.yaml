@@ -1,0 +1,40 @@
+# Replace all example hostnames and MMDB URLs before use.
+version: 1
+
+relay_servers:
+  - relay-asia-1.example.com:21117
+  - relay-asia-2.example.com:21117
+  - relay-us-1.example.com:21117
+
+secure_tcp:
+  mode: auto
+
+mmdb:
+  update_interval_hours: 168
+  update_on_start: true
+  force_update: false
+  download_timeout_seconds: 600
+  minimum_bytes: 65536
+  country:
+    path: mmdb/GeoLite2-Country.mmdb
+    url: https://downloads.example.com/GeoLite2-Country.mmdb
+
+geo:
+  enabled: true
+  rules:
+    - name: East Asia first
+      symmetric: true
+      match:
+        client_a: CN/JP/KR/TW
+        client_b: "*"
+      relays:
+        - relay-asia-1.example.com:21117
+        - relay-asia-2.example.com:21117
+
+    - name: Fallback to US
+      symmetric: true
+      match:
+        client_a: "*"
+        client_b: "*"
+      relays:
+        - relay-us-1.example.com:21117

@@ -1,0 +1,60 @@
+# Complete WebSocket Signal example. Replace every example hostname and deploy
+# a certificate-valid exact /ws/relay endpoint before setting enabled: true.
+version: 2
+
+relay_servers:
+  - relay-asia-1.example.com:21117
+  - relay-us-1.example.com:21117
+
+secure_tcp:
+  mode: auto
+  handshake_timeout_ms: 18000
+  idle_timeout_ms: 30000
+  max_frame_bytes: 65536
+
+websocket_signal:
+  enabled: false
+  registration_timeout_ms: 10000
+  keepalive_interval_ms: 12000
+  idle_timeout_ms: 45000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 10000
+  max_sessions_per_effective_ip: 512
+  registration_rate_per_minute: 300
+  trusted_proxies:
+    - 127.0.0.1/32
+    - ::1/128
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 60
+    timeout_ms: 5000
+    success_threshold: 1
+    failure_threshold: 2
+    endpoints:
+      - relay: relay-asia-1.example.com:21117
+        url: wss://relay-asia-1.example.com/ws/relay
+      - relay: relay-us-1.example.com:21117
+        url: wss://relay-us-1.example.com/ws/relay
+
+# Optional GEO section, disabled until a licensed Country/City MMDB is in
+# place. Native sessions use official Relay online state; WSS and mixed
+# sessions additionally require the endpoint health above.
+geo:
+  enabled: false
+  rules:
+    - name: Asia
+      symmetric: true
+      match:
+        client_a: CN/JP/KR/TW
+        client_b: "*"
+      relays:
+        - relay-asia-1.example.com:21117
+
+    - name: Default
+      symmetric: true
+      match:
+        client_a: "*"
+        client_b: "*"
+      relays:
+        - relay-us-1.example.com:21117

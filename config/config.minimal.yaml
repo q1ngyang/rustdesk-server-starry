@@ -1,0 +1,9 @@
+# Minimal patch-v1.1.0 configuration: native Secure TCP only.
+# WebSocket Signal is unavailable in schema v1 and remains disabled.
+version: 1
+
+secure_tcp:
+  mode: auto
+  handshake_timeout_ms: 18000
+  idle_timeout_ms: 30000
+  max_frame_bytes: 65536

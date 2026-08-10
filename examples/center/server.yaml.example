@@ -1,0 +1,53 @@
+# Community API configuration example. Copy to the provider's persistent data
+# directory as server.yaml and set mode 0600. Confirm fields against the chosen
+# provider version; this file is not read by Starry.
+
+signKey: "CHANGE_ME_TO_A_RANDOM_32_BYTE_SECRET"
+debugMode: false
+
+db:
+  driver: sqlite
+  dsn: ./server.db
+  timeZone: Etc/UTC
+  showSql: false
+
+httpConfig:
+  printRequestLog: false
+  staticdir: /app/dist
+  port: ":12345"
+
+smtpConfig:
+  host: 127.0.0.1
+  port: 1025
+  username: ""
+  password: ""
+  encryption: none
+  from: noreply@example.com
+
+jobsConfig:
+  deviceCheckJob:
+    duration: 30
+
+oidc:
+  enabled: false
+  providerName: oidc
+  issuer: ""
+  clientId: ""
+  clientSecret: ""
+  redirectUrl: ""
+  scopes: [openid, profile, email]
+  bindByEmail: true
+  autoCreateAdmin: false
+  stateTtlSeconds: 180
+  ticketTtlSeconds: 180
+  successRedirect: /login
+  failureRedirect: /login
+  subjectClaim: sub
+  emailClaim: email
+  nameClaim: name
+  pictureClaim: picture
+  prompt: ""
+  allowedEmailDomains: []
+
+oauth:
+  providers: []
