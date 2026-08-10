@@ -124,11 +124,27 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Validate the published Compose examples
-        run: >-
-          docker compose
-          --env-file examples/.env.example
-          -f examples/compose.yaml
-          config --quiet
+        run: |
+          set -euo pipefail
+          docker compose \
+            --env-file examples/.env.example \
+            -f examples/compose.yaml \
+            config --quiet
+          docker compose \
+            --env-file examples/center/.env.example \
+            -f examples/center/compose.bootstrap.yaml \
+            config --quiet
+          docker compose \
+            --env-file examples/center/.env.example \
+            -f examples/center/compose.yaml \
+            config --quiet
+          docker compose \
+            --env-file examples/relay/.env.example \
+            -f examples/relay/compose.yaml \
+            config --quiet
+
+      - name: Validate bilingual documentation and local links
+        run: python3 scripts/check_docs.py
 
       - name: Fetch the exact official source
         env:
@@ -495,6 +511,7 @@ jobs:
       - name: Prepare image context and release files
         env:
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          PATCH_VERSION: ${{ needs.resolve.outputs.patch_version }}
         run: |
           set -euo pipefail
           mkdir -p docker/amd64 docker/arm64 release-assets
@@ -516,6 +533,15 @@ jobs:
           cp examples/.env.example release-assets/compose.env.example
           cp README.md release-assets/README.md
           cp README.zh-CN.md release-assets/README.zh-CN.md
+          cp CONTAINER.md release-assets/CONTAINER.md
+          cp CONTAINER.zh-CN.md release-assets/CONTAINER.zh-CN.md
+          cp CHANGELOG.md release-assets/CHANGELOG.md
+          cp CHANGELOG.zh-CN.md release-assets/CHANGELOG.zh-CN.md
+          cp "RELEASE-NOTES-patch-v${PATCH_VERSION}.md" release-assets/
+          cp "RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md" release-assets/
+          tar -czf \
+            "release-assets/deployment-examples-${RELEASE_TAG}.tar.gz" \
+            examples config
           (cd release-assets && sha256sum -- * > SHA256SUMS)
 
       - uses: docker/setup-qemu-action@v4
@@ -540,59 +566,49 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ needs.resolve.outputs.release_tag }}
             ${{ env.IMAGE_NAME }}:latest
           labels: |
+            org.opencontainers.image.title=rustdesk-server-starry
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#docker-compose-deployment
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/CONTAINER.md
             org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
-            org.opencontainers.image.description=Official rustdesk-server with Starry GEO Relay, Secure TCP, and opt-in WebSocket Signal
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.description=Starry HBBS overlay for official RustDesk Server with ordered Geo Relay routing, Secure TCP, and optional WebSocket Signal; bundled HBBR is unmodified and no API is included
+          annotations: |
+            index:org.opencontainers.image.title=rustdesk-server-starry
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/CONTAINER.md
+            index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+            index:org.opencontainers.image.licenses=AGPL-3.0-only
+            index:org.opencontainers.image.description=Starry HBBS overlay for official RustDesk Server with ordered Geo Relay routing, Secure TCP, and optional WebSocket Signal; bundled HBBR is unmodified and no API is included
 
       - name: Publish GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
           UPSTREAM_REF: ${{ needs.resolve.outputs.upstream_ref }}
+          PATCH_VERSION: ${{ needs.resolve.outputs.patch_version }}
         run: |
           set -euo pipefail
+          notes_file="RELEASE-NOTES-patch-v${PATCH_VERSION}.md"
+          chinese_notes="RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md"
+          test -f "$notes_file"
+          test -f "$chinese_notes"
           cat > release-notes.md <<EOF
           Based on official rustdesk/rustdesk-server ${UPSTREAM_REF}.
 
-          Includes ordered GEO Relay routing, native HBBS Secure TCP compatibility,
-          and opt-in persistent WebSocket Signal for restricted enterprise networks.
+          Container guide: https://github.com/${GITHUB_REPOSITORY}/blob/main/CONTAINER.md
 
-          patch-v1.1.0 keeps native/P2P signalling as the default. When a client
-          explicitly enables WebSocket, HBBS supports persistent WSS registration,
-          bounded session routing, mixed WSS/native Relay sessions, trusted-proxy
-          source handling, and certificate-verified /ws/relay health filtering.
+          中文发布说明：https://github.com/${GITHUB_REPOSITORY}/blob/main/${chinese_notes}
 
-          ## Docker Compose
+          Verify binaries, packages, documentation, and the deployment-example
+          archive against \`SHA256SUMS\` before use.
 
-          Download \`compose.yaml\` and \`compose.env.example\`, then run:
-
-          \`\`\`sh
-          cp compose.env.example .env
-          mkdir -p data
-          docker compose --env-file .env -f compose.yaml up -d
-          \`\`\`
-
-          Starry creates the empty functional configuration at
-          \`data/starry/config.yaml\` and the documented template at
-          \`data/starry/config.example.yaml\`. GEO, MMDB, Secure TCP, and
-          Relay priority and WebSocket Signal settings belong in that YAML file,
-          not in \`.env\`.
-
-          Documentation: https://github.com/${GITHUB_REPOSITORY}
-
-          ## 简体中文
-
-          下载 \`compose.yaml\` 与 \`compose.env.example\`，将后者复制为
-          \`.env\` 后执行上面的 Compose 命令。功能配置仍写入
-          \`data/starry/config.yaml\`，不要把 GEO、MMDB、Secure TCP 或 Relay
-          规则或 WebSocket Signal 设置放入 ENV 文件。patch-v1.1.0 默认仍走原生
-          信令/P2P；只有客户端显式开启 WebSocket 时才走 WSS 与 Relay。
-
-          中文文档：https://github.com/${GITHUB_REPOSITORY}/blob/main/README.zh-CN.md
-
-          Verify local binaries and DEB packages against \`SHA256SUMS\` before installation.
           EOF
+          sed \
+            -e "s#(RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md)#(https://github.com/${GITHUB_REPOSITORY}/blob/main/${chinese_notes})#" \
+            -e "s#(CONTAINER.md)#(https://github.com/${GITHUB_REPOSITORY}/blob/main/CONTAINER.md)#" \
+            "$notes_file" >> release-notes.md
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/* --clobber
             gh release edit "$RELEASE_TAG" --notes-file release-notes.md --latest

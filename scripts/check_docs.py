@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Validate the repository documentation set without network access."""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WIKI = ROOT / "docs" / "wiki"
+LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
+
+
+def paired_documents() -> list[tuple[Path, Path]]:
+    pairs = [
+        (ROOT / "README.md", ROOT / "README.zh-CN.md"),
+        (ROOT / "CONTAINER.md", ROOT / "CONTAINER.zh-CN.md"),
+        (ROOT / "CHANGELOG.md", ROOT / "CHANGELOG.zh-CN.md"),
+        (
+            ROOT / ".github" / "PROJECT-METADATA.md",
+            ROOT / ".github" / "PROJECT-METADATA.zh-CN.md",
+        ),
+    ]
+    patch_version = (ROOT / "PATCH_VERSION").read_text(encoding="utf-8").strip()
+    pairs.append(
+        (
+            ROOT / f"RELEASE-NOTES-patch-v{patch_version}.md",
+            ROOT / f"RELEASE-NOTES-patch-v{patch_version}.zh-CN.md",
+        )
+    )
+    for english in sorted(WIKI.glob("*.md")):
+        if english.name == "_Sidebar.md" or english.name.startswith("ZH-CN-"):
+            continue
+        pairs.append((english, english.with_name(f"ZH-CN-{english.name}")))
+    return pairs
+
+
+def managed_markdown(pairs: list[tuple[Path, Path]]) -> list[Path]:
+    files = {WIKI / "_Sidebar.md"}
+    for english, chinese in pairs:
+        files.add(english)
+        files.add(chinese)
+    return sorted(files)
+
+
+def local_target(source: Path, raw: str) -> Path | None:
+    target = raw.strip()
+    if target.startswith("<") and target.endswith(">"):
+        target = target[1:-1]
+    target = target.split("#", 1)[0]
+    if not target or target.startswith("mailto:"):
+        return None
+    if target.startswith(("http://", "https://")):
+        parsed = urlparse(target)
+        if parsed.netloc.lower() != "github.com":
+            return None
+        project = "/q1ngyang/rustdesk-server-starry"
+        path = unquote(parsed.path)
+        wiki_prefix = f"{project}/wiki/"
+        blob_prefix = f"{project}/blob/main/"
+        tree_prefix = f"{project}/tree/main/"
+        if path.startswith(wiki_prefix):
+            return WIKI / f"{path.removeprefix(wiki_prefix)}.md"
+        if path.startswith(blob_prefix):
+            return ROOT / path.removeprefix(blob_prefix)
+        if path.startswith(tree_prefix):
+            return ROOT / path.removeprefix(tree_prefix)
+        return None
+    # This documentation set does not use optional Markdown link titles. Keep
+    # the validator strict so an accidental space in a path is reported.
+    return (source.parent / unquote(target)).resolve()
+
+
+def main() -> int:
+    errors: list[str] = []
+    pairs = paired_documents()
+
+    for english, chinese in pairs:
+        if not english.is_file():
+            errors.append(f"missing English document: {english.relative_to(ROOT)}")
+        if not chinese.is_file():
+            errors.append(f"missing Chinese document: {chinese.relative_to(ROOT)}")
+
+    chinese_wiki = {
+        page.name.removeprefix("ZH-CN-")
+        for page in WIKI.glob("ZH-CN-*.md")
+    }
+    english_wiki = {
+        page.name
+        for page in WIKI.glob("*.md")
+        if page.name != "_Sidebar.md" and not page.name.startswith("ZH-CN-")
+    }
+    for orphan in sorted(chinese_wiki - english_wiki):
+        errors.append(f"Chinese Wiki page has no English peer: ZH-CN-{orphan}")
+
+    documents = managed_markdown(pairs)
+    for document in documents:
+        if not document.is_file():
+            continue
+        text = document.read_text(encoding="utf-8")
+        if not text.startswith("#"):
+            errors.append(f"document has no leading heading: {document.relative_to(ROOT)}")
+        if sum(line.startswith("```") for line in text.splitlines()) % 2:
+            errors.append(f"unbalanced code fence: {document.relative_to(ROOT)}")
+        for match in LINK.finditer(text):
+            target = local_target(document, match.group(1))
+            if target is None:
+                continue
+            candidates = [target]
+            if not target.suffix:
+                candidates.append(target.with_suffix(".md"))
+            if not any(candidate.exists() for candidate in candidates):
+                errors.append(
+                    "broken local link in "
+                    f"{document.relative_to(ROOT)}: {match.group(1)}"
+                )
+
+    if errors:
+        for error in errors:
+            print(f"documentation error: {error}", file=sys.stderr)
+        return 1
+
+    print(
+        f"documentation OK: {len(pairs)} bilingual pairs, "
+        f"{len(documents)} Markdown files"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

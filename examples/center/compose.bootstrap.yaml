@@ -1,0 +1,38 @@
+# Stage 1 for a centre node: start only Starry HBBS so it creates the identity
+# key and external configuration. After verification, replace this file with
+# compose.yaml in the same Compose project; never keep two centre HBBS stacks.
+
+name: ${CENTER_COMPOSE_PROJECT_NAME:-rustdesk-center}
+
+services:
+  hbbs:
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.1.0}
+    container_name: ${CENTER_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
+    command:
+      - hbbs
+      - --starry-config=/root/starry/config.yaml
+    environment:
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+    volumes:
+      - type: bind
+        source: ${CENTER_SERVER_DATA_DIR:-./data/server}
+        target: /root
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -s /root/id_ed25519 &&
+          test -s /root/id_ed25519.pub &&
+          nc -w 2 127.0.0.1 21116 </dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"

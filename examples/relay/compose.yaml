@@ -1,0 +1,31 @@
+# Relay-only node. Starry does not modify HBBR; use the official image.
+# Copy the centre public key into RUSTDESK_PUBLIC_KEY. Never copy id_ed25519.
+
+name: ${RELAY_COMPOSE_PROJECT_NAME:-rustdesk-relay}
+
+services:
+  hbbr:
+    image: ${RUSTDESK_SERVER_IMAGE:-rustdesk/rustdesk-server}:${RUSTDESK_SERVER_VERSION:-1.1.16}
+    container_name: ${RELAY_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
+    command:
+      - hbbr
+    environment:
+      KEY: ${RUSTDESK_PUBLIC_KEY:?set RUSTDESK_PUBLIC_KEY in .env}
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+      SINGLE_BANDWIDTH: ${RELAY_SINGLE_BANDWIDTH:-128}
+      TOTAL_BANDWIDTH: ${RELAY_TOTAL_BANDWIDTH:-1024}
+      LIMIT_SPEED: ${RELAY_LIMIT_SPEED:-32}
+      DOWNGRADE_START_CHECK: ${RELAY_DOWNGRADE_START_CHECK:-1800}
+      DOWNGRADE_THRESHOLD: ${RELAY_DOWNGRADE_THRESHOLD:-0.66}
+    volumes:
+      - type: bind
+        source: ${RELAY_DATA_DIR:-./data}
+        target: /root
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "5"

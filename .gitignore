@@ -1,5 +1,6 @@
 _upstream/
 patched-source.tar.gz
+HBBS-GEO-DEVELOPMENT-PLAN.md
 docker/hbbs
 docker/hbbr
 docker/rustdesk-utils
@@ -7,6 +8,7 @@ docker/amd64/
 docker/arm64/
 .env
 data/
+examples/center/server.yaml
 .idea/
 .vscode/
 __pycache__/

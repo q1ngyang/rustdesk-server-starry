@@ -1,0 +1,112 @@
+# Complete reference centre:
+#   Starry HBBS + unmodified official HBBR + optional community API.
+#
+# The API image is not part of Starry or RustDesk. Review its source, licence,
+# release notes, and security posture before use. Remove the rustdesk-api
+# service and the Nginx API location when account features are not required.
+
+name: ${CENTER_COMPOSE_PROJECT_NAME:-rustdesk-center}
+
+services:
+  hbbs:
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.1.0}
+    container_name: ${CENTER_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
+    command:
+      - hbbs
+      - --starry-config=/root/starry/config.yaml
+    environment:
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+    volumes:
+      - type: bind
+        source: ${CENTER_SERVER_DATA_DIR:-./data/server}
+        target: /root
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -s /root/id_ed25519 &&
+          test -s /root/id_ed25519.pub &&
+          nc -w 2 127.0.0.1 21116 </dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  hbbr:
+    image: ${RUSTDESK_SERVER_IMAGE:-rustdesk/rustdesk-server}:${RUSTDESK_SERVER_VERSION:-1.1.16}
+    container_name: ${CENTER_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
+    command:
+      - hbbr
+      - -k
+      - _
+    environment:
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+    volumes:
+      - type: bind
+        source: ${CENTER_SERVER_DATA_DIR:-./data/server}
+        target: /root
+    network_mode: host
+    depends_on:
+      hbbs:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "5"
+
+  rustdesk-api:
+    image: ${RUSTDESK_API_IMAGE:-ghcr.io/liyan-lucky/rustdesk-api-server-pro}:${RUSTDESK_API_VERSION:-latest}
+    container_name: ${CENTER_API_CONTAINER_NAME:-rustdesk-api-server-pro}
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      PORT: "12345"
+      ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
+      ADMIN_PASS: ${ADMIN_PASS:?set ADMIN_PASS in .env}
+      RUSTDESK_HBBS_DIR: /hbbs
+    ports:
+      - 127.0.0.1:${RUSTDESK_API_PORT:-12345}:12345
+    volumes:
+      - type: bind
+        source: ${CENTER_API_CONFIG_FILE:-./server.yaml}
+        target: /app/server.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CENTER_API_DATA_DIR:-./data/api}
+        target: /app/data
+      - type: bind
+        source: ${CENTER_SERVER_DATA_DIR:-./data/server}/id_ed25519.pub
+        target: /hbbs/id_ed25519.pub
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      hbbs:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:12345/api/status >/dev/null
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"

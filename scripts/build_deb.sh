@@ -16,17 +16,20 @@ case "$component" in
     hbbs)
         package="rustdesk-server-starry-hbbs"
         installed_binary="hbbs"
-        description="RustDesk Starry ID and rendezvous server"
+        description="RustDesk HBBS with the Starry overlay"
+        details="Official RustDesk Server HBBS with Starry Geo Relay selection, Secure TCP, and optional WebSocket Signal."
         ;;
     hbbr)
         package="rustdesk-server-starry-hbbr"
         installed_binary="hbbr"
-        description="RustDesk Starry relay server"
+        description="Unmodified RustDesk HBBR bundled by Starry"
+        details="Unmodified official RustDesk Server HBBR built from the same pinned upstream revision as the Starry HBBS release."
         ;;
     utils)
         package="rustdesk-server-starry-utils"
         installed_binary="rustdesk-utils"
-        description="RustDesk Starry server utilities"
+        description="Unmodified RustDesk Server utilities bundled by Starry"
+        details="Unmodified official RustDesk Server utilities built from the same pinned upstream revision as the Starry HBBS release."
         ;;
     *)
         echo "unsupported component: $component" >&2
@@ -65,7 +68,7 @@ Maintainer: rustdesk-server-starry maintainers
 Depends: ca-certificates, adduser
 Homepage: https://github.com/q1ngyang/rustdesk-server-starry
 Description: $description
- Official rustdesk-server with the small Starry GEO Relay and Secure TCP overlay.
+ $details
 EOF
 
 if [ "$component" = "hbbs" ] || [ "$component" = "hbbr" ]; then
