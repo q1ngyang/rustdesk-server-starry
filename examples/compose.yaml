@@ -20,7 +20,7 @@ name: ${STARRY_COMPOSE_PROJECT_NAME:-rustdesk-server-starry}
 services:
   hbbs:
     # STARRY_IMAGE must not include a tag. Pin STARRY_VERSION to a release such
-    # as 1.1.16-patch-v1.0.0 for reproducible production deployments.
+    # as 1.1.16-patch-v1.1.0 for reproducible production deployments.
     image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-latest}
     container_name: ${STARRY_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
 

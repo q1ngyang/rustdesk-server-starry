@@ -9,7 +9,8 @@ use std::{
 };
 
 pub const DEFAULT_CONFIG_PATH: &str = "starry/config.yaml";
-const CONFIG_VERSION: u8 = 1;
+const MIN_CONFIG_VERSION: u8 = 1;
+const CONFIG_VERSION: u8 = 2;
 const EXAMPLE_CONFIG: &str = include_str!("starry_config.example.yaml");
 
 static STATE: Lazy<RwLock<ConfigState>> = Lazy::new(|| {
@@ -24,18 +25,30 @@ struct ConfigState {
     config: Option<Arc<StarryConfig>>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub struct StarryConfig {
     pub version: u8,
-    #[serde(default)]
     pub relay_servers: Vec<String>,
-    #[serde(default)]
     pub secure_tcp: SecureTcpConfig,
-    #[serde(default)]
     pub mmdb: MmdbConfig,
-    #[serde(default)]
     pub geo: GeoConfig,
+    pub websocket_signal: WebSocketSignalConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StarryConfigWire {
+    version: u8,
+    #[serde(default)]
+    relay_servers: Vec<String>,
+    #[serde(default)]
+    secure_tcp: SecureTcpConfig,
+    #[serde(default)]
+    mmdb: MmdbConfig,
+    #[serde(default)]
+    geo: GeoConfig,
+    #[serde(default)]
+    websocket_signal: Option<WebSocketSignalConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -63,6 +76,71 @@ impl Default for SecureTcpConfig {
             max_frame_bytes: 65_536,
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct WebSocketSignalConfig {
+    pub enabled: bool,
+    pub registration_timeout_ms: u64,
+    pub keepalive_interval_ms: u64,
+    pub idle_timeout_ms: u64,
+    pub max_frame_bytes: usize,
+    pub outbound_queue_capacity: usize,
+    pub max_sessions: usize,
+    pub max_sessions_per_effective_ip: usize,
+    pub registration_rate_per_minute: usize,
+    pub trusted_proxies: Vec<String>,
+    pub allowed_origins: Vec<String>,
+    pub relay_health: RelayHealthConfig,
+}
+
+impl Default for WebSocketSignalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            registration_timeout_ms: 10_000,
+            keepalive_interval_ms: 12_000,
+            idle_timeout_ms: 45_000,
+            max_frame_bytes: 65_536,
+            outbound_queue_capacity: 64,
+            max_sessions: 10_000,
+            max_sessions_per_effective_ip: 512,
+            registration_rate_per_minute: 300,
+            trusted_proxies: vec!["127.0.0.1/32".to_owned(), "::1/128".to_owned()],
+            allowed_origins: Vec::new(),
+            relay_health: RelayHealthConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct RelayHealthConfig {
+    pub interval_seconds: u64,
+    pub timeout_ms: u64,
+    pub success_threshold: u32,
+    pub failure_threshold: u32,
+    pub endpoints: Vec<RelayEndpointConfig>,
+}
+
+impl Default for RelayHealthConfig {
+    fn default() -> Self {
+        Self {
+            interval_seconds: 60,
+            timeout_ms: 5_000,
+            success_threshold: 1,
+            failure_threshold: 2,
+            endpoints: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RelayEndpointConfig {
+    pub relay: String,
+    pub url: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -294,15 +372,39 @@ fn load_config(path: &Path) -> Result<Option<StarryConfig>, String> {
     if raw.trim().is_empty() {
         return Ok(None);
     }
-    let config: StarryConfig =
-        serde_yml::from_str(&raw).map_err(|err| format!("invalid YAML: {err}"))?;
-    validate(config).map(Some)
+    parse_config(&raw).map(Some)
+}
+
+fn parse_config(raw: &str) -> Result<StarryConfig, String> {
+    let wire: StarryConfigWire =
+        serde_yml::from_str(raw).map_err(|err| format!("invalid YAML: {err}"))?;
+    if !(MIN_CONFIG_VERSION..=CONFIG_VERSION).contains(&wire.version) {
+        return Err(format!(
+            "unsupported version {}; expected {MIN_CONFIG_VERSION} or {CONFIG_VERSION}",
+            wire.version
+        ));
+    }
+    if wire.version == 1 && wire.websocket_signal.is_some() {
+        return Err(
+            "version 1 does not allow websocket_signal; upgrade the document to version 2"
+                .to_owned(),
+        );
+    }
+    let config = StarryConfig {
+        version: wire.version,
+        relay_servers: wire.relay_servers,
+        secure_tcp: wire.secure_tcp,
+        mmdb: wire.mmdb,
+        geo: wire.geo,
+        websocket_signal: wire.websocket_signal.unwrap_or_default(),
+    };
+    validate(config)
 }
 
 fn validate(mut config: StarryConfig) -> Result<StarryConfig, String> {
-    if config.version != CONFIG_VERSION {
+    if !(MIN_CONFIG_VERSION..=CONFIG_VERSION).contains(&config.version) {
         return Err(format!(
-            "unsupported version {}; expected {CONFIG_VERSION}",
+            "unsupported version {}; expected {MIN_CONFIG_VERSION} or {CONFIG_VERSION}",
             config.version
         ));
     }
@@ -311,6 +413,7 @@ fn validate(mut config: StarryConfig) -> Result<StarryConfig, String> {
     validate_secure_tcp(&config.secure_tcp)?;
     validate_mmdb(&mut config.mmdb)?;
     validate_geo(&mut config.geo, &config.relay_servers)?;
+    validate_websocket_signal(&mut config.websocket_signal, &config.relay_servers)?;
     Ok(config)
 }
 
@@ -323,6 +426,176 @@ fn validate_secure_tcp(config: &SecureTcpConfig) -> Result<(), String> {
     }
     if !(4_096..=16 * 1024 * 1024).contains(&config.max_frame_bytes) {
         return Err("secure_tcp.max_frame_bytes must be between 4096 and 16777216".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_websocket_signal(
+    config: &mut WebSocketSignalConfig,
+    relay_servers: &[String],
+) -> Result<(), String> {
+    if !(1_000..=120_000).contains(&config.registration_timeout_ms) {
+        return Err(
+            "websocket_signal.registration_timeout_ms must be between 1000 and 120000".to_owned(),
+        );
+    }
+    if !(1_000..=300_000).contains(&config.keepalive_interval_ms) {
+        return Err(
+            "websocket_signal.keepalive_interval_ms must be between 1000 and 300000".to_owned(),
+        );
+    }
+    if !(2_000..=600_000).contains(&config.idle_timeout_ms) {
+        return Err("websocket_signal.idle_timeout_ms must be between 2000 and 600000".to_owned());
+    }
+    if config.keepalive_interval_ms >= config.idle_timeout_ms {
+        return Err(
+            "websocket_signal.keepalive_interval_ms must be smaller than idle_timeout_ms"
+                .to_owned(),
+        );
+    }
+    if !(4_096..=16 * 1024 * 1024).contains(&config.max_frame_bytes) {
+        return Err(
+            "websocket_signal.max_frame_bytes must be between 4096 and 16777216".to_owned(),
+        );
+    }
+    if !(1..=4_096).contains(&config.outbound_queue_capacity) {
+        return Err(
+            "websocket_signal.outbound_queue_capacity must be between 1 and 4096".to_owned(),
+        );
+    }
+    if !(1..=1_000_000).contains(&config.max_sessions) {
+        return Err("websocket_signal.max_sessions must be between 1 and 1000000".to_owned());
+    }
+    if config.max_sessions_per_effective_ip == 0
+        || config.max_sessions_per_effective_ip > config.max_sessions
+    {
+        return Err(
+            "websocket_signal.max_sessions_per_effective_ip must be between 1 and max_sessions"
+                .to_owned(),
+        );
+    }
+    if !(1..=100_000).contains(&config.registration_rate_per_minute) {
+        return Err(
+            "websocket_signal.registration_rate_per_minute must be between 1 and 100000".to_owned(),
+        );
+    }
+
+    normalize_unique(
+        &mut config.trusted_proxies,
+        "websocket_signal.trusted_proxies",
+    )?;
+    for cidr in &config.trusted_proxies {
+        cidr.parse::<ipnetwork::IpNetwork>().map_err(|err| {
+            format!("websocket_signal.trusted_proxies contains invalid CIDR '{cidr}': {err}")
+        })?;
+    }
+    normalize_unique(
+        &mut config.allowed_origins,
+        "websocket_signal.allowed_origins",
+    )?;
+    for origin in &config.allowed_origins {
+        let parsed = url::Url::parse(origin).map_err(|err| {
+            format!("websocket_signal.allowed_origins contains invalid origin '{origin}': {err}")
+        })?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || parsed.path() != "/"
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return Err(format!(
+                "websocket_signal.allowed_origins entry '{origin}' must be an exact http(s) origin"
+            ));
+        }
+    }
+
+    let health = &mut config.relay_health;
+    if !(5..=3_600).contains(&health.interval_seconds) {
+        return Err(
+            "websocket_signal.relay_health.interval_seconds must be between 5 and 3600".to_owned(),
+        );
+    }
+    if !(500..=120_000).contains(&health.timeout_ms) {
+        return Err(
+            "websocket_signal.relay_health.timeout_ms must be between 500 and 120000".to_owned(),
+        );
+    }
+    if !(1..=100).contains(&health.success_threshold)
+        || !(1..=100).contains(&health.failure_threshold)
+    {
+        return Err(
+            "websocket_signal.relay_health thresholds must be between 1 and 100".to_owned(),
+        );
+    }
+
+    let mut relays = HashSet::new();
+    let mut urls = HashSet::new();
+    for (index, endpoint) in health.endpoints.iter_mut().enumerate() {
+        endpoint.relay = endpoint.relay.trim().to_owned();
+        endpoint.url = endpoint.url.trim().to_owned();
+        if endpoint.relay.is_empty() || endpoint.url.is_empty() {
+            return Err(format!(
+                "websocket_signal.relay_health.endpoints[{index}] has an empty relay or url"
+            ));
+        }
+        if !relays.insert(endpoint.relay.to_ascii_lowercase()) {
+            return Err(format!(
+                "websocket_signal.relay_health contains duplicate relay '{}'",
+                endpoint.relay
+            ));
+        }
+        if !urls.insert(endpoint.url.to_ascii_lowercase()) {
+            return Err(format!(
+                "websocket_signal.relay_health contains duplicate URL '{}'",
+                endpoint.url
+            ));
+        }
+        let parsed = url::Url::parse(&endpoint.url).map_err(|err| {
+            format!(
+                "websocket_signal.relay_health endpoint '{}' has invalid URL: {err}",
+                endpoint.relay
+            )
+        })?;
+        if parsed.scheme() != "wss"
+            || !matches!(parsed.host(), Some(url::Host::Domain(_)))
+            || parsed.path() != "/ws/relay"
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return Err(format!(
+                "websocket_signal.relay_health endpoint '{}' must use a hostname and exact wss://.../ws/relay URL without credentials, query, or fragment",
+                endpoint.relay
+            ));
+        }
+    }
+
+    if config.enabled {
+        if relay_servers.is_empty() {
+            return Err("websocket_signal.enabled is true but relay_servers is empty".to_owned());
+        }
+        let configured: HashSet<String> = relay_servers
+            .iter()
+            .map(|relay| relay.to_ascii_lowercase())
+            .collect();
+        if relays != configured {
+            let missing: Vec<&String> = relay_servers
+                .iter()
+                .filter(|relay| !relays.contains(&relay.to_ascii_lowercase()))
+                .collect();
+            let unknown: Vec<&String> = health
+                .endpoints
+                .iter()
+                .map(|endpoint| &endpoint.relay)
+                .filter(|relay| !configured.contains(&relay.to_ascii_lowercase()))
+                .collect();
+            return Err(format!(
+                "websocket_signal.relay_health endpoints must cover relay_servers exactly; missing={missing:?}, unknown={unknown:?}"
+            ));
+        }
     }
     Ok(())
 }
@@ -458,14 +731,54 @@ geo:
       match: { client_a: CN, client_b: JP }
       relays: [relay-b]
 "#;
-        let config: StarryConfig = serde_yml::from_str(raw).unwrap();
-        let err = validate(config).unwrap_err();
+        let err = parse_config(raw).unwrap_err();
         assert!(err.contains("absent from relay_servers"));
     }
 
     #[test]
     fn example_configuration_is_valid() {
-        let config: StarryConfig = serde_yml::from_str(EXAMPLE_CONFIG).unwrap();
-        assert!(validate(config).is_ok());
+        assert!(parse_config(EXAMPLE_CONFIG).is_ok());
+    }
+
+    #[test]
+    fn version_one_keeps_websocket_signal_disabled() {
+        let config = parse_config("version: 1\n").unwrap();
+        assert!(!config.websocket_signal.enabled);
+    }
+
+    #[test]
+    fn version_one_rejects_websocket_signal_fields() {
+        let err = parse_config("version: 1\nwebsocket_signal:\n  enabled: false\n").unwrap_err();
+        assert!(err.contains("version 1 does not allow websocket_signal"));
+    }
+
+    #[test]
+    fn websocket_signal_requires_exact_relay_coverage() {
+        let raw = r#"
+version: 2
+relay_servers: [relay-a.example.com:21117]
+websocket_signal:
+  enabled: true
+  relay_health:
+    endpoints: []
+"#;
+        let err = parse_config(raw).unwrap_err();
+        assert!(err.contains("cover relay_servers exactly"));
+    }
+
+    #[test]
+    fn websocket_signal_rejects_insecure_or_wrong_path_endpoints() {
+        let raw = r#"
+version: 2
+relay_servers: [relay-a.example.com:21117]
+websocket_signal:
+  enabled: true
+  relay_health:
+    endpoints:
+      - relay: relay-a.example.com:21117
+        url: ws://relay-a.example.com/not-relay
+"#;
+        let err = parse_config(raw).unwrap_err();
+        assert!(err.contains("exact wss://.../ws/relay"));
     }
 }
