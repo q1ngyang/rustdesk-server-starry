@@ -869,21 +869,19 @@ fn build_mtls_client(
 
     let cert_path = resolve_path(base, cert_file);
     let key_path = resolve_path(base, key_file);
-    let mut identity = fs::read(&cert_path).map_err(|err| {
+    let cert = fs::read(&cert_path).map_err(|err| {
         format!(
             "cannot read {label} client certificate {}: {err}",
             cert_path.display()
         )
     })?;
-    identity.extend_from_slice(b"\n");
-    identity.extend_from_slice(&fs::read(&key_path).map_err(|err| {
+    let key = fs::read(&key_path).map_err(|err| {
         format!(
             "cannot read {label} client key {}: {err}",
             key_path.display()
         )
-    })?);
-    let identity = reqwest::Identity::from_pem(&identity)
-        .map_err(|_| format!("{label} client identity is not valid PEM"))?;
+    })?;
+    let identity = parse_client_identity(&cert, &key, label)?;
 
     reqwest::Client::builder()
         .connect_timeout(timeout)
@@ -901,6 +899,32 @@ fn build_mtls_client(
         .identity(identity)
         .build()
         .map_err(|err| format!("cannot build {label} client: {err}"))
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn parse_client_identity(
+    certificate: &[u8],
+    private_key: &[u8],
+    label: &str,
+) -> Result<reqwest::Identity, String> {
+    // The upstream target-specific dependency uses reqwest's native-tls
+    // backend on macOS and Windows. That backend accepts separate certificate
+    // and PKCS#8 key PEM documents instead of rustls' combined PEM identity.
+    reqwest::Identity::from_pkcs8_pem(certificate, private_key)
+        .map_err(|_| format!("{label} client identity is not valid certificate/PKCS#8 key PEM"))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn parse_client_identity(
+    certificate: &[u8],
+    private_key: &[u8],
+    label: &str,
+) -> Result<reqwest::Identity, String> {
+    let mut identity = certificate.to_vec();
+    identity.extend_from_slice(b"\n");
+    identity.extend_from_slice(private_key);
+    reqwest::Identity::from_pem(&identity)
+        .map_err(|_| format!("{label} client identity is not valid PEM"))
 }
 
 fn default_jwks_client() -> reqwest::Client {
