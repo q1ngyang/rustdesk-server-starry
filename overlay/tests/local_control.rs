@@ -50,11 +50,7 @@ fn framed_loopback_control_is_structured_bounded_and_legacy_is_disabled() {
             let _ = fs::remove_dir_all(&root);
             fs::create_dir_all(&root).unwrap();
             let config = root.join("config.yaml");
-            fs::write(
-                &config,
-                "version: 3\nrelay_servers:\n  - relay-a.example.com:21117\n",
-            )
-            .unwrap();
+            fs::write(&config, "version: 3\nrelay_servers:\n  - 127.0.0.1:21117\n").unwrap();
             let token_file = root.join("local-control.token");
             fs::write(&token_file, format!("{LOCAL_AUTH_TOKEN}\n")).unwrap();
             #[cfg(unix)]
@@ -191,10 +187,7 @@ connection_auth:
             )
             .await;
             assert_eq!(retained["result"]["config_generation"], 1);
-            assert_eq!(
-                retained["result"]["relays"][0]["id"],
-                "relay-a.example.com:21117"
-            );
+            assert_eq!(retained["result"]["relays"][0]["id"], "127.0.0.1:21117");
 
             let oversized = oversized_request(address).await;
             assert_eq!(oversized["ok"], false);
