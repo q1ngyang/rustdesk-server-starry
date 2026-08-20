@@ -318,7 +318,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo install cargo-audit --version "${CARGO_AUDIT_VERSION}" --locked
-          test "$(cargo audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"
+          test "$(cargo-audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"
           cargo audit --db _rustsec-advisory-db --no-fetch \
             --file _upstream/Cargo.lock --deny unsound --json \
             | tee starry-rustsec-audit.json

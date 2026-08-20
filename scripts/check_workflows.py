@@ -133,6 +133,7 @@ def main() -> None:
         "repository: RustSec/advisory-db",
         "ref: ${{ env.RUSTSEC_ADVISORY_DB_REVISION }}",
         'cargo install cargo-audit --version "${CARGO_AUDIT_VERSION}" --locked',
+        'test "$(cargo-audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"',
         "cargo audit --db _rustsec-advisory-db --no-fetch",
         "--file _upstream/Cargo.lock --deny unsound --json",
         "starry-rustsec-audit-${{ github.sha }}",
