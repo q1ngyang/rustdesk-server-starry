@@ -22,7 +22,7 @@ ss -lntup | grep -E ':(21115|21116|21117|21118|21119)\b'
 ```sh
 sudo nginx -t
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'websocket-status\n' | nc -w 2 127.0.0.1 21115"
+  "echo '请改用已认证的 Control Agent GET /control/v1/status'"
 ```
 
 记录精确镜像标签/摘要、配置摘要、客户端版本、两端公网网络、各自是否开启 WebSocket，
@@ -47,7 +47,8 @@ docker exec rustdesk-starry-hbbs sh -c \
 
 ```sh
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+  "test -s /starry/config.yaml"
+docker restart rustdesk-starry-hbbs
 docker logs --tail 200 rustdesk-starry-hbbs
 ```
 
@@ -63,6 +64,11 @@ docker logs --tail 200 rustdesk-starry-hbbs
 - API Server 不是 ID Server。网页/API 成功不能说明原生 HBBS 可达；
 - 涉及 TLS 或 Token 过期时，检查客户端和服务器时间；
 - 换一个网络测试，以区分本地防火墙和服务端问题。
+
+若只开放 TCP，被控端仍无法完成原生注册是官方 1.1.16 的预期行为：`RegisterPk`/心跳走
+UDP，TCP listener 对该注册消息返回 `NOT_SUPPORT`。这与控制端通过 TCP/Secure TCP 发起
+认证连接是两条不同路径。不能开放 UDP 时，应验证 WSS `/ws/id` 和 `/ws/relay`，而不是
+把原生注册失败误判为 JWT 拒绝。
 
 不要用“重新生成服务端密钥”测试连通性，这会改变所有客户端信任的身份。
 
@@ -117,7 +123,7 @@ Relay 列表是严格优先级；第一台健康 Relay 被反复选择是正常�
 
 对比 `relay-servers`、`websocket-status` 和三种 `test-geo` 模式。
 `reload-geo` 只重载 Geo/MMDB；修改 Relay、WebSocket 或其他结构字段后应执行
-`reload-starry-config`。
+已认证的 Control Agent plan/apply 或 runtime-reload 操作。
 
 ## MMDB 下载或查询失败
 
@@ -143,7 +149,7 @@ Relay 列表是严格优先级；第一台健康 Relay 被反复选择是正常�
 
 `101` 只证明 HTTP Upgrade。继续检查 RustDesk 协议层：
 
-- schema v2 和 `websocket_signal.enabled: true` 已被接受；
+- schema v2 或 v3 和 `websocket_signal.enabled: true` 已被接受；
 - 客户端通过预期 ID Server 域名使用 `/ws/id`；
 - Upgrade 后的注册和路由日志；
 - 证书有效的 `/ws/relay` endpoint 处于健康状态；
@@ -186,6 +192,35 @@ Mixed 要求**同一个 Relay 名称**既原生在线，又 WSS 健康。检查�
 
 地理距离更近不保证延迟更低，应按真实测量调整有序规则。只重启或重载确实发生状态
 变化的组件，再重复同一受控传输。
+
+## 连接认证意外拒绝或放行
+
+从 Control Agent status 读取 `configured_mode`、`effective_mode`、`verifier_state`、key
+age 与 metric 增量。即使文档为 audit/off，`--must-login` 也可能使 effective mode 成为
+`enforce`。本地 claim/signature 错误不得调用 introspection；其他本地有效请求会调用已配置
+introspection，并在 timeout、TLS、5xx、畸形或 inactive response 时 fail closed。
+
+检查精确 `typ=at+jwt`、issuer/audience/token-use/scope、`sub == user_id`、时钟同步、显式 `kid`、
+Ed25519 公钥轮换 overlap、JWKS stale、client token placement、request kind 与 transport。
+不得把 raw token 粘贴到 Issue。合法 client 回归时，通过本机 acknowledged reload 把
+enforce 改回 audit，不能增加远程 bypass。
+
+若 JWKS endpoint 的服务端 idle timeout 较短，旧 keep-alive 连接可能表现为间歇性 refresh
+失败。patch-v1.2.0 将内部 mTLS HTTP pool 的 idle lifetime 限制为 15 秒；仍出现失败时同时
+检查 Starry refresh 日志、Kessoku idle timeout、证书链、server name 与
+`key_age_seconds`，不得通过增大 `max_stale_seconds` 掩盖持续故障。
+
+## Control Agent 不可用或阻断写入
+
+分别检查 TLS handshake、URI-SAN allowlist、service-JWT audience/azp/scope 与本机 HBBS
+连通。`write_enabled: false` 时写 endpoint 返回 404 是预期结果。ETag/plan/idempotency
+冲突是并发保护，不能通过移除 precondition 重试。
+
+operation 进入 `manual_intervention_required` 时停止重试。保留 state/audit/recovery
+directory，对比 managed config 精确 bytes 与 HBBS runtime generation/digest，恢复经过审核
+的 last-known-good 文件并执行本机 acknowledged reload。按
+[Control Agent 恢复 runbook](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)
+处理；为清除阻断而删除 state 会破坏必要证据。
 
 ## 升级后回归
 

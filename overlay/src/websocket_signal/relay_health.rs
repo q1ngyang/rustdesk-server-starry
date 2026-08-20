@@ -12,11 +12,12 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         RwLock,
     },
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 static CLOCK: Lazy<Instant> = Lazy::new(Instant::now);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static STARTED: AtomicBool = AtomicBool::new(false);
 static WAKE: Lazy<Notify> = Lazy::new(Notify::new);
 static STATE: Lazy<RwLock<HealthState>> = Lazy::new(|| RwLock::new(HealthState::default()));
@@ -35,6 +36,9 @@ struct EndpointState {
     consecutive_failures: u32,
     last_success_millis: Option<u64>,
     last_failure_millis: Option<u64>,
+    last_probe_unix_millis: Option<u64>,
+    latency_ms: Option<u64>,
+    last_error_code: Option<&'static str>,
     last_error: Option<String>,
 }
 
@@ -46,7 +50,25 @@ impl Default for EndpointState {
             consecutive_failures: 0,
             last_success_millis: None,
             last_failure_millis: None,
+            last_probe_unix_millis: None,
+            latency_ms: None,
+            last_error_code: None,
             last_error: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ProbeFailure {
+    code: &'static str,
+    message: String,
+}
+
+impl ProbeFailure {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: sanitize_error(&message.into()),
         }
     }
 }
@@ -56,6 +78,7 @@ struct HealthState {
     enabled: bool,
     generation: u64,
     completed_generation: u64,
+    snapshot_id: u64,
     config: RelayHealthConfig,
     endpoints: HashMap<String, EndpointState>,
 }
@@ -69,7 +92,47 @@ pub(crate) struct HealthSnapshot {
     pub(crate) last_error: Option<String>,
 }
 
-pub(crate) fn reconfigure(enabled: bool, config: &RelayHealthConfig) -> String {
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimeEndpointSnapshot {
+    pub(crate) relay: String,
+    pub(crate) url: String,
+    pub(crate) state: &'static str,
+    pub(crate) last_probe_at: Option<String>,
+    pub(crate) latency_ms: Option<u64>,
+    pub(crate) error_code: Option<String>,
+    pub(crate) error_message: Option<String>,
+    pub(crate) consecutive_successes: u32,
+    pub(crate) consecutive_failures: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimeHealthSnapshot {
+    pub(crate) enabled: bool,
+    pub(crate) generation: u64,
+    pub(crate) completed_generation: u64,
+    pub(crate) snapshot_id: u64,
+    pub(crate) endpoints: HashMap<String, RuntimeEndpointSnapshot>,
+}
+
+impl RuntimeHealthSnapshot {
+    pub(crate) fn is_ready(&self) -> bool {
+        self.enabled && self.completed_generation == self.generation
+    }
+
+    pub(crate) fn endpoint(&self, relay: &str) -> Option<&RuntimeEndpointSnapshot> {
+        self.endpoints.get(&relay.to_ascii_lowercase())
+    }
+
+    pub(crate) fn is_healthy(&self, relay: &str) -> bool {
+        self.is_ready()
+            && self
+                .endpoint(relay)
+                .map(|endpoint| endpoint.state == "healthy")
+                .unwrap_or(false)
+    }
+}
+
+pub(crate) fn reconfigure(enabled: bool, config: &RelayHealthConfig) -> Result<String, String> {
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let endpoints = config
         .endpoints
@@ -87,18 +150,21 @@ pub(crate) fn reconfigure(enabled: bool, config: &RelayHealthConfig) -> String {
                 enabled,
                 generation,
                 completed_generation: 0,
+                snapshot_id: next_snapshot_id(),
                 config: config.clone(),
                 endpoints,
             };
         }
-        Err(err) => return format!("WebSocket Relay health lock failed: {err}"),
+        Err(err) => return Err(format!("WebSocket Relay health lock failed: {err}")),
     }
     start_task();
     WAKE.notify_one();
     if enabled {
-        format!("WebSocket Relay health generation {generation} scheduled for immediate probe")
+        Ok(format!(
+            "WebSocket Relay health generation {generation} scheduled for immediate probe"
+        ))
     } else {
-        "WebSocket Relay health disabled".to_owned()
+        Ok("WebSocket Relay health disabled".to_owned())
     }
 }
 
@@ -141,31 +207,36 @@ async fn run_cycle(generation: u64, config: RelayHealthConfig) {
         );
     }
     if let Ok(mut state) = STATE.write() {
-        if state.generation == generation {
+        if state.generation == generation && state.completed_generation != generation {
             state.completed_generation = generation;
+            state.snapshot_id = next_snapshot_id();
         }
     }
 }
 
-async fn probe(url: &str, timeout_ms: u64) -> Result<(), String> {
+async fn probe(url: &str, timeout_ms: u64) -> Result<u64, ProbeFailure> {
+    let started = Instant::now();
     let connected = timeout(timeout_ms, tokio_tungstenite::connect_async(url)).await;
     let (mut stream, response) = connected
-        .map_err(|_| "probe timeout".to_owned())?
-        .map_err(|err| sanitize_error(&err.to_string()))?;
+        .map_err(|_| ProbeFailure::new("probe_timeout", "probe timeout"))?
+        .map_err(|err| ProbeFailure::new("connect_failed", err.to_string()))?;
     if response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
-        return Err(format!("unexpected HTTP status {}", response.status()));
+        return Err(ProbeFailure::new(
+            "unexpected_http_status",
+            format!("unexpected HTTP status {}", response.status()),
+        ));
     }
     stream
         .send(tungstenite::Message::Close(None))
         .await
-        .map_err(|err| sanitize_error(&err.to_string()))?;
-    Ok(())
+        .map_err(|err| ProbeFailure::new("close_failed", err.to_string()))?;
+    Ok(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64)
 }
 
 fn record(
     generation: u64,
     relay: &str,
-    result: Result<(), String>,
+    result: Result<u64, ProbeFailure>,
     success_threshold: u32,
     failure_threshold: u32,
 ) {
@@ -178,11 +249,14 @@ fn record(
     let Some(endpoint) = state.endpoints.get_mut(&relay.to_ascii_lowercase()) else {
         return;
     };
+    endpoint.last_probe_unix_millis = Some(unix_millis());
     match result {
-        Ok(()) => {
+        Ok(latency_ms) => {
             endpoint.consecutive_successes = endpoint.consecutive_successes.saturating_add(1);
             endpoint.consecutive_failures = 0;
             endpoint.last_success_millis = Some(now_millis());
+            endpoint.latency_ms = Some(latency_ms);
+            endpoint.last_error_code = None;
             endpoint.last_error = None;
             if endpoint.consecutive_successes >= success_threshold {
                 endpoint.status = Status::Healthy;
@@ -192,13 +266,20 @@ fn record(
             endpoint.consecutive_failures = endpoint.consecutive_failures.saturating_add(1);
             endpoint.consecutive_successes = 0;
             endpoint.last_failure_millis = Some(now_millis());
-            endpoint.last_error = Some(err.clone());
+            endpoint.latency_ms = None;
+            endpoint.last_error_code = Some(err.code);
+            endpoint.last_error = Some(err.message.clone());
             if endpoint.consecutive_failures >= failure_threshold {
                 endpoint.status = Status::Unhealthy;
             }
-            log::warn!("WebSocket Relay probe failed for {relay}: {err}");
+            log::warn!(
+                "WebSocket Relay probe failed for {relay} ({}): {}",
+                err.code,
+                err.message
+            );
         }
     }
+    state.snapshot_id = next_snapshot_id();
 }
 
 pub(crate) fn ready() -> bool {
@@ -213,6 +294,58 @@ pub(crate) fn ready() -> bool {
                     .any(|endpoint| endpoint.status == Status::Healthy)
         })
         .unwrap_or(false)
+}
+
+pub(crate) fn snapshot_id() -> u64 {
+    STATE
+        .read()
+        .map(|state| state.snapshot_id)
+        .unwrap_or_default()
+}
+
+pub(crate) fn runtime_snapshot() -> RuntimeHealthSnapshot {
+    let Ok(state) = STATE.read() else {
+        return RuntimeHealthSnapshot {
+            enabled: false,
+            generation: 0,
+            completed_generation: 0,
+            snapshot_id: 0,
+            endpoints: HashMap::new(),
+        };
+    };
+    let endpoints = state
+        .config
+        .endpoints
+        .iter()
+        .map(|configured| {
+            let endpoint = state
+                .endpoints
+                .get(&configured.relay.to_ascii_lowercase())
+                .cloned()
+                .unwrap_or_default();
+            (
+                configured.relay.to_ascii_lowercase(),
+                RuntimeEndpointSnapshot {
+                    relay: configured.relay.clone(),
+                    url: configured.url.clone(),
+                    state: status_name(endpoint.status),
+                    last_probe_at: endpoint.last_probe_unix_millis.and_then(rfc3339_millis),
+                    latency_ms: endpoint.latency_ms,
+                    error_code: endpoint.last_error_code.map(str::to_owned),
+                    error_message: endpoint.last_error,
+                    consecutive_successes: endpoint.consecutive_successes,
+                    consecutive_failures: endpoint.consecutive_failures,
+                },
+            )
+        })
+        .collect();
+    RuntimeHealthSnapshot {
+        enabled: state.enabled,
+        generation: state.generation,
+        completed_generation: state.completed_generation,
+        snapshot_id: state.snapshot_id,
+        endpoints,
+    }
 }
 
 pub(crate) fn eligible_relays(
@@ -264,11 +397,7 @@ pub(crate) fn snapshots() -> Vec<HealthSnapshot> {
                 .unwrap_or_default();
             HealthSnapshot {
                 relay: configured.relay.clone(),
-                status: match endpoint.status {
-                    Status::Unknown => "unknown",
-                    Status::Healthy => "healthy",
-                    Status::Unhealthy => "unhealthy",
-                },
+                status: status_name(endpoint.status),
                 last_success_age_seconds: endpoint
                     .last_success_millis
                     .map(|instant| now.saturating_sub(instant) / 1_000),
@@ -283,6 +412,31 @@ pub(crate) fn snapshots() -> Vec<HealthSnapshot> {
 
 fn now_millis() -> u64 {
     CLOCK.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+fn next_snapshot_id() -> u64 {
+    SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn rfc3339_millis(value: u64) -> Option<String> {
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(value as i64)
+        .map(|timestamp| timestamp.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+}
+
+fn status_name(status: Status) -> &'static str {
+    match status {
+        Status::Unknown => "unknown",
+        Status::Healthy => "healthy",
+        Status::Unhealthy => "unhealthy",
+    }
 }
 
 fn sanitize_error(error: &str) -> String {
@@ -322,23 +476,28 @@ mod tests {
             enabled: true,
             generation: 42,
             completed_generation: 42,
+            snapshot_id: 7,
             config,
             endpoints: HashMap::from([(relay.to_ascii_lowercase(), EndpointState::default())]),
         };
         let configured = vec![relay.clone()];
         let native_online = vec![relay.clone()];
 
-        record(41, &relay, Ok(()), 2, 2);
+        record(41, &relay, Ok(10), 2, 2);
+        assert_eq!(snapshot_id(), 7);
         assert!(
             eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly)
                 .is_empty()
         );
-        record(42, &relay, Ok(()), 2, 2);
+        record(42, &relay, Ok(10), 2, 2);
+        let first_probe_snapshot = snapshot_id();
+        assert_ne!(first_probe_snapshot, 7);
         assert!(
             eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly)
                 .is_empty()
         );
-        record(42, &relay, Ok(()), 2, 2);
+        record(42, &relay, Ok(10), 2, 2);
+        assert_ne!(snapshot_id(), first_probe_snapshot);
         assert_eq!(
             eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly),
             configured
@@ -349,12 +508,24 @@ mod tests {
             native_online
         );
 
-        record(42, &relay, Err("first".to_owned()), 2, 2);
+        record(
+            42,
+            &relay,
+            Err(ProbeFailure::new("test_failure", "first")),
+            2,
+            2,
+        );
         assert!(
             !eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly)
                 .is_empty()
         );
-        record(42, &relay, Err("second".to_owned()), 2, 2);
+        record(
+            42,
+            &relay,
+            Err(ProbeFailure::new("test_failure", "second")),
+            2,
+            2,
+        );
         assert!(
             eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly)
                 .is_empty()

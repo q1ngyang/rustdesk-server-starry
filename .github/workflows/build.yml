@@ -32,8 +32,13 @@ permissions:
   contents: read
 
 env:
+  CARGO_AUDIT_VERSION: 0.22.2
   CARGO_TERM_COLOR: always
+  CROSS_REVISION: 88f49ff79e777bef6d3564531636ee4d3cc2f8d2
+  DEBIAN_TEST_IMAGE: debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/rustdesk-server-starry
+  RUST_TOOLCHAIN: 1.97.1
+  RUSTSEC_ADVISORY_DB_REVISION: 2f08fbb85332687b721f2f22706d07448369451b
 
 jobs:
   resolve:
@@ -48,7 +53,7 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
       skip: ${{ steps.version.outputs.skip }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Resolve release policy
         id: version
@@ -70,6 +75,13 @@ jobs:
             echo "PATCH_VERSION must use X.Y.Z" >&2
             exit 1
           fi
+          release_status="$(sed -n 's/^status: //p' RELEASE_STATUS)"
+          release_status_version="$(sed -n 's/^patch_version: //p' RELEASE_STATUS)"
+          if [ "$release_status_version" != "$patch_version" ] \
+            || ! printf '%s' "$release_status" | grep -Eq '^(BLOCKED|APPROVED)$'; then
+            echo "RELEASE_STATUS is invalid or does not match PATCH_VERSION" >&2
+            exit 1
+          fi
 
           upstream_version="${upstream_ref#v}"
           if ! printf '%s' "$upstream_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([._-][A-Za-z0-9.-]+)?$'; then
@@ -85,6 +97,10 @@ jobs:
             publish=true
           elif [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${REQUESTED_PUBLISH:-false}" = true ]; then
             publish=true
+          fi
+          if [ "$publish" = true ] && [ "$release_status" != APPROVED ]; then
+            echo "Publication is blocked by RELEASE_STATUS" >&2
+            exit 1
           fi
 
           skip=false
@@ -111,6 +127,7 @@ jobs:
             echo "- Upstream: \`rustdesk/rustdesk-server@$upstream_ref\`"
             echo "- Starry tag: \`$release_tag\`"
             echo "- Publish after validation: \`$publish\`"
+            echo "- Release gate: \`$release_status\`"
             echo "- Skip: \`$skip\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -120,8 +137,11 @@ jobs:
     if: needs.resolve.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      upstream_commit: ${{ steps.upstream.outputs.upstream_commit }}
+      upstream_common_commit: ${{ steps.upstream.outputs.upstream_common_commit }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Validate the published Compose examples
         run: |
@@ -142,48 +162,128 @@ jobs:
             --env-file examples/relay/.env.example \
             -f examples/relay/compose.yaml \
             config --quiet
+          docker compose \
+            --env-file examples/control-agent/.env.example \
+            -f examples/control-agent/compose.yaml \
+            config --quiet
 
       - name: Validate bilingual documentation and local links
         run: python3 scripts/check_docs.py
 
+      - name: Validate versioned contracts and least-privilege API surface
+        run: python3 scripts/check_contracts.py
+
+      - name: Validate immutable workflow inputs
+        run: python3 scripts/check_workflows.py
+
       - name: Fetch the exact official source
+        id: upstream
         env:
           UPSTREAM_REF: ${{ needs.resolve.outputs.upstream_ref }}
         run: |
           set -euo pipefail
           git init _upstream
           git -C _upstream remote add origin https://github.com/rustdesk/rustdesk-server.git
-          git -C _upstream fetch --depth 1 origin "$UPSTREAM_REF"
-          git -C _upstream checkout --detach FETCH_HEAD
+          git -C _upstream fetch --depth 1 origin \
+            "refs/tags/${UPSTREAM_REF}:refs/tags/${UPSTREAM_REF}"
+          upstream_commit="$(git -C _upstream rev-parse "${UPSTREAM_REF}^{commit}")"
+          git -C _upstream checkout --detach "$upstream_commit"
           git -C _upstream submodule update --init --recursive --depth 1
+          upstream_common_commit="$(git -C _upstream/libs/hbb_common rev-parse HEAD)"
+          {
+            echo "upstream_commit=$upstream_commit"
+            echo "upstream_common_commit=$upstream_common_commit"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Apply the Starry overlay twice
         run: |
           set -euo pipefail
           python3 scripts/apply_overlay.py _upstream
+          first_digest="$({
+            find _upstream/src _upstream/tests _upstream/contracts \
+              _upstream/libs/hbb_common/src _upstream/Cargo.toml \
+              _upstream/Cargo.lock _upstream/Cross.toml \
+              _upstream/libs/hbb_common/Cargo.toml \
+              -type f ! -name version.rs -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum
+          } | sha256sum | cut -d' ' -f1)"
           python3 scripts/apply_overlay.py _upstream
-          python3 -m py_compile scripts/apply_overlay.py
+          second_digest="$({
+            find _upstream/src _upstream/tests _upstream/contracts \
+              _upstream/libs/hbb_common/src _upstream/Cargo.toml \
+              _upstream/Cargo.lock _upstream/Cross.toml \
+              _upstream/libs/hbb_common/Cargo.toml \
+              -type f ! -name version.rs -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum
+          } | sha256sum | cut -d' ' -f1)"
+          test "$first_digest" = "$second_digest"
+          python3 -m py_compile scripts/apply_overlay.py scripts/check_workflows.py
           git -C _upstream diff --check
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
-      - name: Lock the patched dependency graph
+      - name: Verify the fixed patched dependency graph
         run: |
-          cargo metadata --manifest-path _upstream/Cargo.toml \
-            --format-version 1 >/dev/null
+          set -euo pipefail
+          cmp overlay/Cargo.lock _upstream/Cargo.lock
           cargo metadata --manifest-path _upstream/Cargo.toml \
             --format-version 1 --locked >/dev/null
+          cmp overlay/Cargo.lock _upstream/Cargo.lock
 
-      - name: Archive patched source
-        run: tar --exclude=.git -czf patched-source.tar.gz -C _upstream .
+      - name: Archive patched source deterministically
+        run: >-
+          tar --exclude=.git --sort=name --mtime='UTC 1970-01-01'
+          --owner=0 --group=0 --numeric-owner -C _upstream -cf - .
+          | gzip -n > patched-source.tar.gz
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: patched-source
           path: patched-source.tar.gz
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
+          overwrite: true
+
+  security-evidence:
+    name: Secret scan, workflow lint, and source SBOM
+    needs: resolve
+    if: needs.resolve.outputs.skip != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install checksum-pinned security tools
+        run: sh scripts/install_ci_tools.sh "${RUNNER_TEMP}/starry-tools"
+
+      - name: Lint workflow syntax
+        run: |
+          "${RUNNER_TEMP}/starry-tools/actionlint"
+
+      - name: Scan full Git history for secrets
+        run: >-
+          "${RUNNER_TEMP}/starry-tools/gitleaks" git . --config .gitleaks.toml
+          --redact --no-banner --exit-code 1
+
+      - name: Generate source SBOM
+        run: >-
+          "${RUNNER_TEMP}/starry-tools/syft" scan dir:.
+          -o spdx-json=starry-source.spdx.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: starry-source-sbom-${{ github.sha }}
+          path: starry-source.spdx.json
+          if-no-files-found: error
+          retention-days: 7
           overwrite: true
 
   test:
@@ -194,29 +294,69 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: patched-source
 
       - name: Extract source
         run: mkdir _upstream && tar -xzf patched-source.tar.gz -C _upstream
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: RustSec/advisory-db
+          ref: ${{ env.RUSTSEC_ADVISORY_DB_REVISION }}
+          path: _rustsec-advisory-db
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Audit the fixed Rust dependency graph
+        run: |
+          set -euo pipefail
+          cargo install cargo-audit --version "${CARGO_AUDIT_VERSION}" --locked
+          test "$(cargo audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"
+          cargo audit --db _rustsec-advisory-db --no-fetch \
+            --file _upstream/Cargo.lock --deny unsound --json \
+            | tee starry-rustsec-audit.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: starry-rustsec-audit-${{ github.sha }}
+          path: starry-rustsec-audit.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
 
       - name: Verify overlay formatting
         run: |
           rustfmt --edition 2021 --check \
             _upstream/src/starry_config.rs \
+            _upstream/src/allocation_explain.rs \
+            _upstream/src/connection_auth.rs \
+            _upstream/src/control_agent.rs \
+            _upstream/src/control_agent/auth.rs \
+            _upstream/src/control_agent/config_store.rs \
+            _upstream/src/control_agent/local_client.rs \
+            _upstream/src/bin/starry-control-agent.rs \
+            _upstream/src/database.rs \
             _upstream/src/secure_tcp.rs \
             _upstream/src/geo_relay.rs \
             _upstream/src/geo_relay/rules.rs \
+            _upstream/src/local_control.rs \
+            _upstream/src/relay_observer.rs \
             _upstream/src/websocket_signal.rs \
             _upstream/src/websocket_signal/session.rs \
             _upstream/src/websocket_signal/routing.rs \
             _upstream/src/websocket_signal/relay_health.rs \
             _upstream/tests/mixed_relay.rs \
+            _upstream/tests/local_control.rs \
+            _upstream/tests/connection_auth_transport.rs \
+            _upstream/tests/control_agent.rs \
+            _upstream/tests/protocol_contract.rs \
             _upstream/tests/websocket_signal.rs
 
       - name: Run all library tests serially
@@ -225,21 +365,51 @@ jobs:
       - name: Check all server binaries serially
         run: cargo check --manifest-path _upstream/Cargo.toml --locked --bins -j 1
 
+      - name: Lock authentication protobuf and client-compatible denial fixtures
+        run: >-
+          cargo test --manifest-path _upstream/Cargo.toml --locked
+          --test protocol_contract -j 1
+
       - name: Exercise HBBS WebSocket registration and cross-transport signalling
         run: >-
           cargo test --manifest-path _upstream/Cargo.toml --locked
           --test websocket_signal -j 1 -- --nocapture
+
+      - name: Hold 1,000 registered WebSocket sessions and verify Ping/Pong
+        run: |
+          set -euo pipefail
+          ulimit -n 8192
+          cargo test --manifest-path _upstream/Cargo.toml --locked \
+            --test websocket_signal -j 1 \
+            hbbs_sustains_one_thousand_registered_idle_websockets -- \
+            --ignored --exact --nocapture --test-threads=1
 
       - name: Lock the official mixed WebSocket and native Relay contract
         run: >-
           cargo test --manifest-path _upstream/Cargo.toml --locked
           --test mixed_relay -j 1 -- --nocapture
 
+      - name: Enforce connection JWT across every signalling transport
+        run: >-
+          cargo test --manifest-path _upstream/Cargo.toml --locked
+          --test connection_auth_transport -j 1 -- --nocapture
+
+      - name: Exercise bounded loopback-only local control
+        run: >-
+          cargo test --manifest-path _upstream/Cargo.toml --locked
+          --test local_control -j 1 -- --nocapture
+
+      - name: Exercise mTLS Control Agent and atomic configuration transactions
+        run: >-
+          cargo test --manifest-path _upstream/Cargo.toml --locked
+          --test control_agent -j 1 -- --nocapture
+
   linux:
-    name: Linux ${{ matrix.arch }} static binaries
+    name: Linux amd64 static binaries
     needs:
       - resolve
       - source
+      - security-evidence
       - test
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -249,25 +419,31 @@ jobs:
         include:
           - arch: amd64
             target: x86_64-unknown-linux-musl
-          - arch: arm64
-            target: aarch64-unknown-linux-musl
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: patched-source
 
       - name: Extract source
         run: mkdir _upstream && tar -xzf patched-source.tar.gz -C _upstream
 
-      - name: Cross-compile static binaries
-        uses: houseabsolute/actions-rust-cross@v1
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
-          command: build
-          target: ${{ matrix.target }}
-          toolchain: stable
-          working-directory: _upstream
-          args: "--locked --release --bins"
-          force-use-cross: true
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Install the exact cross compiler driver
+        run: >-
+          cargo install cross
+          --git https://github.com/cross-rs/cross
+          --rev "${CROSS_REVISION}"
+          --locked
+
+      - name: Cross-compile static binaries
+        working-directory: _upstream
+        run: >-
+          cross build --target "${{ matrix.target }}"
+          --locked --release --bins
 
       - name: Collect Linux release assets
         env:
@@ -277,14 +453,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir artifact
-          for binary in hbbs hbbr rustdesk-utils; do
+          for binary in hbbs hbbr rustdesk-utils starry-control-agent; do
             install -m 0755 "_upstream/target/${TARGET}/release/${binary}" \
               "artifact/${binary}-${RELEASE_TAG}-linux-${ARCH}"
           done
-          tar -czf "artifact/rustdesk-server-starry-${RELEASE_TAG}-linux-${ARCH}.tar.gz" \
-            -C "_upstream/target/${TARGET}/release" hbbs hbbr rustdesk-utils
+          tar --sort=name --mtime='UTC 1970-01-01' \
+            --owner=0 --group=0 --numeric-owner \
+            -C "_upstream/target/${TARGET}/release" -cf - \
+            hbbs hbbr rustdesk-utils starry-control-agent \
+            | gzip -n > \
+              "artifact/rustdesk-server-starry-${RELEASE_TAG}-linux-${ARCH}.tar.gz"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: linux-${{ matrix.arch }}
           path: artifact/
@@ -294,15 +474,16 @@ jobs:
           overwrite: true
 
   windows:
-    name: Windows amd64 binaries
+    name: Experimental Windows amd64 compatibility
     needs:
       - resolve
       - source
       - test
     runs-on: windows-2025
+    continue-on-error: true
     timeout-minutes: 90
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: patched-source
 
@@ -312,7 +493,9 @@ jobs:
           New-Item -ItemType Directory -Path _upstream | Out-Null
           tar -xzf patched-source.tar.gz -C _upstream
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Build Windows binaries
         run: cargo build --manifest-path _upstream/Cargo.toml --locked --release --bins
@@ -323,12 +506,13 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           New-Item -ItemType Directory -Path artifact | Out-Null
+          # The writable Control Agent is supported and release-tested on Linux.
           foreach ($binary in @('hbbs', 'hbbr', 'rustdesk-utils')) {
             Copy-Item -LiteralPath "_upstream/target/release/$binary.exe" -Destination "artifact/$binary-$env:RELEASE_TAG-windows-amd64.exe"
           }
           Compress-Archive -Path artifact/*.exe -DestinationPath "artifact/rustdesk-server-starry-$env:RELEASE_TAG-windows-amd64.zip"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-amd64
           path: artifact/
@@ -349,11 +533,10 @@ jobs:
       matrix:
         arch:
           - amd64
-          - arm64
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: linux-${{ matrix.arch }}
           path: input
@@ -372,12 +555,15 @@ jobs:
             "$ARCH" "$DEB_VERSION" artifact
           scripts/build_deb.sh utils "input/rustdesk-utils-${RELEASE_TAG}-linux-${ARCH}" \
             "$ARCH" "$DEB_VERSION" artifact
+          scripts/build_deb.sh agent \
+            "input/starry-control-agent-${RELEASE_TAG}-linux-${ARCH}" \
+            "$ARCH" "$DEB_VERSION" artifact
           for package in artifact/*.deb; do
             dpkg-deb --info "$package" >/dev/null
             dpkg-deb --contents "$package" >/dev/null
           done
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: deb-${{ matrix.arch }}
           path: artifact/*.deb
@@ -398,11 +584,10 @@ jobs:
       matrix:
         arch:
           - amd64
-          - arm64
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: linux-${{ matrix.arch }}
           path: input
@@ -418,10 +603,13 @@ jobs:
           install -m 0755 "input/hbbr-${RELEASE_TAG}-linux-${ARCH}" "docker/${ARCH}/hbbr"
           install -m 0755 "input/rustdesk-utils-${RELEASE_TAG}-linux-${ARCH}" \
             "docker/${ARCH}/rustdesk-utils"
+          install -m 0755 \
+            "input/starry-control-agent-${RELEASE_TAG}-linux-${ARCH}" \
+            "docker/${ARCH}/starry-control-agent"
 
-      - uses: docker/setup-qemu-action@v4
-
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        with:
+          driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
 
       - name: Build the architecture image
         env:
@@ -440,6 +628,8 @@ jobs:
           docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" hbbr --help
           docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" \
             rustdesk-utils genkeypair >/dev/null
+          docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" \
+            starry-control-agent /does-not-exist >/dev/null 2>&1 || test "$?" -ne 127
 
           state_dir="$(mktemp -d)"
           container="$(docker run -d --platform "linux/${ARCH}" \
@@ -468,97 +658,256 @@ jobs:
           cleanup
           trap - EXIT
 
-  publish:
-    name: Publish release and multi-architecture image
+  package-test:
+    name: Debian package install and runtime ${{ matrix.arch }}
+    needs:
+      - resolve
+      - deb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: deb-${{ matrix.arch }}
+          path: packages
+
+      - name: Install packages and exercise every command
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          docker run --rm --platform "linux/${ARCH}" \
+            -v "${PWD}/packages:/packages:ro" \
+            "${DEBIAN_TEST_IMAGE}" sh -euxc '
+              printf "#!/bin/sh\nexit 101\n" > /usr/sbin/policy-rc.d
+              chmod 0755 /usr/sbin/policy-rc.d
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/*.deb
+              dpkg-query -W \
+                rustdesk-server-starry-hbbs \
+                rustdesk-server-starry-hbbr \
+                rustdesk-server-starry-utils \
+                rustdesk-server-starry-control-agent
+              test "$(id -un rustdesk-starry)" = rustdesk-starry
+              test "$(stat -c %a /etc/rustdesk-server-starry/managed/config.yaml)" = 640
+              test "$(stat -c %a /etc/rustdesk-server-starry/control-agent.yaml)" = 640
+              /usr/bin/hbbs --help
+              /usr/bin/hbbr --help
+              /usr/bin/rustdesk-utils genkeypair >/dev/null
+              /usr/bin/starry-control-agent /does-not-exist >/dev/null 2>&1 || test "$?" -ne 127
+            '
+
+  release-candidate:
+    name: Assemble auditable release candidate
     needs:
       - resolve
       - source
+      - security-evidence
       - test
       - linux
-      - windows
       - deb
       - image-test
-    if: needs.resolve.outputs.skip != 'true' && needs.resolve.outputs.publish == 'true'
+      - package-test
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      contents: write
-      packages: write
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: linux-amd64
           path: _artifacts/linux-amd64
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: linux-arm64
-          path: _artifacts/linux-arm64
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: windows-amd64
-          path: _artifacts/windows-amd64
-
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: deb-*
+          name: deb-amd64
           path: _artifacts/deb
-          merge-multiple: true
 
-      - name: Prepare image context and release files
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: starry-source-sbom-${{ github.sha }}
+          path: _artifacts/source-sbom
+
+      - name: Prepare image context and final release files
         env:
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
           PATCH_VERSION: ${{ needs.resolve.outputs.patch_version }}
+          UPSTREAM_REF: ${{ needs.resolve.outputs.upstream_ref }}
+          UPSTREAM_COMMIT: ${{ needs.source.outputs.upstream_commit }}
+          UPSTREAM_COMMON_COMMIT: ${{ needs.source.outputs.upstream_common_commit }}
         run: |
           set -euo pipefail
-          mkdir -p docker/amd64 docker/arm64 release-assets
-          for arch in amd64 arm64; do
+          mkdir -p candidate/docker/amd64 candidate/release-assets
+          cp docker/Dockerfile candidate/docker/Dockerfile
+          for arch in amd64; do
             install -m 0755 "_artifacts/linux-${arch}/hbbs-${RELEASE_TAG}-linux-${arch}" \
-              "docker/${arch}/hbbs"
+              "candidate/docker/${arch}/hbbs"
             install -m 0755 "_artifacts/linux-${arch}/hbbr-${RELEASE_TAG}-linux-${arch}" \
-              "docker/${arch}/hbbr"
+              "candidate/docker/${arch}/hbbr"
             install -m 0755 \
               "_artifacts/linux-${arch}/rustdesk-utils-${RELEASE_TAG}-linux-${arch}" \
-              "docker/${arch}/rustdesk-utils"
+              "candidate/docker/${arch}/rustdesk-utils"
+            install -m 0755 \
+              "_artifacts/linux-${arch}/starry-control-agent-${RELEASE_TAG}-linux-${arch}" \
+              "candidate/docker/${arch}/starry-control-agent"
           done
-          cp _artifacts/linux-amd64/* release-assets/
-          cp _artifacts/linux-arm64/* release-assets/
-          cp _artifacts/windows-amd64/* release-assets/
-          cp _artifacts/deb/* release-assets/
-          cp config/config.example.yaml release-assets/config.example.yaml
-          cp examples/compose.yaml release-assets/compose.yaml
-          cp examples/.env.example release-assets/compose.env.example
-          cp README.md release-assets/README.md
-          cp README.zh-CN.md release-assets/README.zh-CN.md
-          cp CONTAINER.md release-assets/CONTAINER.md
-          cp CONTAINER.zh-CN.md release-assets/CONTAINER.zh-CN.md
-          cp CHANGELOG.md release-assets/CHANGELOG.md
-          cp CHANGELOG.zh-CN.md release-assets/CHANGELOG.zh-CN.md
-          cp "RELEASE-NOTES-patch-v${PATCH_VERSION}.md" release-assets/
-          cp "RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md" release-assets/
-          tar -czf \
-            "release-assets/deployment-examples-${RELEASE_TAG}.tar.gz" \
-            examples config
-          (cd release-assets && sha256sum -- * > SHA256SUMS)
+          cp _artifacts/linux-amd64/* candidate/release-assets/
+          cp _artifacts/deb/* candidate/release-assets/
+          cp _artifacts/source-sbom/starry-source.spdx.json \
+            candidate/release-assets/
+          cp config/config.example.yaml candidate/release-assets/config.example.yaml
+          cp examples/compose.yaml candidate/release-assets/compose.yaml
+          cp examples/.env.example candidate/release-assets/compose.env.example
+          cp README.md README.zh-CN.md CONTAINER.md CONTAINER.zh-CN.md \
+            CHANGELOG.md CHANGELOG.zh-CN.md candidate/release-assets/
+          cp "RELEASE-NOTES-patch-v${PATCH_VERSION}.md" \
+            "RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md" \
+            candidate/release-assets/
+          tar --sort=name --mtime='UTC 1970-01-01' \
+            --owner=0 --group=0 --numeric-owner -cf - examples config \
+            | gzip -n > \
+              "candidate/release-assets/deployment-examples-${RELEASE_TAG}.tar.gz"
+          cat > candidate/release-assets/BUILD-INPUTS.txt <<EOF
+          repository=${GITHUB_REPOSITORY}
+          source_commit=${GITHUB_SHA}
+          upstream_repository=rustdesk/rustdesk-server
+          upstream_ref=${UPSTREAM_REF}
+          upstream_commit=${UPSTREAM_COMMIT}
+          upstream_hbb_common_commit=${UPSTREAM_COMMON_COMMIT}
+          release_tag=${RELEASE_TAG}
+          rust_toolchain=${RUST_TOOLCHAIN}
+          cross_revision=${CROSS_REVISION}
+          EOF
 
-      - uses: docker/setup-qemu-action@v4
+      - name: Generate final-filesystem SBOM and checksums
+        run: |
+          set -euo pipefail
+          sh scripts/install_ci_tools.sh "${RUNNER_TEMP}/starry-tools"
+          "${RUNNER_TEMP}/starry-tools/syft" scan \
+            dir:candidate/release-assets \
+            -o spdx-json=candidate/starry-release.spdx.json
+          mv candidate/starry-release.spdx.json candidate/release-assets/
+          (
+            cd candidate/release-assets
+            checksums="$(mktemp)"
+            find . -maxdepth 1 -type f ! -name SHA256SUMS \
+              -printf '%f\0' | LC_ALL=C sort -z | xargs -0 sha256sum -- \
+              > "$checksums"
+            mv "$checksums" SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
 
-      - uses: docker/setup-buildx-action@v4
+      - name: Verify candidate contents and Docker context
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -s candidate/release-assets/SHA256SUMS
+          test -s candidate/release-assets/starry-release.spdx.json
+          test -s candidate/release-assets/starry-source.spdx.json
+          test "$(find candidate/release-assets -maxdepth 1 -name '*.deb' | wc -l)" -eq 4
+          test "$(find candidate/release-assets -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 2
+          test "$(find candidate/release-assets -maxdepth 1 -name '*.zip' | wc -l)" -eq 0
+          for arch in amd64; do
+            for binary in hbbs hbbr rustdesk-utils starry-control-agent; do
+              test -x "candidate/docker/${arch}/${binary}"
+            done
+          done
+          ! find candidate -type f \
+            \( -name '*.key' -o -name '*.pem' -o -name '*.p12' \) -print -quit \
+            | grep -q .
 
-      - uses: docker/login-action@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: starry-release-candidate-${{ needs.resolve.outputs.release_tag }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+  publish:
+    name: Publish release and linux/amd64 image
+    needs:
+      - resolve
+      - release-candidate
+    if: needs.resolve.outputs.skip != 'true' && needs.resolve.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: starry-release-candidate-${{ needs.resolve.outputs.release_tag }}
+          path: candidate
+
+      - name: Re-verify candidate checksums before signing
+        working-directory: candidate/release-assets
+        run: sha256sum --check SHA256SUMS
+
+      - name: Sign build provenance for every candidate subject
+        id: provenance
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-checksums: candidate/release-assets/SHA256SUMS
+
+      - name: Sign the candidate SBOM assertion
+        id: sbom-attestation
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
+        with:
+          subject-checksums: candidate/release-assets/SHA256SUMS
+          sbom-path: candidate/release-assets/starry-release.spdx.json
+
+      - name: Attach portable Sigstore bundles and refresh checksums
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$PROVENANCE_BUNDLE" \
+            candidate/release-assets/BUILD-PROVENANCE.sigstore.json
+          cp "$SBOM_BUNDLE" \
+            candidate/release-assets/SBOM-ATTESTATION.sigstore.json
+          (
+            cd candidate/release-assets
+            checksums="$(mktemp)"
+            find . -maxdepth 1 -type f ! -name SHA256SUMS \
+              -printf '%f\0' | LC_ALL=C sort -z | xargs -0 sha256sum -- \
+              > "$checksums"
+            mv "$checksums" SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        with:
+          driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Push the final amd64 and arm64 image
-        uses: docker/build-push-action@v7
+      - name: Push the final linux/amd64 image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
-          context: docker
-          platforms: linux/amd64,linux/arm64
+          context: candidate/docker
+          platforms: linux/amd64
           push: true
           provenance: mode=max
           sbom: true
@@ -568,19 +917,21 @@ jobs:
           labels: |
             org.opencontainers.image.title=rustdesk-server-starry
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/CONTAINER.md
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ needs.resolve.outputs.release_tag }}/CONTAINER.md
             org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-only
-            org.opencontainers.image.description=Starry HBBS overlay for official RustDesk Server with ordered Geo Relay routing, Secure TCP, and optional WebSocket Signal; bundled HBBR is unmodified and no API is included
+            org.opencontainers.image.description=patch-v1.2.0 Starry HBBS with strict connection JWT authentication, last-known-good configuration, Relay simulation, persistent WebSocket Signal, and an optional mTLS Control Agent; Docker Compose is recommended and bundled HBBR remains unmodified
           annotations: |
             index:org.opencontainers.image.title=rustdesk-server-starry
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            index:org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/CONTAINER.md
+            index:org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}
+            index:org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ needs.resolve.outputs.release_tag }}/CONTAINER.md
             index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             index:org.opencontainers.image.revision=${{ github.sha }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-            index:org.opencontainers.image.description=Starry HBBS overlay for official RustDesk Server with ordered Geo Relay routing, Secure TCP, and optional WebSocket Signal; bundled HBBR is unmodified and no API is included
+            index:org.opencontainers.image.description=patch-v1.2.0 Starry HBBS with strict connection JWT authentication, last-known-good configuration, Relay simulation, persistent WebSocket Signal, and an optional mTLS Control Agent; Docker Compose is recommended and bundled HBBR remains unmodified
 
       - name: Publish GitHub release assets
         env:
@@ -597,23 +948,31 @@ jobs:
           cat > release-notes.md <<EOF
           Based on official rustdesk/rustdesk-server ${UPSTREAM_REF}.
 
-          Container guide: https://github.com/${GITHUB_REPOSITORY}/blob/main/CONTAINER.md
+          Container image: https://github.com/${GITHUB_REPOSITORY}/pkgs/container/rustdesk-server-starry
 
-          中文发布说明：https://github.com/${GITHUB_REPOSITORY}/blob/main/${chinese_notes}
+          Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment
+
+          Container guide: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/CONTAINER.md
+
+          Single-host Compose asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/compose.yaml
+
+          Control Agent sidecar example: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/examples/control-agent/compose.yaml
+
+          中文发布说明：https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/${chinese_notes}
 
           Verify binaries, packages, documentation, and the deployment-example
           archive against \`SHA256SUMS\` before use.
 
           EOF
           sed \
-            -e "s#(RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md)#(https://github.com/${GITHUB_REPOSITORY}/blob/main/${chinese_notes})#" \
-            -e "s#(CONTAINER.md)#(https://github.com/${GITHUB_REPOSITORY}/blob/main/CONTAINER.md)#" \
+            -e "s#(RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md)#(https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/${chinese_notes})#" \
+            -e "s#(CONTAINER.md)#(https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/CONTAINER.md)#" \
             "$notes_file" >> release-notes.md
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+            gh release upload "$RELEASE_TAG" candidate/release-assets/* --clobber
             gh release edit "$RELEASE_TAG" --notes-file release-notes.md --latest
           else
-            gh release create "$RELEASE_TAG" release-assets/* \
+            gh release create "$RELEASE_TAG" candidate/release-assets/* \
               --target "$GITHUB_SHA" \
               --title "rustdesk-server-starry $RELEASE_TAG" \
               --notes-file release-notes.md \

@@ -3,8 +3,8 @@
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Upgrade-and-Rollback)
 
 An upgrade changes two versions: the official RustDesk Server base and the
-Starry patch. A tag such as `1.1.16-patch-v1.1.0` means official server
-`1.1.16` plus Starry patch `1.1.0`. Pin that complete tag, and record the image
+Starry patch. A tag such as `1.1.16-patch-v1.2.0` means official server
+`1.1.16` plus Starry patch `1.2.0`. Pin that complete tag, and record the image
 digest used in production.
 
 ## Upgrade rules
@@ -21,13 +21,13 @@ digest used in production.
 
 ## Read the current patch notes
 
-- [patch-v1.1.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/RELEASE-NOTES-patch-v1.1.0.md)
+- [patch-v1.2.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/RELEASE-NOTES-patch-v1.2.0.md)
 - [Changelog](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CHANGELOG.md)
 
-Patch v1.1.0 adds opt-in persistent `/ws/id` signalling, WSS/native mixed
-sessions, certificate-verified WSS Relay health, schema v2 limits, and
-transport-aware selection. Schema v1 remains accepted and leaves WebSocket
-Signal disabled.
+Patch v1.2.0 adds schema v3 last-known-good activation, strict optional
+connection JWT audit/enforcement, immutable Relay snapshots, side-effect-free
+simulation, and an optional least-privilege Linux Control Agent. Schema v1/v2
+remain accepted with connection authentication off.
 
 ## 1. Inventory and backup
 
@@ -59,28 +59,28 @@ format or migration behaviour.
 
 ## 2. Prepare a candidate configuration
 
-For patch v1.0.0 to v1.1.0, keep the existing schema v1 file for the first
-binary/image replacement. Prepare schema v2 as a separate candidate:
+For patch v1.1.0 to v1.2.0, keep the existing schema v2 (or v1) file for the
+first binary/image replacement. Prepare schema v3 as a separate candidate:
 
 ```yaml
-version: 2
+version: 3
 
 # Existing relay_servers, secure_tcp, mmdb, and geo sections stay here.
 
-websocket_signal:
-  enabled: false
-  # Define limits, trusted proxies, and exact Relay health endpoints here.
+connection_auth:
+  mode: off
+  # Add reviewed issuer/JWKS/introspection values before moving to audit.
 ```
 
-Endpoint Relay names must cover `relay_servers` exactly before WebSocket is
-enabled. Do not overwrite the active config yet.
+Keep existing WebSocket settings unchanged. Do not overwrite the active config
+yet, and do not add an authentication issuer merely to satisfy a rollout date.
 
 ## 3. Pull and inspect without starting
 
 Set the new immutable version in `.env`:
 
 ```dotenv
-STARRY_VERSION=1.1.16-patch-v1.1.0
+STARRY_VERSION=1.1.16-patch-v1.2.0
 RUSTDESK_SERVER_VERSION=1.1.16
 ```
 
@@ -103,7 +103,7 @@ docker compose --env-file .env -f compose.yaml ps
 docker compose --env-file .env -f compose.yaml logs --tail 200 hbbs hbbr
 ```
 
-With the old schema v1 config, verify:
+With the old schema v2 or v1 config, verify:
 
 - both services remain stable and use the existing key;
 - native registration works;
@@ -113,30 +113,35 @@ With the old schema v1 config, verify:
 
 Stop here if the native baseline regresses.
 
-## 5. Introduce schema v2 with WebSocket disabled
+## 5. Introduce schema v3 with authentication off
 
-Install the candidate as `data/starry/config.yaml`, then reload:
+Install the candidate as `data/starry/config.yaml`, then invoke the authenticated
+Control Agent `POST /control/v1/runtime:reload` operation and inspect logs:
 
 ```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
 docker logs --tail 200 rustdesk-starry-hbbs
 ```
 
-The response and logs must say the complete config was accepted. Validate
-native sessions again. A schema change is not accepted merely because HBBS did
-not exit; invalid Starry config deliberately falls back to upstream behaviour.
+The response and logs must report a new generation, matching source/effective
+digests, and successful subsystem acknowledgements. Validate native and every
+previously enabled WSS/mixed path again. Process survival alone is not
+acceptance; an invalid candidate retains the prior last-known-good generation.
 
-## 6. Stage TLS and enable WebSocket
+## 6. Commission the Agent and authentication separately
 
-1. Deploy exact Nginx `/ws/id` and `/ws/relay` locations.
-2. Run `nginx -t`, reload Nginx, and verify the public certificate names.
-3. Confirm HTTP Upgrade on every endpoint.
-4. Set `websocket_signal.enabled: true` and reload Starry.
-5. Wait one health interval and inspect `websocket-status`.
-6. Run `test-geo` for `native`, `wss`, and `mixed`.
-7. Test WSS-to-WSS and both mixed directions with real clients.
-8. Test Relay failure and recovery before expanding rollout.
+1. Deploy the Linux Control Agent with `write_enabled: false` and a private
+   listener. Verify mTLS CA/URI-SAN and service-JWT audience/azp/scope denies.
+2. Verify read-only status/Relay/config endpoints and repeated side-effect-free
+   allocation simulation. Do not enable writes yet.
+3. In staging only, enable writes and exercise apply, rollback, HBBS outage,
+   Agent restart, disk drift, and recovery blocking.
+4. Deploy the compatible client token issuer, public Ed25519 JWKS, and mTLS
+   introspection endpoint. Keep HBBS `connection_auth.mode: audit`.
+5. Run audit for a full business cycle and complete native TCP, Secure TCP,
+   WSS, direct Relay, logout/revoke/disable/password-reset, key rotation, and
+   dependency-failure tests.
+6. Canary `enforce` on one instance or user cohort. Expand only with measured
+   evidence; UDP initiation stays unsupported and must never allocate.
 
 Use the complete checklist in
 [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification).
@@ -146,13 +151,20 @@ Use the complete checklist in
 If only WebSocket Signal regresses and native behaviour remains sound:
 
 1. set `websocket_signal.enabled: false`;
-2. run `reload-starry-config`;
+2. run the authenticated `POST /control/v1/runtime:reload` operation;
 3. confirm the management response and HBBS drain log;
 4. disable WebSocket on clients or remove the rollout policy; and
 5. re-verify native registration, P2P, Secure TCP, and native Relay.
 
 Keep the public Nginx locations closed or unused according to your rollback
 policy. Existing WSS sessions are drained when the feature is disabled.
+
+For connection-authentication regression, make the local controlled change
+from `enforce` to `audit` and require a synchronous reload acknowledgement.
+There is intentionally no remote one-click authentication bypass. Stop or
+return the Agent to read-only independently; HBBS/HBBR continue using the last
+active configuration. An operation in `manual_intervention_required` blocks
+new writes until disk bytes and runtime digests are reconciled.
 
 ## Image rollback
 
@@ -176,6 +188,9 @@ Usually preserving the current key/state and restoring only the compatible
 config plus previous image is the safer first rollback.
 
 After rollback, repeat the native and applicable API/Relay acceptance tests.
+Before starting patch-v1.1.0, the restored file must be schema v2 or v1;
+patch-v1.1.0 does not understand schema v3. Preserve the v1.2 Agent audit and
+transaction state separately until the incident is closed.
 
 ## DEB or standalone binary upgrade
 
@@ -208,6 +223,11 @@ before its checksum and backup are recorded.
 - Secure TCP fails for previously working authenticated clients;
 - no eligible Relay exists for a required transport;
 - WSS health never becomes ready after the documented threshold; or
+- a connection-auth request bypasses the shared gate or an expected client is
+  unexpectedly denied;
+- JWKS/introspection failure appears to fail open;
+- Agent apply lacks a matching runtime acknowledgement or enters
+  `manual_intervention_required`; or
 - a two-client session cannot complete the required control/data test.
 
 Publication checks and CI results are useful release evidence, but they do not

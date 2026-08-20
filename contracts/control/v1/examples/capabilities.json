@@ -1,0 +1,26 @@
+{
+  "protocol": {"name": "starry-control", "version": "1.0.0", "major": 1},
+  "instance": {
+    "id": "0191f6a0-0000-7000-8000-000000000001",
+    "role": "hbbs",
+    "starry_version": "1.1.16-patch-v1.2.0",
+    "upstream_version": "1.1.16"
+  },
+  "capabilities": {
+    "relay_inventory": 1,
+    "allocation_simulation": 1,
+    "config_transaction": 1,
+    "config_rollback": 1,
+    "connection_auth": 1
+  },
+  "config": {
+    "supported_schema_versions": [1, 2, 3],
+    "active_schema_version": 3,
+    "schema_digest": "sha256:425c1bafe956a256caff5ad761731583d31b9eee067bad9341cc53211ea19df3"
+  },
+  "limits": {
+    "max_config_bytes": 1048576,
+    "max_plan_lifetime_seconds": 600,
+    "operation_retention_seconds": 86400
+  }
+}

@@ -5,19 +5,28 @@
 本文面向从 GHCR 包页面进入、需要直接部署镜像的用户。项目介绍和源码关系见主
 [`README.zh-CN.md`](README.zh-CN.md)。
 
+部署入口：
+
+- [GHCR 镜像页面](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)
+- [推荐 Docker 部署指南](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Docker-Deployment)
+- [单机 Compose 范例](https://github.com/q1ngyang/rustdesk-server-starry/blob/1.1.16-patch-v1.2.0/examples/compose.yaml)
+- [Control Agent sidecar 范例](https://github.com/q1ngyang/rustdesk-server-starry/blob/1.1.16-patch-v1.2.0/examples/control-agent/compose.yaml)
+
 ## 镜像包含什么
 
-多架构镜像支持 `linux/amd64` 与 `linux/arm64`，由一个锁定的官方 RustDesk
-Server 版本加 Starry HBBS overlay 构建。
+patch-v1.2.0 发布镜像以 `linux/amd64` 为正式构建和运行验收平台，由一个锁定的官方
+RustDesk Server 版本加 Starry HBBS overlay 构建。ARM 仅保留尽力的源码兼容，不属于
+v1.2.0 承诺的镜像平台。
 
 | 命令 | 来源 | 用途 |
 | --- | --- | --- |
 | `hbbs` | 官方 HBBS 加 Starry overlay | ID、会合、信令、Secure TCP、Geo Relay 选择和可选 WebSocket Signal。 |
 | `hbbr` | 未修改的上游 HBBR | 从相同上游版本构建的便捷副本。推荐示例使用官方 RustDesk Server 镜像运行 HBBR，使组件边界保持清晰。 |
 | `rustdesk-utils` | 未修改的上游工具 | 密钥和数据库维护工具。 |
+| `starry-control-agent` | Starry 可选 Linux 管理组件 | 面向一个本机 HBBS 的固定 Control API；强制 mTLS 与细粒度 service JWT，配置写入默认关闭。 |
 
-镜像**不包含**账户/API 服务，也不包含任何 GeoLite2/MMDB 数据库。请独立选择这些
-组件、审查其许可证，并将秘密保留在镜像之外。
+镜像**不包含**账户/API 服务，也不包含任何 GeoLite2/MMDB 数据库；Control Agent 不是
+账户 API。请独立选择这些组件、审查其许可证，并将秘密保留在镜像之外。
 
 ## 选择标签
 
@@ -30,7 +39,7 @@ Server 版本加 Starry HBBS overlay 构建。
 例如：
 
 ```text
-1.1.16-patch-v1.1.0
+1.1.16-patch-v1.2.0
 ```
 
 - 日常生产部署使用不可变版本标签。
@@ -41,18 +50,18 @@ Server 版本加 Starry HBBS overlay 构建。
 拉取当前文档对应版本：
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
 ```
 
 公开 GHCR 镜像可匿名拉取。上线前检查实际 digest 和平台：
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
 ```
 
 ## 推荐快速部署
@@ -124,6 +133,7 @@ data/
 | `21117` | TCP | HBBR | 原生 Relay 数据。 |
 | `21118` | TCP | HBBS | `/ws/id` 明文 WebSocket 后端；只允许可信反向代理访问。 |
 | `21119` | TCP | HBBR | `/ws/relay` 明文 WebSocket 后端；只允许可信反向代理访问。 |
+| `21120` | TCP | 可选 Control Agent | 私有 mTLS 管理 API；镜像 metadata 和普通 Compose 示例不暴露该端口，只允许 loopback/私有管理网络。 |
 | `443` | TCP | Nginx | 使用 WebSocket 或 HTTPS API 时的公网 TLS/WSS 入口。 |
 
 只开放部署所需入口。WebSocket 客户端必须同时具备证书有效的 `/ws/id` 和
@@ -137,22 +147,27 @@ data/
 vi data/starry/config.yaml
 ```
 
-无需替换进程即可热加载：
+首次配置建议重启 HBBS；后续受管变更使用 Control Agent 的 plan/apply 或 runtime reload：
 
 ```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+docker restart rustdesk-starry-hbbs
 ```
 
-若返回错误，整份新 Starry 配置都不会生效，旧 Starry 状态也不会保留；HBBS 会恢复
-上游行为。恢复或修正文件后再次加载；不要因为容器已重启就假设无效配置已经启用。
+若 reload 返回错误，整份 candidate 都不会生效，HBBS 保留此前 last-known-good
+generation。若从未加载有效 generation，HBBS 保持上游兼容行为。恢复或修正文件后再次
+加载，并要求 generation/digest/subsystem ack 一致；进程仍运行不代表 candidate 已激活。
 
 可从以下模板开始：
 
 - [`config/config.minimal.yaml`](config/config.minimal.yaml)：仅启用 Secure TCP；
 - [`config/config.geo-basic.yaml`](config/config.geo-basic.yaml)：按国家有序选择 Relay；
 - [`config/config.geo-advanced.yaml`](config/config.geo-advanced.yaml)：嵌套城市/ASN/ISP 规则；
-- [`config/config.websocket.yaml`](config/config.websocket.yaml)：schema v2 WebSocket Signal 与证书验证的 Relay 健康检查。
+- [`config/config.websocket.yaml`](config/config.websocket.yaml)：schema v2 WebSocket Signal 与证书验证的 Relay 健康检查；
+- [`config/config.auth-audit.yaml`](config/config.auth-audit.yaml)：schema v3 连接认证 audit canary。
+
+可选 Control Agent 使用独立的 [`Compose 示例`](examples/control-agent/compose.yaml)与
+[`运维指南`](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)。
+请从只读模式接入，绝不能在公网 RustDesk 端口发布 Agent listener 或 HBBS local control。
 
 ## 不使用 Compose 执行命令
 
@@ -160,7 +175,7 @@ docker exec rustdesk-starry-hbbs sh -c \
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   hbbs --help
 ```
 
@@ -174,7 +189,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
@@ -204,14 +219,14 @@ docker compose --env-file .env -f compose.yaml logs --tail 100 hbbs hbbr
 
 ```sh
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115"
+  "echo '请改用已认证的 Control Agent GET /control/v1/relays'"
 ```
 
 使用两个真实公网出口地址预览规则结果：
 
 ```sh
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'test-geo 192.0.2.10 198.51.100.20 native\n' | nc -w 2 127.0.0.1 21115"
+  "echo '请改用已认证的 POST /control/v1/allocations:simulate'"
 ```
 
 上面的地址是文档保留地址，必须替换为 HBBS 实际观察到的公网地址。`test-geo` 只预览
@@ -230,9 +245,9 @@ WSS↔WSS 和两个方向的 WSS↔原生测试。详见
 5. 重建服务、检查日志、执行管理命令并完成真实客户端会话。
 6. 验收完成前保留旧镜像和备份。
 
-从 patch-v1.1.0 回滚到 patch-v1.0.0 时，必须恢复 schema `version: 1` 配置。
-patch-v1.0.0 不理解 schema v2；保留 v2 文档会使 Starry 配置被拒绝，HBBS 回退到
-上游行为。
+从 patch-v1.2.0 回滚到 patch-v1.1.0 时，必须先恢复 schema `version: 2`（或更早）
+配置；patch-v1.1.0 不理解 schema v3。回滚到更早版本时也必须恢复该版本支持的 schema，
+不能依赖 validation fallback。
 
 不要通过覆盖不可变版本标签来实施升级。
 

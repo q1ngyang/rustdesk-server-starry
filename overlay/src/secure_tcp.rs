@@ -74,9 +74,7 @@ pub(crate) async fn negotiate(
     config: &SecureTcpConfig,
 ) -> io::Result<NegotiatedTcp> {
     let mut codec = BytesCodec::new();
-    if config.mode == SecureTcpMode::Auto && signing_key.is_some() {
-        codec.set_max_packet_length(config.max_frame_bytes);
-    }
+    codec.set_max_packet_length(config.max_frame_bytes);
     let mut framed = Framed::new(stream, codec);
 
     if config.mode == SecureTcpMode::Off || signing_key.is_none() {
@@ -290,6 +288,7 @@ mod tests {
     use hbb_common::{
         rendezvous_proto::TestNatRequest,
         tokio::{net::TcpListener, task},
+        tokio_util::codec::Decoder,
     };
 
     fn auto_config() -> SecureTcpConfig {
@@ -337,6 +336,20 @@ mod tests {
         let mut receiver = SecureCipher::new(secretbox::gen_key());
         let encrypted = sender.encrypt(b"payload").unwrap();
         assert!(receiver.decrypt(&encrypted).is_err());
+    }
+
+    #[test]
+    fn plaintext_mode_applies_the_configured_frame_limit_before_reservation() {
+        let mut codec = BytesCodec::new();
+        codec.set_max_packet_length(4_096);
+        let mut exact = BytesMut::from(&[0x01, 0x40][..]);
+        assert!(codec.decode(&mut exact).unwrap().is_none());
+
+        let mut codec = BytesCodec::new();
+        codec.set_max_packet_length(4_096);
+        let mut over = BytesMut::from(&[0x05, 0x40][..]);
+        let error = codec.decode(&mut over).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::InvalidData);
     }
 
     #[test]

@@ -4,7 +4,75 @@
 
 This file records Starry overlay changes. The full artifact version combines
 the official RustDesk Server version with the Starry patch version, for example
-`1.1.16-patch-v1.1.0`.
+`1.1.16-patch-v1.2.0`.
+
+## patch-v1.2.0 — 2026-08-20
+
+Release notes: [`RELEASE-NOTES-patch-v1.2.0.md`](RELEASE-NOTES-patch-v1.2.0.md)
+
+### Added
+
+- Schema v3 and strict Ed25519 connection-JWT verification for controller
+  `PunchHoleRequest` and direct `RequestRelay` across native TCP, Secure TCP,
+  and WSS, with `off`, `audit`, and `enforce` modes.
+- Atomic last-known-good JWKS refresh, bounded token/introspection caches,
+  mandatory exclusive-CA mTLS for configured remote JWKS and introspection,
+  and fail-closed stale/error/subject handling.
+- Immutable Relay runtime snapshots and side-effect-free allocation simulation
+  with structured decision traces.
+- A framed, bounded, loopback-only local control protocol.
+- Optional Linux `starry-control-agent` with mandatory mTLS, URI-SAN allowlist,
+  short-lived scoped service JWTs, fixed Control API v1, and a safe read-only
+  default profile.
+- Optimistic, idempotent configuration plan/apply/rollback operations with
+  exact-byte ETags, durable audit records, revision history, atomic writes,
+  runtime activation acknowledgements, and recovery blocking on uncertainty.
+- Versioned OpenAPI 3.1, JSON/UI Schema, JWT/protocol fixtures, Control Agent
+  Compose/systemd/DEB assets, and security-focused integration tests.
+
+### Fixed
+
+- Advance `health_snapshot_id` when Relay probe data or readiness changes, so
+  Relay inventory and a corresponding allocation simulation identify the
+  actual health snapshot rather than only the health-configuration generation.
+- Limit the remote JWKS/introspection mTLS HTTP pool idle lifetime to 15
+  seconds, preventing reuse of keep-alive connections already closed by
+  Kessoku's shorter server idle timeout while preserving last-known-good and
+  fail-closed behavior.
+
+### Dependency and build integrity
+
+- The reviewed Cargo graph is locked and copied into the patched upstream tree
+  before any locked metadata, test, or release build runs. Upstream and
+  `hbb_common` source commits are recorded with candidate inputs.
+- Replaced the obsolete SQLx/deadpool SQLite path with bundled
+  `tokio-rusqlite`, removed the unpinned Git `reqwest` input, and modernized the
+  TLS, WebSocket, JWT, protobuf, and CLI dependency paths.
+- The fixed RustSec audit reports no vulnerability, unsound, or yanked crate.
+  One upstream-core `sodiumoxide 0.2.7` unmaintained warning remains disclosed
+  for explicit release risk review.
+- Candidate CI fixes Rust, cross, cross images, advisory data, scanners, base
+  images, and every Action to immutable reviewed inputs; Debian packages are
+  built twice and compared byte for byte before publication can be approved.
+
+### Compatibility and safety
+
+- Schema v1 and v2 remain accepted; connection authentication is off unless a
+  schema v3 document enables it or the deployment `--must-login` floor requires
+  enforce mode.
+- Invalid reloads retain the active last-known-good generation instead of
+  clearing Starry runtime state.
+- Authentication uses existing RustDesk protobuf fields; no `.proto` file is
+  changed. UDP connection initiation remains unsupported and cannot allocate.
+- Native controlled-endpoint registration/heartbeats still use UDP with
+  official 1.1.16; TCP/Secure TCP coverage applies to controller initiation.
+  A controlled endpoint that must disable UDP needs WSS registration and must
+  not treat the upstream TCP `NOT_SUPPORT` response as authentication
+  regression or TCP-only registration support.
+- HBBR and account/API responsibilities remain unchanged. The Control Agent is
+  a separate management component, not an account API or an HBBR proxy.
+- Writable Control Agent transactions are supported and release-tested on
+  Linux only for patch-v1.2.0; no Windows Agent artifact is published.
 
 ## patch-v1.1.0
 

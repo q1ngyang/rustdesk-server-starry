@@ -1,0 +1,26 @@
+version: 1
+instance_id_file: /control-state/instance-id
+listen: 127.0.0.1:21120
+
+tls:
+  ca_file: /run/secrets/starry-control/client-ca.pem
+  cert_file: /run/secrets/starry-control/server.pem
+  key_file: /run/secrets/starry-control/server-key.pem
+  allowed_client_uri_sans:
+    - spiffe://kessoku.example/starry-control
+
+service_jwt:
+  issuer: https://kessoku.example
+  jwks_file: /run/secrets/starry-control/service-jwks.json
+  audience_prefix: "urn:starry-control:"
+
+local_control:
+  address: 127.0.0.1:21115
+  token_file: /run/secrets/starry-control/local-control.token
+
+config:
+  # Opt in only after testing apply and rollback against this instance.
+  write_enabled: false
+  path: /starry/config.yaml
+  backup_dir: /control-state/config-history
+  max_bytes: 1048576

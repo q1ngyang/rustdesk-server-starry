@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "use": "sig",
+      "alg": "EdDSA",
+      "kid": "kessoku-fixture-2030-01",
+      "x": "z4mrFPJo2ziwWQilIaYgCEgfgUKWcWtnTBwcyqEi4qE"
+    }
+  ]
+}

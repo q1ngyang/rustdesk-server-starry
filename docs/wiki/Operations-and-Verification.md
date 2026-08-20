@@ -30,7 +30,7 @@ docker compose --env-file .env -f compose.yaml config --images
 docker compose --env-file .env -f compose.yaml config > rendered-compose.review.txt
 sha256sum .env compose.yaml data/starry/config.yaml > deployment-inputs.sha256
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   --format '{{json .RepoDigests}}'
 ```
 
@@ -145,12 +145,8 @@ curl --http1.1 -i --max-time 5 \
 does not send a RustDesk registration or Relay handshake, so the expected later
 timeout is not a real-session failure and the initial `101` is not full proof.
 
-Inspect Starry's certificate-valid Relay probes:
-
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'websocket-status\n' | nc -w 2 127.0.0.1 21115"
-```
+Inspect Starry's certificate-valid Relay probes through the authenticated
+Control Agent `GET /control/v1/status` response.
 
 Wait at least one configured probe interval after enabling or changing
 endpoints. Every Relay intended for `wss` should be healthy; a `mixed` session
@@ -158,19 +154,12 @@ also requires that same Relay to be native-online.
 
 ## 6. Starry configuration and Geo checks
 
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
-
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115"
-
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'test-geo 192.0.2.10 198.51.100.20 native\n' | nc -w 2 127.0.0.1 21115"
-```
+Use authenticated Control Agent methods: `POST /control/v1/runtime:reload`,
+`GET /control/v1/relays`, and `POST /control/v1/allocations:simulate` with the
+two observed addresses, transport, expected generation, and `explain: true`.
 
 Replace the reserved addresses with the two public addresses actually observed
-by HBBS. Repeat `test-geo` with `wss` and `mixed` when those paths are enabled.
+by HBBS. Repeat allocation simulation with `wss` and `mixed` when those paths are enabled.
 Record the expected rule and Relay before running the command.
 
 ## 7. Native client acceptance
@@ -224,7 +213,7 @@ For each applicable transport:
 1. establish the baseline on the first ordered Relay;
 2. stop or firewall that Relay in a controlled, reversible way;
 3. wait for the official native state and/or configured WSS failure threshold;
-4. verify `test-geo` now selects the next ordered eligible Relay;
+4. verify allocation simulation now selects the next ordered eligible Relay;
 5. establish a new real session and confirm it reaches the fallback;
 6. restore the first Relay;
 7. wait for the success threshold; and
@@ -234,7 +223,37 @@ Existing sessions may terminate during Relay loss; the acceptance target is a
 correctly allocated new session unless your own availability design promises
 more.
 
-## 10. Acceptance record
+## 10. Connection-authentication gate
+
+Follow the full matrix in
+[Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication).
+Start with schema v3 `mode: audit`; capture status before and after each
+native/Secure/WSS `PunchHoleRequest` and direct `RequestRelay` case. Confirm
+that would-deny increments without changing the expected session outcome, and
+that missing/invalid requests do not reach an existing target or allocate a
+Relay.
+
+Do not mark enforce ready until supported real clients cover P2P, Relay,
+WSS/WSS, both mixed directions, logout/revoke/disable/password-reset, key
+rotation, introspection failure/recovery, and UDP no-allocation. A clean unit
+or synthetic transport test is necessary release evidence but not a substitute
+for this deployment matrix.
+
+## 11. Control Agent and configuration recovery
+
+Commission the Agent with `write_enabled: false`. Verify mTLS CA/SAN failures,
+service-JWT audience/azp/scope/expiry failures, read endpoints, and repeated
+side-effect-free simulation. After staging enables writes, exercise ETag
+mismatch, duplicate and conflicting idempotency keys, plan expiry, an accepted
+apply with matching runtime acknowledgement, rollback-as-new-revision, HBBS
+outage during apply, and Agent restart recovery.
+
+Any `manual_intervention_required`, disk/runtime drift, missing audit intent,
+or apply response without matching generation/digests is a hard stop. Use the
+[Control Agent recovery runbook](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent)
+before accepting more writes.
+
+## 12. Acceptance record
 
 Use a table like this for each release or material configuration change:
 
@@ -251,6 +270,12 @@ Use a table like this for each release or material configuration change:
 | Geo decisions | Every matrix row | Not tested | |
 | Native failover/recovery | Ordered result | Not tested | |
 | WSS/mixed failover/recovery | Ordered result | Not tested | |
+| Connection auth audit matrix | Every expected decision classified | Not tested | |
+| Connection auth enforce canary | No bypass; legitimate matrix passes | Not tested | |
+| JWT key/introspection failure and recovery | Fail closed, then recover without restart | Not tested | |
+| Allocation simulation purity | No production state/counter change | Not tested | |
+| Agent read-only mTLS/RBAC | Every allow/deny case | Not tested | |
+| Config apply/rollback/outage recovery | Ack or explicit safe rollback/block | Not tested | |
 | Backup restore rehearsal | Keys/config/state recover | Not tested | |
 
 Sanitise peer IDs, tokens, public addresses when sharing evidence. Do not place

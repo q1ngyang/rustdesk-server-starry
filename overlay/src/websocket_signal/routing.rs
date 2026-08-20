@@ -18,6 +18,9 @@ static CONNECTIONS: Lazy<RwLock<HashMap<SocketAddr, ConnectionContext>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 static REGISTRATIONS: Lazy<RwLock<HashMap<IpAddr, VecDeque<Instant>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+const MAX_REGISTRATION_IPS: usize = 65_536;
+const REGISTRATION_SWEEP_INTERVAL: usize = 256;
+static REGISTRATION_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 static REGISTERED: AtomicUsize = AtomicUsize::new(0);
 static REPLACED: AtomicUsize = AtomicUsize::new(0);
@@ -34,10 +37,11 @@ struct Session {
     last_seen_millis: Arc<AtomicU64>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ConnectionContext {
     connection_id: u64,
     effective_addr: SocketAddr,
+    writer: WsWriteTransport,
 }
 
 #[derive(Clone)]
@@ -82,12 +86,14 @@ pub(crate) async fn register_connection(
     route_addr: SocketAddr,
     effective_addr: SocketAddr,
     connection_id: u64,
+    writer: WsWriteTransport,
 ) {
     CONNECTIONS.write().await.insert(
         route_addr,
         ConnectionContext {
             connection_id,
             effective_addr,
+            writer,
         },
     );
 }
@@ -119,6 +125,22 @@ pub(crate) async fn allow_registration(effective_ip: IpAddr, limit: usize) -> bo
     let now = Instant::now();
     let cutoff = Duration::from_secs(60);
     let mut registrations = REGISTRATIONS.write().await;
+    let calls = REGISTRATION_CALLS.fetch_add(1, Ordering::Relaxed);
+    if calls % REGISTRATION_SWEEP_INTERVAL == 0 {
+        registrations.retain(|_, entries| {
+            while entries
+                .front()
+                .map(|instant| now.duration_since(*instant) >= cutoff)
+                .unwrap_or(false)
+            {
+                entries.pop_front();
+            }
+            !entries.is_empty()
+        });
+    }
+    if !registrations.contains_key(&effective_ip) && registrations.len() >= MAX_REGISTRATION_IPS {
+        return false;
+    }
     let entries = registrations.entry(effective_ip).or_default();
     while entries
         .front()
@@ -272,19 +294,13 @@ pub(crate) async fn remove_if_current(peer_id: &str, generation: u64, reason: &s
 }
 
 pub(crate) async fn native_registration(peer_id: &str) -> bool {
-    let removed = SESSIONS.write().await.remove(peer_id);
-    if let Some(session) = removed {
-        session.writer.abort();
-        EVICTED.fetch_add(1, Ordering::Relaxed);
-        log::info!(
-            "WebSocket signal route evicted by native registration: peer={}, generation={}",
-            redacted_peer(peer_id),
-            session.generation
-        );
-        true
-    } else {
-        false
-    }
+    // Native RegisterPeer proves network reachability, not ownership of the
+    // generation-bound WSS identity.  Preserve the stronger route until its
+    // own reader closes, its writer fails, or its absolute idle deadline
+    // removes it.  A future immediate transition must carry an explicit
+    // identity binding rather than treating a shared public address as proof.
+    let _ = peer_id;
+    false
 }
 
 pub(crate) async fn drain_all() -> usize {
@@ -297,6 +313,26 @@ pub(crate) async fn drain_all() -> usize {
         session.writer.abort();
     }
     count
+}
+
+pub(crate) fn drain_all_now() -> Result<(usize, usize), String> {
+    let mut sessions = SESSIONS
+        .try_write()
+        .map_err(|_| "WebSocket session registry is busy; retry activation".to_owned())?;
+    let mut connections = CONNECTIONS
+        .try_write()
+        .map_err(|_| "WebSocket connection registry is busy; retry activation".to_owned())?;
+    let drained_sessions = std::mem::take(&mut *sessions);
+    let drained_connections = std::mem::take(&mut *connections);
+    let session_count = drained_sessions.len();
+    let connection_count = drained_connections.len();
+    for session in drained_sessions.into_values() {
+        session.writer.abort();
+    }
+    for connection in drained_connections.into_values() {
+        connection.writer.abort();
+    }
+    Ok((session_count, connection_count))
 }
 
 pub(crate) async fn status() -> RoutingStatus {
@@ -339,9 +375,13 @@ fn redacted_peer(peer_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ROUTING_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn old_generation_cannot_remove_replacement() {
+        let _guard = ROUTING_TEST_LOCK.lock().unwrap();
         hbb_common::tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -385,8 +425,76 @@ mod tests {
                 )
                 .await
                 .unwrap();
-                assert!(native_registration(&peer).await);
+                assert!(!native_registration(&peer).await);
+                let current = route(&peer).await.unwrap();
+                assert!(remove_if_current(&peer, current.generation, "test cleanup").await);
                 assert!(route(&peer).await.is_none());
+            });
+    }
+
+    #[test]
+    fn registry_sustains_one_thousand_idle_sessions_and_reconnects() {
+        let _guard = ROUTING_TEST_LOCK.lock().unwrap();
+        hbb_common::tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                drain_all().await;
+                let mut receivers = Vec::with_capacity(1_100);
+                for index in 0..1_000_u16 {
+                    let peer = format!("idle-load-{index:04}");
+                    let (writer, receiver) = WsWriteTransport::channel(u64::from(index) + 1, 4);
+                    bind(
+                        peer,
+                        writer,
+                        "192.0.2.10".parse().unwrap(),
+                        SocketAddr::from(([127, 0, 0, 1], 20_000 + index)),
+                        1_000,
+                        1_000,
+                    )
+                    .await
+                    .unwrap();
+                    receivers.push(receiver);
+                }
+
+                let snapshot = status().await;
+                assert_eq!(snapshot.sessions, 1_000);
+                assert_eq!(snapshot.draining, 0);
+                assert!(
+                    !capacity_available(
+                        "idle-load-overflow",
+                        "192.0.2.11".parse().unwrap(),
+                        1_000,
+                        1_000,
+                    )
+                    .await
+                );
+
+                // Replace a canary subset as concurrent clients would during
+                // reconnect storms. Old generations are aborted atomically and
+                // the registry remains at its configured bound.
+                for index in 0..100_u16 {
+                    let peer = format!("idle-load-{index:04}");
+                    let (writer, receiver) =
+                        WsWriteTransport::channel(u64::from(index) + 10_001, 4);
+                    let token = bind(
+                        peer.clone(),
+                        writer,
+                        "192.0.2.10".parse().unwrap(),
+                        SocketAddr::from(([127, 0, 0, 1], 30_000 + index)),
+                        1_000,
+                        1_000,
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(route(&peer).await.unwrap().generation, token.generation);
+                    receivers.push(receiver);
+                }
+                assert_eq!(status().await.sessions, 1_000);
+                assert_eq!(drain_all().await, 1_000);
+                assert_eq!(status().await.sessions, 0);
+                drop(receivers);
             });
     }
 }

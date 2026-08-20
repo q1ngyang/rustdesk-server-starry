@@ -1,7 +1,8 @@
 # rustdesk-server-starry configuration example.
 # Copy the required sections to config.yaml. An empty or invalid config.yaml
-# keeps the exact upstream rustdesk-server behavior.
-version: 2
+# keeps the exact upstream rustdesk-server behavior on first start. A rejected
+# reload retains the last-known-good active generation.
+version: 3
 
 # The complete HBBS relay pool. Keep one relay server on each line.
 relay_servers:
@@ -56,6 +57,40 @@ websocket_signal:
         url: wss://jp-relay-2.example.com/ws/relay
       - relay: us-relay-1.example.com:21117
         url: wss://us-relay-1.example.com/ws/relay
+
+# Connection authentication is schema v3 only and defaults to off. Move to
+# audit before enforce, and do not enable either mode until Kessoku (or another
+# compatible issuer) supplies Ed25519 JWKS and client connection JWTs.
+connection_auth:
+  mode: off
+
+  # Example audit/enforce values:
+  # issuer: https://kessoku.example
+  # audience: rustdesk-connect
+  # token_use: access
+  # required_scope: connect:initiate
+  # max_token_bytes: 8192
+  # clock_skew_seconds: 30
+  # jwks:
+  #   file: /run/secrets/starry-auth/jwks.json
+  #   url: https://kessoku.example/api/internal/v1/auth/jwks
+  #   refresh_interval_seconds: 300
+  #   max_stale_seconds: 3600
+  #   ca_file: /run/secrets/starry-auth/internal-ca.pem
+  #   cert_file: /run/secrets/starry-auth/hbbs-client.pem
+  #   key_file: /run/secrets/starry-auth/hbbs-client-key.pem
+  #   server_name: kessoku.example
+  # introspection:
+  #   required: true
+  #   url: https://kessoku.example/api/internal/v1/auth/introspect
+  #   timeout_ms: 1000
+  #   positive_cache_seconds: 10
+  #   negative_cache_seconds: 1
+  #   max_cache_entries: 100000
+  #   ca_file: /run/secrets/starry-auth/internal-ca.pem
+  #   cert_file: /run/secrets/starry-auth/hbbs-client.pem
+  #   key_file: /run/secrets/starry-auth/hbbs-client-key.pem
+  #   server_name: kessoku.example
 
 mmdb:
   update_interval_hours: 168

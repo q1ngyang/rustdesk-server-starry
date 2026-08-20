@@ -26,8 +26,15 @@ Starry extends **HBBS** with:
   native HBBS TCP `21116`;
 - optional persistent WebSocket signalling on `/ws/id`, including WSS-to-WSS
   and WSS-to-native Relay sessions; and
-- certificate-verified `/ws/relay` health filtering plus local inspection and
-  rule-testing commands.
+- certificate-verified `/ws/relay` health filtering;
+- schema v3 last-known-good activation with generation, digest, and synchronous
+  subsystem acknowledgements;
+- optional strict Ed25519 connection JWT audit/enforcement for both
+  `PunchHoleRequest` and direct `RequestRelay` on native TCP, Secure TCP, and
+  WSS, with UDP initiation explicitly unsupported; and
+- immutable Relay snapshots, side-effect-free allocation simulation, plus a
+  separate Linux Control Agent protected by mTLS, scoped service JWTs, and
+  atomic configuration transactions.
 
 The project deliberately keeps the component boundary narrow:
 
@@ -35,16 +42,23 @@ The project deliberately keeps the component boundary narrow:
 | --- | --- | --- |
 | HBBS | Modified by the overlay | Run the Starry `hbbs` binary or image command. |
 | HBBR | Not modified | Use official HBBR. Starry release artifacts may bundle an unmodified HBBR built from the same pinned upstream revision for convenience. |
+| Control Agent | Optional Starry component; Linux only in v1.2 | Keep HBBS local control on loopback. Expose the Agent only on a private management path with mTLS and scoped service JWTs. Configuration writes are disabled by default. |
 | Account/API server | Not included | Account login, address books, device data, and administration require a separately selected API implementation. |
 
-An API login, the HBBS signalling connection, and the HBBR data path are
-separate protocol layers. Starry does not turn a third-party API into a Relay,
-does not fork HBBR, and does not replace the RustDesk client.
+An account API login, the HBBS signalling connection, the optional Starry
+Control API, and the HBBR data path are separate protocol layers. Starry does
+not turn a third-party API into a Relay, does not fork HBBR, and does not
+replace the RustDesk client.
 
-Current overlay version: **patch-v1.1.0**. See the
-[`patch-v1.1.0` release notes](RELEASE-NOTES-patch-v1.1.0.md) and
+Current release: **patch-v1.2.0**. See the
+[`patch-v1.2.0` release notes](RELEASE-NOTES-patch-v1.2.0.md) and
 [`changelog`](CHANGELOG.md). Docker images are published at
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry).
+
+The patch-v1.2.0 supported release matrix is Docker `linux/amd64` plus Linux
+x86_64 binaries and amd64 DEB packages. ARM is best-effort source
+compatibility; Windows is an experimental non-blocking build. Neither is a
+promised v1.2.0 artifact.
 
 > This is an unofficial community project and is not affiliated with or
 > endorsed by RustDesk, MaxMind, any MMDB mirror provider, or any AI service
@@ -65,11 +79,13 @@ files are shared by both languages so that executable examples cannot drift.
 | [Getting started](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started) | Choose a deployment and reach the first verified client connection. |
 | [Docker image usage](CONTAINER.md) | Pull, inspect, run, pin, upgrade, and troubleshoot the GHCR image. |
 | [Docker deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Docker-Deployment) | Recommended single-host Docker Compose deployment. |
-| [Native deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Native-Deployment) | DEB, Linux binary, systemd, and Windows deployment. |
+| [Native deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Native-Deployment) | Supported amd64 DEB/Linux deployment and non-blocking compatibility notes. |
 | [Multi-node deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Multi-Node-Deployment) | Centre HBBS, official HBBR nodes, and an optional third-party API. |
 | [Reverse proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS) | Exact `/ws/id`, `/ws/relay`, API, certificate, and firewall requirements. |
 | [Client configuration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Client-Configuration) | ID Server, API Server, public key, Relay field, and WebSocket switch. |
 | [Configuration reference](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Configuration-Reference) | Every schema field, default, valid range, dependency, and fallback. |
+| [Connection authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication) | JWT profile, audit-to-enforce rollout, transport coverage, failure handling, and rollback. |
+| [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent) | Linux deployment, mTLS/service-JWT authorization, read-only mode, transactions, recovery, and API contracts. |
 | [GEO rules: basics](https://github.com/q1ngyang/rustdesk-server-starry/wiki/GEO-Rules-Basics) | Country rules, priority, symmetry, fallback, and `test-geo`. |
 | [GEO rules: advanced](https://github.com/q1ngyang/rustdesk-server-starry/wiki/GEO-Rules-Advanced) | City, ASN, ISP, nested expressions, quoting, and design patterns. |
 | [Operations and verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification) | Layered checks from static validation to real desktop sessions. |

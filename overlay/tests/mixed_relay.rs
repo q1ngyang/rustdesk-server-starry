@@ -76,7 +76,7 @@ async fn run_pair(port: u16, uuid: &str, websocket_first: bool) {
     let request = relay_request(uuid);
     if websocket_first {
         websocket
-            .send(Message::Binary(request.write_to_bytes().unwrap()))
+            .send(Message::Binary(request.write_to_bytes().unwrap().into()))
             .await
             .unwrap();
         sleep(Duration::from_millis(100)).await;
@@ -85,7 +85,7 @@ async fn run_pair(port: u16, uuid: &str, websocket_first: bool) {
         native.send(&request).await.unwrap();
         sleep(Duration::from_millis(100)).await;
         websocket
-            .send(Message::Binary(request.write_to_bytes().unwrap()))
+            .send(Message::Binary(request.write_to_bytes().unwrap().into()))
             .await
             .unwrap();
     }
@@ -103,7 +103,7 @@ async fn run_pair(port: u16, uuid: &str, websocket_first: bool) {
 
     let websocket_payload = b"websocket-to-native";
     websocket
-        .send(Message::Binary(websocket_payload.to_vec()))
+        .send(Message::Binary(websocket_payload.to_vec().into()))
         .await
         .unwrap();
     let native_message = native.next_timeout(5_000).await.unwrap().unwrap();

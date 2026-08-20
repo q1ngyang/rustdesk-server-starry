@@ -1,0 +1,80 @@
+# Control Agent sidecar example. Before starting it, create data/starry/config.yaml,
+# data/control, and the certificate/JWKS files named below. Make the two data
+# paths writable and the config/secret files readable by STARRY_CONTROL_UID/GID.
+# The Agent shares the HBBS network namespace solely so 127.0.0.1:21115 remains
+# a local-only channel.
+name: rustdesk-server-starry-control
+
+services:
+  hbbs:
+    image: ${STARRY_IMAGE}:${STARRY_VERSION}
+    command:
+      - hbbs
+      - --starry-config=/starry/config.yaml
+    environment:
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+      STARRY_LOCAL_CONTROL_TOKEN_FILE: /run/secrets/starry-control/local-control.token
+    volumes:
+      - type: bind
+        source: ./data/hbbs
+        target: /root
+      - type: bind
+        source: ./data/starry
+        target: /starry
+        read_only: true
+      - type: bind
+        source: ./secrets/local-control.token
+        target: /run/secrets/starry-control/local-control.token
+        read_only: true
+    network_mode: host
+    restart: ${STARRY_RESTART_POLICY:-unless-stopped}
+
+  control-agent:
+    image: ${STARRY_IMAGE}:${STARRY_VERSION}
+    user: ${STARRY_CONTROL_UID:-65532}:${STARRY_CONTROL_GID:-65532}
+    command:
+      - starry-control-agent
+      - /etc/starry-control/agent.yaml
+    environment:
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+    volumes:
+      - type: bind
+        source: ./control-agent.yaml
+        target: /etc/starry-control/agent.yaml
+        read_only: true
+      - type: bind
+        source: ./secrets
+        target: /run/secrets/starry-control
+        read_only: true
+      - type: bind
+        source: ./data/starry
+        target: /starry
+      - type: bind
+        source: ./data/control
+        target: /control-state
+    network_mode: service:hbbs
+    depends_on:
+      - hbbs
+    restart: ${STARRY_RESTART_POLICY:-unless-stopped}
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  hbbr:
+    image: ${RUSTDESK_SERVER_IMAGE}:${RUSTDESK_SERVER_VERSION}
+    command: [hbbr, -k, _]
+    environment:
+      RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+    volumes:
+      - type: bind
+        source: ./data/hbbs
+        target: /root
+    network_mode: host
+    depends_on:
+      - hbbs
+    restart: ${STARRY_RESTART_POLICY:-unless-stopped}

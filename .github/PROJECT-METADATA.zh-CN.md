@@ -42,14 +42,14 @@ rust
 
 ## GHCR Package 元数据
 
-拟设置的多架构 index 描述：
+拟设置的 `linux/amd64` 镜像描述：
 
 > Starry HBBS overlay for official RustDesk Server with ordered Geo Relay
 > routing, Secure TCP, and optional WebSocket Signal; bundled HBBR is unmodified
 > and no API is included
 
 构建工作流会在镜像写入 OCI 标题、源码、文档、版本、revision、许可证和描述 label，
-并在多架构 index 写入对应 annotation。文档 URL 直接指向 `CONTAINER.md`。
+并在镜像写入对应元数据。文档 URL 直接指向 `CONTAINER.md`。
 
 GitHub 官方文档说明，已关联 package 的落地页会显示
 [README 等仓库信息](https://docs.github.com/zh/packages/learn-github-packages/connecting-a-repository-to-a-package)。

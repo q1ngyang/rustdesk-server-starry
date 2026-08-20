@@ -8,21 +8,24 @@ data mount. On first start HBBS also creates
 `starry/config.example.yaml` as a local reference.
 
 The parser rejects unknown fields, duplicate list values, invalid ranges, and
-cross-references to Relays that are not declared in `relay_servers`. A missing,
-empty, or invalid file does **not** partially enable Starry features: HBBS logs
-the error and keeps upstream-compatible behaviour. Treat that fallback as a
-safety property, not as a reason to ignore startup logs.
+cross-references to Relays that are not declared in `relay_servers`. On first
+load, a missing, empty, or invalid file does **not** partially enable Starry:
+HBBS logs the error and keeps upstream-compatible behaviour. After a valid
+generation is active, a rejected reload retains that complete last-known-good
+generation. Treat both outcomes as safety properties, not as a reason to
+ignore logs or activation acknowledgements.
 
 ## Document version and feature gates
 
 | Field | Required | Accepted values | Meaning |
 | --- | --- | --- | --- |
-| `version` | Yes | `1`, `2` | Configuration schema. Use `2` for new deployments. |
+| `version` | Yes | `1`, `2`, `3` | Configuration schema. Use `3` for new deployments. |
 
-Schema `1` supports Relay, Secure TCP, MMDB, and Geo settings. It rejects the
-`websocket_signal` section. Schema `2` adds optional WebSocket Signal settings.
-Unknown top-level and nested keys are rejected so that misspellings cannot
-silently change a deployment.
+Schema `1` supports Relay, Secure TCP, MMDB, and Geo settings and rejects
+`websocket_signal` and `connection_auth`. Schema `2` adds optional WebSocket
+Signal and rejects `connection_auth`. Schema `3` adds connection
+authentication. Unknown top-level and nested keys are rejected so that
+misspellings cannot silently change a deployment.
 
 ## `relay_servers`
 
@@ -94,13 +97,14 @@ Each of `country`, `city`, and `asn` has:
 
 | Field | Default | Rule |
 | --- | --- | --- |
-| `path` | `mmdb/GeoLite2-Country.mmdb`, `mmdb/GeoLite2-City.mmdb`, or `mmdb/GeoLite2-ASN.mmdb` | Must not be empty. Relative paths resolve under the HBBS working/data directory. |
-| `url` | empty | Optional `http://` or `https://` download URL. Empty means local-file management. Prefer HTTPS and a source you are licensed to use. |
+| `path` | `mmdb/GeoLite2-Country.mmdb`, `mmdb/GeoLite2-City.mmdb`, or `mmdb/GeoLite2-ASN.mmdb` | Must be a relative `mmdb/*.mmdb` path without traversal. Symbolic-link components are rejected before replacement. |
+| `url` | empty | Optional `https://` download URL. Empty means local-file management. Redirects are rejected. Use a source you are licensed to use. |
 
 Downloads are written to a temporary file, checked for the minimum size,
 MaxMind marker, and reader compatibility, then atomically replace the target.
-On failure the previous readable file remains in place. The image does not
-contain GeoLite2 data and does not provide a database licence.
+Responses larger than 1 GiB are rejected before replacement. On failure the
+previous readable file remains in place. The image does not contain GeoLite2
+data and does not provide a database licence.
 
 Choose only the databases required by your rules:
 
@@ -142,7 +146,7 @@ and [GEO Rules: Advanced](https://github.com/q1ngyang/rustdesk-server-starry/wik
 
 ## `websocket_signal`
 
-This section requires `version: 2` and is opt-in.
+This section requires `version: 2` or `3` and is opt-in.
 
 ```yaml
 websocket_signal:
@@ -215,22 +219,87 @@ The health probe verifies the WSS/TLS path used for allocation; it does not
 replace a two-client remote-control test. See
 [Reverse Proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS).
 
-## Reload behaviour
+## `connection_auth`
 
-After editing the file, reload it inside the HBBS network namespace:
+This section requires `version: 3`. It gates controller-side
+`PunchHoleRequest` and direct `RequestRelay` on native TCP, Secure TCP, and WSS.
+UDP initiation remains unsupported and does not allocate.
 
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+```yaml
+connection_auth:
+  mode: audit
+  issuer: https://kessoku.example
+  audience: rustdesk-connect
+  token_use: access
+  required_scope: connect:initiate
+  max_token_bytes: 8192
+  clock_skew_seconds: 30
+  jwks:
+    file: /run/secrets/starry-auth/jwks.json
+    url: https://kessoku.example/api/internal/v1/auth/jwks
+    refresh_interval_seconds: 300
+    max_stale_seconds: 3600
+    ca_file: /run/secrets/starry-auth/internal-ca.pem
+    cert_file: /run/secrets/starry-auth/hbbs-client.pem
+    key_file: /run/secrets/starry-auth/hbbs-client-key.pem
+    server_name: kessoku.example
+  introspection:
+    required: true
+    url: https://kessoku.example/api/internal/v1/auth/introspect
+    timeout_ms: 1000
+    positive_cache_seconds: 10
+    negative_cache_seconds: 1
+    max_cache_entries: 100000
+    ca_file: /run/secrets/starry-auth/internal-ca.pem
+    cert_file: /run/secrets/starry-auth/hbbs-client.pem
+    key_file: /run/secrets/starry-auth/hbbs-client-key.pem
+    server_name: kessoku.example
 ```
 
-Reload is atomic at the document level: either the complete valid file becomes
-active, or an empty/invalid file disables Starry configuration and returns HBBS
-to upstream behaviour. The previous Starry state is **not** retained on an
-invalid reload. Restore the last known-good file or correct the logged error,
-reload again, and confirm acceptance. For a deterministic maintenance cutover,
-especially after changing transport settings, restart HBBS and repeat the full
-verification checklist.
+| Field | Default | Rule |
+| --- | --- | --- |
+| `mode` | `off` | `off`, `audit`, or `enforce`. `audit` records decisions but proceeds. A deployment `--must-login` floor forces effective enforce. |
+| `issuer` | empty | Required HTTPS issuer in audit/enforce; must exactly match `iss`. |
+| `audience` | empty | Required in audit/enforce; must be present in `aud`. |
+| `token_use` | `access` | Exact required `token_use` claim. |
+| `required_scope` | `connect:initiate` | One complete scope value, never a substring. |
+| `max_token_bytes` | `8192` | `128..8192`; checked before JWT parsing. |
+| `clock_skew_seconds` | `30` | `0..300` for `iat`, `nbf`, and `exp`. |
+| `jwks.file` | empty | Local public Ed25519 JWKS and durable cache path. Enforce requires a non-empty initial file. |
+| `jwks.url` | empty | Optional internal HTTPS refresh URL; when present, CA/cert/key/server-name are mandatory and the URL host must equal `server_name`. |
+| `jwks.refresh_interval_seconds` | `300` | `30..86400`. |
+| `jwks.max_stale_seconds` | `3600` | `30..604800`; verification fails closed after this age. |
+| `jwks.ca_file` / `cert_file` / `key_file` / `server_name` | empty | TLS 1.3-only mTLS trust and client identity for JWKS refresh; system roots are disabled. |
+| `introspection.required` | `false` | If true, omission of the client is invalid. A configured client always fails closed on request errors regardless of this flag. |
+| `introspection.url` | empty | TLS 1.3 HTTPS only. When present, all CA/cert/key/server-name fields are mandatory, system roots are disabled, and the URL host must equal `server_name`. |
+| `introspection.timeout_ms` | `1000` | `100..10000`; one retry is limited to server errors. |
+| `positive_cache_seconds` | `10` | `1..60`, capped by token expiry. |
+| `negative_cache_seconds` | `1` | `0..1`. |
+| `max_cache_entries` | `100000` | `1..1000000`; oldest entries are evicted deterministically. |
+
+Only EdDSA/Ed25519 public JWKs with a unique explicit `kid` are accepted.
+Private/symmetric/duplicate key material is rejected. Raw tokens are not used
+as cache keys or status labels. See
+[Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication)
+before enabling audit or enforce.
+
+## Reload behaviour
+
+For initial commissioning without the Control Agent, restart HBBS after editing:
+
+```sh
+docker restart rustdesk-starry-hbbs
+```
+
+Subsequent managed changes should use the authenticated versioned Control API
+plan/apply or `POST /control/v1/runtime:reload` flow. Activation is atomic at
+the active-generation level. A complete valid candidate is
+prepared by each required subsystem and becomes active with a new generation
+only after every acknowledgement succeeds. An empty/invalid/rejected reload
+retains the prior last-known-good generation, digests, Relay/auth state, and
+reports `last_error`. If no valid generation has ever loaded, HBBS keeps
+upstream-compatible behaviour. Correct or restore the disk file and require a
+successful activation acknowledgement; process survival alone is not success.
 
 ## Ready-made profiles
 
@@ -238,6 +307,7 @@ verification checklist.
 - [`config.geo-basic.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.geo-basic.yaml): beginner Geo policy.
 - [`config.geo-advanced.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.geo-advanced.yaml): nested and direction-sensitive rules.
 - [`config.websocket.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.websocket.yaml): WebSocket Signal profile.
+- [`config.auth-audit.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.auth-audit.yaml): schema v3 connection-authentication audit canary.
 - [`config.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.example.yaml): all sections together.
 
 Always replace example hosts and URLs, then validate logs and real sessions.

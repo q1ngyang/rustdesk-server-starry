@@ -1,10 +1,11 @@
+use base64::{encode_config, URL_SAFE_NO_PAD};
 use hbb_common::{
     bytes::Bytes,
     futures_util::{SinkExt, StreamExt},
     protobuf::Message as _,
     rendezvous_proto::{
-        register_pk_response, rendezvous_message, NatType, PunchHole, PunchHoleRequest,
-        RegisterPeer, RegisterPk, RelayResponse, RendezvousMessage,
+        punch_hole_response, register_pk_response, rendezvous_message, NatType, PunchHole,
+        PunchHoleRequest, RegisterPeer, RegisterPk, RelayResponse, RendezvousMessage, RequestRelay,
     },
     tcp::FramedStream,
     timeout,
@@ -20,6 +21,7 @@ use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa,
     PKCS_ECDSA_P256_SHA256,
 };
+use sodiumoxide::crypto::sign;
 use std::{
     fs,
     net::{SocketAddr, TcpListener as StdTcpListener, UdpSocket as StdUdpSocket},
@@ -29,12 +31,17 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_rustls::{
-    rustls::{Certificate as RustlsCertificate, PrivateKey, ServerConfig},
+    rustls::{
+        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+        ServerConfig,
+    },
     TlsAcceptor,
 };
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tungstenite::client::IntoClientRequest;
 use tungstenite::Message;
 
 type ClientWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -65,6 +72,7 @@ fn hbbs_registers_websocket_peers_and_routes_both_transports() {
         .build()
         .unwrap()
         .block_on(async {
+            sodiumoxide::init().unwrap();
             let hbbs_port = reserve_hbbs_ports();
             let hbbr_port = reserve_hbbr_ports(hbbs_port);
             let root = std::env::temp_dir().join(format!(
@@ -78,7 +86,24 @@ fn hbbs_registers_websocket_peers_and_routes_both_transports() {
             let hbbr_dir = root.join("hbbr");
             let hbbs_dir = root.join("hbbs");
             fs::create_dir_all(&hbbr_dir).unwrap();
-            fs::create_dir_all(&hbbs_dir).unwrap();
+            fs::create_dir_all(hbbs_dir.join("auth")).unwrap();
+            let (auth_public, auth_secret) = sign::gen_keypair();
+            fs::write(
+                hbbs_dir.join("auth/jwks.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "keys": [{
+                        "kty": "OKP",
+                        "crv": "Ed25519",
+                        "use": "sig",
+                        "alg": "EdDSA",
+                        "kid": "persistent-wss-test-key",
+                        "x": encode_config(auth_public.0, URL_SAFE_NO_PAD)
+                    }]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let active_token = connection_token(&auth_secret);
 
             let hbbr = Command::new(env!("CARGO_BIN_EXE_hbbr"))
                 .arg("--port")
@@ -121,12 +146,29 @@ fn hbbs_registers_websocket_peers_and_routes_both_transports() {
             let mut websocket_b =
                 connect_registered_websocket(hbbs_port, "wss-peer-b001", 0x22).await;
 
+            assert_persistent_websocket_auth_denials(
+                &mut websocket_a,
+                "wss-peer-b001",
+                &mut websocket_b,
+                &server_key,
+            )
+            .await;
+
             assert_websocket_to_websocket(
                 &mut websocket_a,
                 "wss-peer-b001",
                 &mut websocket_b,
                 &relay,
                 &server_key,
+                &active_token,
+            )
+            .await;
+            assert_websocket_request_relay(
+                &mut websocket_a,
+                "wss-peer-b001",
+                &mut websocket_b,
+                &relay,
+                &active_token,
             )
             .await;
 
@@ -142,6 +184,7 @@ fn hbbs_registers_websocket_peers_and_routes_both_transports() {
                 &mut native_peer,
                 &relay,
                 &server_key,
+                &active_token,
             )
             .await;
             assert_native_to_websocket(
@@ -150,8 +193,142 @@ fn hbbs_registers_websocket_peers_and_routes_both_transports() {
                 "wss-peer-b001",
                 &relay,
                 &server_key,
+                &active_token,
             )
             .await;
+        });
+}
+
+#[test]
+#[ignore = "release-only 1,000-connection load gate"]
+fn hbbs_sustains_one_thousand_registered_idle_websockets() {
+    Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            sodiumoxide::init().unwrap();
+            let hbbs_port = reserve_hbbs_ports();
+            let unused_relay_port = reserve_hbbr_ports(hbbs_port);
+            let root = std::env::temp_dir().join(format!(
+                "starry-websocket-load-{}-{hbbs_port}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(&root).unwrap();
+
+            let (probe_port, ca_path, probe_count, probe_task) = start_wss_probe(&root).await;
+            let hbbs_dir = root.join("hbbs");
+            fs::create_dir_all(&hbbs_dir).unwrap();
+            let relay = format!("localhost:{unused_relay_port}");
+            let config_path = hbbs_dir.join("config.yaml");
+            fs::write(&config_path, websocket_load_config(&relay, probe_port)).unwrap();
+            let hbbs = Command::new(env!("CARGO_BIN_EXE_hbbs"))
+                .arg("--port")
+                .arg(hbbs_port.to_string())
+                .arg(format!("--starry-config={}", config_path.display()))
+                .env("SSL_CERT_FILE", &ca_path)
+                .env("RUST_LOG", "error")
+                .current_dir(&hbbs_dir)
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            let _environment = TestEnvironment {
+                children: vec![hbbs],
+                tasks: vec![probe_task],
+                root,
+            };
+
+            wait_until_listening(SocketAddr::from(([127, 0, 0, 1], hbbs_port + 2))).await;
+            wait_for_wss_probe(&probe_count).await;
+
+            let mut websockets = Vec::with_capacity(1_000);
+            // Ramp up in bounded batches. The steady-state target is 1,000
+            // idle sessions; an unbounded SYN/SQLite thundering herd measures
+            // the host backlog instead of the session implementation.
+            for batch_start in (0..1_000_u32).step_by(25) {
+                let mut registrations = Vec::with_capacity(25);
+                for index in batch_start..batch_start + 25 {
+                    registrations.push(hbb_common::tokio::spawn(async move {
+                        let id = format!("load-peer-{index:07}");
+                        let word = index.to_be_bytes();
+                        let uuid = word.repeat(4);
+                        let public_key = word.repeat(8);
+                        let effective_ip =
+                            format!("10.200.{}.{}", (index / 250) % 4, (index % 250) + 1);
+                        connect_registered_websocket_with_identity_and_ip(
+                            hbbs_port,
+                            &id,
+                            &uuid,
+                            &public_key,
+                            Some(&effective_ip),
+                        )
+                        .await
+                    }));
+                }
+                for registration in registrations {
+                    websockets.push(registration.await.unwrap());
+                }
+            }
+            assert_eq!(websockets.len(), 1_000);
+
+            let mut probes = Vec::with_capacity(1_000);
+            for (index, websocket) in websockets.into_iter().enumerate() {
+                probes.push(hbb_common::tokio::spawn(async move {
+                    let payload = (index as u64).to_be_bytes().to_vec();
+                    verify_websocket_ping(websocket, payload).await
+                }));
+            }
+            let mut verified = Vec::with_capacity(1_000);
+            for probe in probes {
+                verified.push(probe.await.unwrap());
+            }
+            assert_eq!(verified.len(), 1_000);
+            sleep(Duration::from_secs(2)).await;
+
+            // Re-register a canary subset without first closing the original
+            // socket. The new generation must atomically replace the old one
+            // and remain live under a bounded reconnect storm.
+            let mut reconnects = Vec::with_capacity(100);
+            for index in 0..100_u32 {
+                reconnects.push(hbb_common::tokio::spawn(async move {
+                    let id = format!("load-peer-{index:07}");
+                    let word = index.to_be_bytes();
+                    let uuid = word.repeat(4);
+                    let public_key = word.repeat(8);
+                    let effective_ip =
+                        format!("10.200.{}.{}", (index / 250) % 4, (index % 250) + 1);
+                    let websocket = connect_registered_websocket_with_identity_and_ip(
+                        hbbs_port,
+                        &id,
+                        &uuid,
+                        &public_key,
+                        Some(&effective_ip),
+                    )
+                    .await;
+                    verify_websocket_ping(
+                        websocket,
+                        (10_000_u64 + u64::from(index)).to_be_bytes().to_vec(),
+                    )
+                    .await
+                }));
+            }
+            for reconnect in reconnects {
+                verified.push(reconnect.await.unwrap());
+            }
+            assert_eq!(verified.len(), 1_100);
+
+            let mut closures = Vec::with_capacity(1_100);
+            for mut websocket in verified {
+                closures.push(hbb_common::tokio::spawn(async move {
+                    let _ = websocket.close(None).await;
+                }));
+            }
+            for closure in closures {
+                closure.await.unwrap();
+            }
         });
 }
 
@@ -176,11 +353,10 @@ async fn start_wss_probe(root: &Path) -> (u16, PathBuf, Arc<AtomicUsize>, JoinHa
     let certificate = server.serialize_der_with_signer(&ca).unwrap();
     let private_key = server.serialize_private_key_der();
     let tls = ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(
-            vec![RustlsCertificate(certificate)],
-            PrivateKey(private_key),
+            vec![CertificateDer::from(certificate)],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(private_key)),
         )
         .unwrap();
     let acceptor = TlsAcceptor::from(Arc::new(tls));
@@ -245,7 +421,7 @@ async fn start_wss_probe(root: &Path) -> (u16, PathBuf, Arc<AtomicUsize>, JoinHa
 
 fn websocket_config(relay: &str, probe_port: u16) -> String {
     format!(
-        r#"version: 2
+        r#"version: 3
 relay_servers:
   - {relay}
 websocket_signal:
@@ -270,14 +446,81 @@ websocket_signal:
     endpoints:
       - relay: {relay}
         url: wss://localhost:{probe_port}/ws/relay
+connection_auth:
+  mode: enforce
+  issuer: https://api.example.test
+  audience: rustdesk-connect
+  token_use: access
+  required_scope: connect:initiate
+  jwks:
+    file: auth/jwks.json
+"#
+    )
+}
+
+fn websocket_load_config(relay: &str, probe_port: u16) -> String {
+    format!(
+        r#"version: 3
+relay_servers:
+  - {relay}
+websocket_signal:
+  enabled: true
+  registration_timeout_ms: 15000
+  keepalive_interval_ms: 30000
+  idle_timeout_ms: 120000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 1200
+  max_sessions_per_effective_ip: 1200
+  registration_rate_per_minute: 5000
+  trusted_proxies:
+    - 127.0.0.1/32
+    - ::1/128
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 60
+    timeout_ms: 2000
+    success_threshold: 1
+    failure_threshold: 1
+    endpoints:
+      - relay: {relay}
+        url: wss://localhost:{probe_port}/ws/relay
 "#
     )
 }
 
 async fn connect_registered_websocket(port: u16, id: &str, identity_byte: u8) -> ClientWebSocket {
+    connect_registered_websocket_with_identity(port, id, &[identity_byte; 16], &[identity_byte; 32])
+        .await
+}
+
+async fn connect_registered_websocket_with_identity(
+    port: u16,
+    id: &str,
+    uuid: &[u8],
+    public_key: &[u8],
+) -> ClientWebSocket {
+    connect_registered_websocket_with_identity_and_ip(port, id, uuid, public_key, None).await
+}
+
+async fn connect_registered_websocket_with_identity_and_ip(
+    port: u16,
+    id: &str,
+    uuid: &[u8],
+    public_key: &[u8],
+    effective_ip: Option<&str>,
+) -> ClientWebSocket {
+    assert_eq!(uuid.len(), 16);
+    assert_eq!(public_key.len(), 32);
     let url = format!("ws://127.0.0.1:{}/ws/id", port + 2);
     for _ in 0..100 {
-        let Ok((mut websocket, _)) = connect_async(&url).await else {
+        let mut request = url.clone().into_client_request().unwrap();
+        if let Some(effective_ip) = effective_ip {
+            request
+                .headers_mut()
+                .insert("X-Real-IP", effective_ip.parse().unwrap());
+        }
+        let Ok((mut websocket, _)) = connect_async(request).await else {
             sleep(Duration::from_millis(50)).await;
             continue;
         };
@@ -288,7 +531,9 @@ async fn connect_registered_websocket(port: u16, id: &str, identity_byte: u8) ->
             ..Default::default()
         });
         if websocket
-            .send(Message::Binary(register_peer.write_to_bytes().unwrap()))
+            .send(Message::Binary(
+                register_peer.write_to_bytes().unwrap().into(),
+            ))
             .await
             .is_err()
         {
@@ -306,12 +551,14 @@ async fn connect_registered_websocket(port: u16, id: &str, identity_byte: u8) ->
         let mut register_pk = RendezvousMessage::new();
         register_pk.set_register_pk(RegisterPk {
             id: id.to_owned(),
-            uuid: Bytes::from(vec![identity_byte; 16]),
-            pk: Bytes::from(vec![identity_byte; 32]),
+            uuid: Bytes::copy_from_slice(uuid),
+            pk: Bytes::copy_from_slice(public_key),
             ..Default::default()
         });
         if websocket
-            .send(Message::Binary(register_pk.write_to_bytes().unwrap()))
+            .send(Message::Binary(
+                register_pk.write_to_bytes().unwrap().into(),
+            ))
             .await
             .is_err()
         {
@@ -329,6 +576,31 @@ async fn connect_registered_websocket(port: u16, id: &str, identity_byte: u8) ->
         sleep(Duration::from_millis(100)).await;
     }
     panic!("HBBS did not accept WebSocket registration for {id}");
+}
+
+async fn verify_websocket_ping(
+    mut websocket: ClientWebSocket,
+    payload: Vec<u8>,
+) -> ClientWebSocket {
+    websocket
+        .send(Message::Ping(payload.clone().into()))
+        .await
+        .unwrap();
+    timeout(10_000, async {
+        loop {
+            match websocket.next().await.unwrap().unwrap() {
+                Message::Pong(received) if received == payload => break,
+                Message::Ping(received) => websocket.send(Message::Pong(received)).await.unwrap(),
+                Message::Close(frame) => {
+                    panic!("load connection closed before Pong: {frame:?}")
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("load connection did not receive Pong");
+    websocket
 }
 
 async fn wait_for_empty_heartbeat(websocket: &mut ClientWebSocket) {
@@ -374,18 +646,104 @@ async fn receive_protocol(
     .map_err(|_| "WebSocket protocol response timed out".to_owned())?
 }
 
+async fn assert_persistent_websocket_auth_denials(
+    controller: &mut ClientWebSocket,
+    target_id: &str,
+    target: &mut ClientWebSocket,
+    server_key: &str,
+) {
+    send_punch_request_ws(controller, target_id, server_key, "").await;
+    match receive_protocol(controller, 5_000).await.unwrap().union {
+        Some(rendezvous_message::Union::PunchHoleResponse(response)) => {
+            assert_eq!(
+                response.failure.enum_value().ok(),
+                Some(punch_hole_response::Failure::OFFLINE)
+            );
+            assert_eq!(response.other_failure, "connection authorization failed");
+        }
+        other => panic!("expected persistent WSS PunchHoleResponse denial, got {other:?}"),
+    }
+    assert_target_received_nothing(target, "denied persistent WSS PunchHoleRequest").await;
+
+    send_request_relay_ws(controller, target_id, "relay.invalid.test:21117", "").await;
+    match receive_protocol(controller, 5_000).await.unwrap().union {
+        Some(rendezvous_message::Union::RelayResponse(response)) => {
+            assert_eq!(response.refuse_reason, "connection authorization failed")
+        }
+        other => panic!("expected persistent WSS RelayResponse denial, got {other:?}"),
+    }
+    assert_target_received_nothing(target, "denied persistent WSS RequestRelay").await;
+}
+
+async fn assert_target_received_nothing(target: &mut ClientWebSocket, context: &str) {
+    match receive_protocol(target, 250).await {
+        Err(error) if error == "WebSocket protocol response timed out" => {}
+        other => panic!("{context} reached or closed the target: {other:?}"),
+    }
+}
+
+async fn assert_websocket_request_relay(
+    controller: &mut ClientWebSocket,
+    target_id: &str,
+    target: &mut ClientWebSocket,
+    relay: &str,
+    token: &str,
+) {
+    send_request_relay_ws(controller, target_id, relay, token).await;
+    let request = match receive_protocol(target, 5_000).await.unwrap().union {
+        Some(rendezvous_message::Union::RequestRelay(request)) => request,
+        other => panic!("expected persistent WSS RequestRelay, got {other:?}"),
+    };
+    assert_eq!(request.id, target_id);
+    assert_eq!(request.relay_server, relay);
+    assert!(!request.socket_addr.is_empty());
+    let mut response = RendezvousMessage::new();
+    response.set_relay_response(RelayResponse {
+        socket_addr: request.socket_addr,
+        uuid: request.uuid,
+        relay_server: request.relay_server,
+        ..Default::default()
+    });
+    target
+        .send(Message::Binary(response.write_to_bytes().unwrap().into()))
+        .await
+        .unwrap();
+    expect_relay_response(receive_protocol(controller, 5_000).await.unwrap(), relay);
+}
+
+async fn send_request_relay_ws(
+    websocket: &mut ClientWebSocket,
+    target_id: &str,
+    relay: &str,
+    token: &str,
+) {
+    let mut request = RendezvousMessage::new();
+    request.set_request_relay(RequestRelay {
+        id: target_id.to_owned(),
+        uuid: "persistent-wss-auth".to_owned(),
+        relay_server: relay.to_owned(),
+        token: token.to_owned(),
+        ..Default::default()
+    });
+    websocket
+        .send(Message::Binary(request.write_to_bytes().unwrap().into()))
+        .await
+        .unwrap();
+}
+
 async fn assert_websocket_to_websocket(
     controller: &mut ClientWebSocket,
     target_id: &str,
     target: &mut ClientWebSocket,
     relay: &str,
     server_key: &str,
+    token: &str,
 ) {
-    send_punch_request_ws(controller, target_id, server_key).await;
+    send_punch_request_ws(controller, target_id, server_key, token).await;
     let punch = expect_punch(receive_protocol(target, 5_000).await.unwrap(), relay);
     target
         .send(Message::Binary(
-            relay_response(&punch).write_to_bytes().unwrap(),
+            relay_response(&punch).write_to_bytes().unwrap().into(),
         ))
         .await
         .unwrap();
@@ -433,8 +791,9 @@ async fn assert_websocket_to_native(
     target: &mut FramedSocket,
     relay: &str,
     server_key: &str,
+    token: &str,
 ) {
-    send_punch_request_ws(controller, target_id, server_key).await;
+    send_punch_request_ws(controller, target_id, server_key, token).await;
     let (bytes, _) = target.next_timeout(5_000).await.unwrap().unwrap();
     let punch = expect_punch(RendezvousMessage::parse_from_bytes(&bytes).unwrap(), relay);
 
@@ -451,18 +810,19 @@ async fn assert_native_to_websocket(
     target_id: &str,
     relay: &str,
     server_key: &str,
+    token: &str,
 ) {
     let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let peer_addr = stream.peer_addr().unwrap();
     let mut controller = FramedStream::from(stream, peer_addr);
     controller
-        .send(&punch_request(target_id, server_key))
+        .send(&punch_request(target_id, server_key, token))
         .await
         .unwrap();
     let punch = expect_punch(receive_protocol(target, 5_000).await.unwrap(), relay);
     target
         .send(Message::Binary(
-            relay_response(&punch).write_to_bytes().unwrap(),
+            relay_response(&punch).write_to_bytes().unwrap().into(),
         ))
         .await
         .unwrap();
@@ -473,23 +833,30 @@ async fn assert_native_to_websocket(
     );
 }
 
-async fn send_punch_request_ws(websocket: &mut ClientWebSocket, target_id: &str, server_key: &str) {
+async fn send_punch_request_ws(
+    websocket: &mut ClientWebSocket,
+    target_id: &str,
+    server_key: &str,
+    token: &str,
+) {
     websocket
         .send(Message::Binary(
-            punch_request(target_id, server_key)
+            punch_request(target_id, server_key, token)
                 .write_to_bytes()
-                .unwrap(),
+                .unwrap()
+                .into(),
         ))
         .await
         .unwrap();
 }
 
-fn punch_request(target_id: &str, server_key: &str) -> RendezvousMessage {
+fn punch_request(target_id: &str, server_key: &str, token: &str) -> RendezvousMessage {
     let mut message = RendezvousMessage::new();
     message.set_punch_hole_request(PunchHoleRequest {
         id: target_id.to_owned(),
         nat_type: NatType::ASYMMETRIC.into(),
         licence_key: server_key.to_owned(),
+        token: token.to_owned(),
         ..Default::default()
     });
     message
@@ -523,6 +890,45 @@ fn expect_relay_response(message: RendezvousMessage, relay: &str) {
         }
         other => panic!("expected RelayResponse, got {other:?}"),
     }
+}
+
+fn connection_token(secret: &sign::SecretKey) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let header = encode_config(
+        serde_json::to_vec(&serde_json::json!({
+            "alg": "EdDSA",
+            "kid": "persistent-wss-test-key",
+            "typ": "at+jwt"
+        }))
+        .unwrap(),
+        URL_SAFE_NO_PAD,
+    );
+    let payload = encode_config(
+        serde_json::to_vec(&serde_json::json!({
+            "iss": "https://api.example.test",
+            "aud": "rustdesk-connect",
+            "token_use": "access",
+            "scope": "connect:initiate",
+            "sub": "1002",
+            "user_id": 1_002,
+            "auth_version": 1,
+            "jti": "01941f29-7c30-7000-8000-000000001002",
+            "iat": now.saturating_sub(1),
+            "nbf": now.saturating_sub(1),
+            "exp": now.saturating_add(60)
+        }))
+        .unwrap(),
+        URL_SAFE_NO_PAD,
+    );
+    let signing_input = format!("{header}.{payload}");
+    let signature = sign::sign_detached(signing_input.as_bytes(), secret);
+    format!(
+        "{signing_input}.{}",
+        encode_config(signature.as_ref(), URL_SAFE_NO_PAD)
+    )
 }
 
 fn reserve_hbbs_ports() -> u16 {

@@ -1,0 +1,15 @@
+{
+  "revisions": [
+    {
+      "id": "0191f6a0-0001-7000-8000-000000000020",
+      "generation": 42,
+      "before_etag": "\"sha256:de800259fb2922a632520597bd20532d7359425e7ceb6b9321e36f573d494340\"",
+      "after_etag": "\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"",
+      "candidate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "actor": "user:42",
+      "comment": "Enable connection authentication",
+      "created_at": "2026-08-18T10:00:00Z",
+      "result": "succeeded"
+    }
+  ]
+}

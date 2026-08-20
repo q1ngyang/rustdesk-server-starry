@@ -77,6 +77,7 @@ def local_target(source: Path, raw: str) -> Path | None:
 def main() -> int:
     errors: list[str] = []
     pairs = paired_documents()
+    patch_version = (ROOT / "PATCH_VERSION").read_text(encoding="utf-8").strip()
 
     for english, chinese in pairs:
         if not english.is_file():
@@ -117,6 +118,18 @@ def main() -> int:
                     "broken local link in "
                     f"{document.relative_to(ROOT)}: {match.group(1)}"
                 )
+
+    for path in (
+        ROOT / "README.md",
+        ROOT / "README.zh-CN.md",
+        ROOT / "examples/.env.example",
+        ROOT / "examples/center/.env.example",
+        ROOT / "examples/control-agent/.env.example",
+    ):
+        if f"patch-v{patch_version}" not in path.read_text(encoding="utf-8"):
+            errors.append(
+                f"current patch version is missing from {path.relative_to(ROOT)}"
+            )
 
     if errors:
         for error in errors:

@@ -3,7 +3,7 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback) | **简体中文**
 
 升级同时涉及两个版本：官方 RustDesk Server 基线和 Starry patch。例如
-`1.1.16-patch-v1.1.0` 表示官方服务端 `1.1.16` 加 Starry patch `1.1.0`。生产环境
+`1.1.16-patch-v1.2.0` 表示官方服务端 `1.1.16` 加 Starry patch `1.2.0`。生产环境
 应锁定完整标签，并记录实际镜像摘要。
 
 ## 升级原则
@@ -18,12 +18,12 @@
 
 ## 当前 patch 说明
 
-- [patch-v1.1.0 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/RELEASE-NOTES-patch-v1.1.0.zh-CN.md)
+- [patch-v1.2.0 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)
 - [中文更新日志](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CHANGELOG.zh-CN.md)
 
-patch v1.1.0 增加可选的持久 `/ws/id` 信令、WSS/原生混合会话、经证书校验的 WSS
-Relay 健康、schema v2 限制和传输感知选择。schema v1 继续有效，并保持 WebSocket
-Signal 关闭。
+patch v1.2.0 新增 schema v3 last-known-good 激活、严格可选连接 JWT audit/enforce、
+不可变 Relay snapshot、无副作用 simulation 与可选最小权限 Linux Control Agent。
+schema v1/v2 继续有效，并保持连接认证关闭。
 
 ## 1. 盘点和备份
 
@@ -53,28 +53,28 @@ sha256sum "$backup_dir/data/id_ed25519" \
 
 ## 2. 准备候选配置
 
-从 patch v1.0.0 升级 v1.1.0 时，第一次替换镜像/二进制仍使用原 schema v1。另存
-一份 schema v2 候选：
+从 patch v1.1.0 升级 v1.2.0 时，第一次替换镜像/二进制仍使用原 schema v2（或 v1）。
+另存一份 schema v3 候选：
 
 ```yaml
-version: 2
+version: 3
 
 # 原有 relay_servers、secure_tcp、mmdb 和 geo 部分保留在这里。
 
-websocket_signal:
-  enabled: false
-  # 在这里定义限制、可信代理和精确 Relay 健康 endpoint。
+connection_auth:
+  mode: off
+  # 进入 audit 前再添加经过审核的 issuer/JWKS/introspection。
 ```
 
-启用 WebSocket 前，endpoint Relay 名称必须恰好覆盖 `relay_servers`。此时不要覆盖
-活动配置。
+保持已有 WebSocket 设置不变。此时不要覆盖活动配置，也不要为了赶进度随意添加
+authentication issuer。
 
 ## 3. 只拉取和检查，不启动
 
 在 `.env` 设置新的不可变版本：
 
 ```dotenv
-STARRY_VERSION=1.1.16-patch-v1.1.0
+STARRY_VERSION=1.1.16-patch-v1.2.0
 RUSTDESK_SERVER_VERSION=1.1.16
 ```
 
@@ -97,7 +97,7 @@ docker compose --env-file .env -f compose.yaml ps
 docker compose --env-file .env -f compose.yaml logs --tail 200 hbbs hbbr
 ```
 
-继续使用旧 schema v1，验证：
+继续使用旧 schema v2 或 v1，验证：
 
 - 两个服务持续稳定并使用原密钥；
 - 原生注册正常；
@@ -107,29 +107,32 @@ docker compose --env-file .env -f compose.yaml logs --tail 200 hbbs hbbr
 
 原生基线出现回归，应立即停止。
 
-## 5. 先引入关闭 WebSocket 的 schema v2
+## 5. 先引入认证关闭的 schema v3
 
-将候选文件安装为 `data/starry/config.yaml`，再重载：
+将候选文件安装为 `data/starry/config.yaml`，再调用已认证的 Control Agent
+`POST /control/v1/runtime:reload` 操作并查看日志：
 
 ```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
 docker logs --tail 200 rustdesk-starry-hbbs
 ```
 
-响应和日志必须确认整份配置被接受，再次验证原生会话。HBBS 没有退出并不代表 schema
-变更成功；无效 Starry 配置会有意恢复上游行为。
+响应和日志必须报告新 generation、匹配的 source/effective digest 与成功 subsystem ack。
+再次验证原生和所有此前启用的 WSS/mixed 路径。进程仍运行不等于验收；无效 candidate
+会保留此前 last-known-good generation。
 
-## 6. 分阶段部署 TLS 并启用 WebSocket
+## 6. 分别接入 Agent 与连接认证
 
-1. 部署精确 Nginx `/ws/id` 和 `/ws/relay` location；
-2. 执行 `nginx -t`、重载 Nginx，并校验公网证书域名；
-3. 验证每个 endpoint 的 HTTP Upgrade；
-4. 设置 `websocket_signal.enabled: true` 并重载 Starry；
-5. 等待一个健康间隔并查看 `websocket-status`；
-6. 对 `native`、`wss` 和 `mixed` 执行 `test-geo`；
-7. 用真实客户端测试 WSS 到 WSS 和两个混合方向；
-8. 扩大范围前测试 Relay 故障与恢复。
+1. 以 `write_enabled: false` 和私有 listener 部署 Linux Control Agent；验证 mTLS
+   CA/URI-SAN 与 service-JWT audience/azp/scope 拒绝。
+2. 验证只读 status/Relay/config endpoint 与重复无副作用 allocation simulation；暂不开写。
+3. 只在 staging 开写，演练 apply、rollback、HBBS outage、Agent restart、disk drift 与恢复
+   阻断。
+4. 部署兼容 client token issuer、公共 Ed25519 JWKS 与 mTLS introspection endpoint；HBBS
+   保持 `connection_auth.mode: audit`。
+5. audit 运行完整业务周期，并完成 native TCP、Secure TCP、WSS、直接 Relay、logout/
+   revoke/disable/password-reset、key rotation 与依赖故障测试。
+6. 单实例或小用户组 canary `enforce`；只有指标证据充分才扩大。UDP 发起保持 unsupported，
+   且绝不能分配。
 
 使用[运维与完整验证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Operations-and-Verification)
 中的完整清单。
@@ -139,12 +142,17 @@ docker logs --tail 200 rustdesk-starry-hbbs
 如果只发生 WebSocket Signal 回归，原生行为仍正常：
 
 1. 设置 `websocket_signal.enabled: false`；
-2. 执行 `reload-starry-config`；
+2. 执行已认证的 `POST /control/v1/runtime:reload` 操作；
 3. 确认管理响应和 HBBS drain 日志；
 4. 关闭客户端 WebSocket 或撤销下发策略；
 5. 重新验证原生注册、P2P、Secure TCP 和原生 Relay。
 
 根据回滚策略关闭或停止使用公网 Nginx 路由。关闭功能后，已有 WSS session 会被 drain。
+
+若连接认证回归，在本机受控把 `enforce` 改为 `audit` 并要求同步 reload ack；故意没有远程
+一键认证 bypass。Agent 可独立停止或切回只读，HBBS/HBBR 继续使用最后活动配置。
+operation 进入 `manual_intervention_required` 时，新写入必须保持阻断，直至核对 disk bytes
+与 runtime digest。
 
 ## 镜像回滚
 
@@ -166,6 +174,8 @@ docker compose --env-file .env -f compose.yaml logs --tail 200 hbbs hbbr
 只恢复兼容配置和旧镜像更安全。
 
 回滚后重复原生及适用的 API/Relay 验收。
+启动 patch-v1.1.0 前，恢复文件必须是 schema v2 或 v1；patch-v1.1.0 不理解 schema v3。
+v1.2 Agent audit/transaction state 应另行保留到 incident 关闭。
 
 ## DEB 或独立二进制升级
 
@@ -195,6 +205,9 @@ HBBR 包是从固定官方 revision 构建的未修改上游 HBBR。回滚需要
 - 原先可用的已认证客户端 Secure TCP 失败；
 - 所需传输没有符合条件的 Relay；
 - 超过文档阈值后 WSS 健康仍未 Ready；
+- 连接认证 request 绕过统一 gate，或预期合法 client 被意外拒绝；
+- JWKS/introspection 故障疑似 fail open；
+- Agent apply 没有匹配 runtime ack，或进入 `manual_intervention_required`；
 - 两台客户端无法完成所需控制/数据测试。
 
 发布检查和 CI 是有价值的 Release 证据，但无法替代在实际 DNS、证书、代理、网络和

@@ -1,4 +1,4 @@
-# Minimal patch-v1.1.0 configuration: native Secure TCP only.
+# Minimal backwards-compatible configuration: native Secure TCP only.
 # WebSocket Signal is unavailable in schema v1 and remains disabled.
 version: 1
 

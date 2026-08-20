@@ -18,12 +18,11 @@ docker inspect rustdesk-starry-hbbs --format '{{json .State.Health}}'
 ss -lntup | grep -E ':(21115|21116|21117|21118|21119)\b'
 ```
 
-If WebSocket is involved:
+If WebSocket is involved, validate Nginx and inspect authenticated Control
+Agent `GET /control/v1/status`:
 
 ```sh
 sudo nginx -t
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'websocket-status\n' | nc -w 2 127.0.0.1 21115"
 ```
 
 Record the exact image tag/digest, config hash, client versions, both clients'
@@ -48,11 +47,11 @@ Starry rejects the complete candidate configuration when one field is unknown,
 duplicated, out of range, or inconsistent. It then keeps upstream-compatible
 behaviour instead of partially applying the file.
 
-Check:
+For an initial unmanaged deployment, restart HBBS and inspect the validation
+log. Managed deployments should use Control Agent validation and reload:
 
 ```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+docker restart rustdesk-starry-hbbs
 docker logs --tail 200 rustdesk-starry-hbbs
 ```
 
@@ -73,6 +72,13 @@ Work from the client towards HBBS:
 - Check client time and server time when TLS or token expiry is involved.
 - Test from a different network to distinguish a local firewall from a server
   problem.
+
+If only TCP is open, failure of native controlled-endpoint registration is
+expected with official 1.1.16: `RegisterPk` and heartbeats use UDP, and the TCP
+listener returns `NOT_SUPPORT` for that registration message. This is separate
+from an authenticated controller initiation over TCP/Secure TCP. Where UDP
+cannot be opened, verify WSS `/ws/id` and `/ws/relay` instead of treating the
+native registration failure as a JWT denial.
 
 Do not regenerate server keys as a connectivity experiment. That changes the
 identity for every client.
@@ -129,9 +135,10 @@ result from:
 - a matching rule whose Relays are unavailable plus no usable later rule; or
 - an empty effective Relay pool.
 
-Compare `relay-servers`, `websocket-status`, and all three `test-geo` modes.
-`reload-geo` reloads Geo/MMDB state only; use `reload-starry-config` after
-changing Relay, WebSocket, or general schema fields.
+Compare authenticated `GET /control/v1/relays`, `GET /control/v1/status`, and
+all three `POST /control/v1/allocations:simulate` transport modes. Use the
+authenticated plan/apply or runtime-reload operation after changing Relay,
+WebSocket, or general schema fields.
 
 ## MMDB download or lookup fails
 
@@ -161,7 +168,7 @@ endpoint.
 
 `101` proves only HTTP Upgrade. Continue at the RustDesk protocol layer:
 
-- confirm schema v2 and `websocket_signal.enabled: true` were accepted;
+- confirm schema v2 or v3 and `websocket_signal.enabled: true` were accepted;
 - verify the client uses `/ws/id` through the intended ID Server hostname;
 - inspect registration and routing logs after Upgrade;
 - confirm a certificate-valid `/ws/relay` endpoint is healthy;
@@ -212,6 +219,42 @@ Relay latency, packet loss, throughput, CPU, memory, and host/network shaping.
 A lower geographic distance is not guaranteed lower latency. Use real
 measurements to adjust ordered rules. Restart or reload only the component
 whose state actually changed, then repeat the same controlled transfer.
+
+## Connection authentication unexpectedly denies or allows
+
+Read `configured_mode`, `effective_mode`, `verifier_state`, key age, and metric
+deltas from Control Agent status. `--must-login` can make effective mode
+`enforce` even when the document says audit/off. A local claim/signature error
+must not call introspection; an otherwise valid request does call a configured
+introspection service and fails closed on timeout, TLS, 5xx, malformed, or
+inactive responses.
+
+Check exact `typ=at+jwt`, issuer/audience/token-use/scope, `sub == user_id`, clock sync,
+explicit `kid`, Ed25519 public key rotation overlap, JWKS staleness, client
+token placement, request kind, and transport. Never paste the raw token into a
+ticket. Return enforce to audit through a local acknowledged reload if
+legitimate clients regress; do not create a remote bypass.
+
+A JWKS server with a shorter idle timeout can make stale pooled keep-alive
+connections look like intermittent refresh failures. patch-v1.2.0 limits the
+internal mTLS HTTP pool idle lifetime to 15 seconds. If failures continue,
+correlate Starry refresh logs with the Kessoku idle timeout, certificate chain,
+server name, and `key_age_seconds`; do not hide a persistent fault by only
+increasing `max_stale_seconds`.
+
+## Control Agent is unavailable or blocks writes
+
+Separate TLS handshake, URI-SAN allowlist, service-JWT audience/azp/scope, and
+local HBBS connectivity. A 404 for write endpoints is expected when
+`write_enabled: false`. ETag/plan/idempotency conflicts are deliberate
+concurrency protection, not retry-without-preconditions errors.
+
+If an operation enters `manual_intervention_required`, stop retries. Preserve
+the state/audit/recovery directories, compare exact managed config bytes and
+HBBS runtime generation/digests, restore the reviewed last-known-good file, and
+perform a local acknowledged reload. Follow the
+[Control Agent recovery runbook](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent);
+deleting state to clear the block destroys required evidence.
 
 ## Upgrade caused a regression
 

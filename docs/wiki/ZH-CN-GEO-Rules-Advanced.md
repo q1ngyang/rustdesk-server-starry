@@ -127,19 +127,12 @@ patch v1.1.0 会先按传输要求过滤 Relay，再执行 Geo 排序：
 
 因此，同一对 IP 在不同传输方式下可能选中不同 Relay。应预览客户端会使用的全部路径：
 
-```sh
-for mode in native wss mixed; do
-  docker exec rustdesk-starry-hbbs sh -c \
-    "printf 'test-geo 192.0.2.10 198.51.100.20 $mode\n' | nc -w 2 127.0.0.1 21115"
-done
-```
+对 `native`、`wss` 和 `mixed` 分别调用一次已认证的
+`POST /control/v1/allocations:simulate`，保持两端地址与 expected generation 不变。
 
 测试 `wss` 和 `mixed` 前先查看健康状态：
 
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'websocket-status\n' | nc -w 2 127.0.0.1 21115"
-```
+先用已认证的 `GET /control/v1/status` 查看 WSS 健康状态。
 
 返回空选择比把客户端分配给不支持所需传输的 Relay 更安全。不要用 ping、普通 HTTPS
 或关闭 TLS 校验替代 WSS 证书验证。
@@ -162,7 +155,7 @@ docker exec rustdesk-starry-hbbs sh -c \
 1. 保存旧配置及其摘要；
 2. 建立测试矩阵：IP 对、方向、传输方式、预期规则、首选 Relay 和故障切换 Relay；
 3. 每次只改变一个策略维度；
-4. 执行 `reload-starry-config`，校验被拒绝就立即停止；
+4. 执行已认证的 Control Agent plan/apply 或 runtime-reload 操作，校验被拒绝就立即停止；
 5. 对矩阵每一行执行 `test-geo`；
 6. 对生产会使用的每类传输至少验证一次真实会话；
 7. 模拟第一优先 Relay 的故障和恢复；

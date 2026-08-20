@@ -21,7 +21,8 @@ The rest of this page uses Docker Compose.
 
 You need:
 
-- a supported `linux/amd64` or `linux/arm64` host;
+- a supported `linux/amd64` host (ARM is best-effort source compatibility and
+  is not a patch-v1.2.0 release platform);
 - Docker Engine with the Compose plugin;
 - a persistent directory with enough space for keys, logs, SQLite state, and
   MMDB files;
@@ -100,11 +101,11 @@ secure_tcp:
   mode: auto
 ```
 
-Reload and read the result:
+Restart HBBS for this initial commissioning load and read its logs:
 
 ```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+docker restart rustdesk-starry-hbbs
+docker logs --tail 100 rustdesk-starry-hbbs
 ```
 
 One invalid or unknown field rejects the complete Starry document. Correct the
@@ -162,7 +163,10 @@ Recommended order:
 3. a separately selected API, if account features are required
 4. [Reverse Proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS)
 5. schema v2 and optional WebSocket Signal
-6. [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification)
+6. schema v3 with connection authentication off
+7. optional read-only [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent)
+8. [Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication), audit before enforce
+9. [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification)
 
 After each change, preserve the last known-good configuration and complete the
 checks for the layer you changed.

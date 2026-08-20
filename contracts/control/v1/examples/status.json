@@ -1,0 +1,31 @@
+{
+  "ready": true,
+  "config": {
+    "status": "active",
+    "generation": 42,
+    "schema_version": 3,
+    "source_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "effective_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "activated_at": "2026-08-18T10:00:00Z",
+    "subsystem_acks": [
+      {"subsystem": "config_core", "accepted": true, "detail": "generation 42"}
+    ],
+    "last_error": null
+  },
+  "auth": {
+    "configured_mode": "enforce",
+    "effective_mode": "enforce",
+    "verifier_state": "ready",
+    "key_count": 2,
+    "key_age_seconds": 30,
+    "metrics": {
+      "attempts": 100,
+      "allowed": 98,
+      "denied": 2,
+      "audit_would_deny": 0,
+      "cache_hits": 75,
+      "introspection_requests": 23,
+      "introspection_failures": 0
+    }
+  }
+}

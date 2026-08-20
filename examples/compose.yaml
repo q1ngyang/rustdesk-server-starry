@@ -23,7 +23,7 @@ name: ${STARRY_COMPOSE_PROJECT_NAME:-rustdesk-server-starry}
 
 services:
   hbbs:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.1.0}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.0}
     container_name: ${STARRY_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
     command:
       - hbbs

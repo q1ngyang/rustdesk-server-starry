@@ -146,32 +146,10 @@ docker compose --env-file .env -f compose.yaml up -d
 
 不要让引导 HBBS 与完整栈 HBBS 作为两个 project 长期同时运行。
 
-完整参考包含一个社区 API，只用于展示集成边界，不由 Starry 维护或背书。使用前：
-
-- 审查独立的
-  [`liyan-lucky/rustdesk-api-server-pro`](https://github.com/liyan-lucky/rustdesk-api-server-pro)
-  仓库、许可证、版本和未解决安全问题；
-- 提供方发布可用的不可变标签或摘要时，用已审核值替换示例 `latest`；
-- 将 `examples/center/server.yaml.example` 复制为 `server.yaml`，设置文件模式
-  `0600`，并替换 `signKey` 与初始管理员密码；
-- 后端端口只绑定 loopback；
-- 数据和升级保持独立；
-- 只挂载 HBBS 公钥。
-
-首次启动且持久运行配置尚不存在时，该提供方的启动脚本会把 `/app/server.yaml` 复制为
-`/app/data/server.yaml`；后续启动不会覆盖持久副本。启动 API 前完成：
-
-```sh
-cp /path/to/repository/examples/center/server.yaml.example server.yaml
-chmod 600 server.yaml .env
-mkdir -p data/api
-```
-
-参考中的 `ADMIN_USER` 和 `ADMIN_PASS` 是这个独立镜像的首次启动输入。首次启动前必须
-替换，之后应遵循该提供方当前的配置、密码轮换和升级说明；不要预期以后修改源
-`server.yaml` 会覆盖 `data/api/server.yaml`。
-
-不需要账户功能时删除 API service。
+Starry 的完整参考有意只包含 HBBS/HBBR 数据平面。需要账户、策略或版本化 Control API
+能力时，请从不可变发布标签或镜像摘要单独部署 `rustdesk-api-kessoku` v2.8.0，并按两个
+项目的文档配置内部 mTLS 与签名 Control Agent 信任边界。不要向该 Compose project 加入
+未经审核的第三方 API 镜像，也不要把 Starry 私钥挂载到 API 容器。
 
 ## 阶段 5：部署 Nginx
 

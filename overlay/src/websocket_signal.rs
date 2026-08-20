@@ -17,10 +17,15 @@ use std::{
 use tokio_tungstenite::WebSocketStream;
 use tungstenite::Message;
 
+pub(crate) use relay_health::{runtime_snapshot as health_runtime_snapshot, RuntimeHealthSnapshot};
 pub(crate) use routing::{SessionRoute, SessionToken};
 pub(crate) use session::WsWriteTransport;
 
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) struct PreparedWebSocketSignal {
+    config: WebSocketSignalConfig,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RelayRequirement {
@@ -48,22 +53,50 @@ pub(crate) fn config() -> WebSocketSignalConfig {
 
 pub(crate) fn reconfigure() -> String {
     let config = config();
-    let health = relay_health::reconfigure(config.enabled, &config.relay_health);
-    if !config.enabled {
-        hbb_common::tokio::spawn(async {
-            let drained = routing::drain_all().await;
-            if drained > 0 {
-                log::info!(
-                    "Drained {drained} WebSocket signal sessions after configuration disable"
-                );
-            }
-        });
+    match prepare(&config).and_then(activate_prepared) {
+        Ok(ack) => ack.detail,
+        Err(err) => {
+            format!("WebSocket Signal reload rejected; retained last-known-good state: {err}")
+        }
     }
-    health
+}
+
+pub(crate) fn prepare(config: &WebSocketSignalConfig) -> Result<PreparedWebSocketSignal, String> {
+    Ok(PreparedWebSocketSignal {
+        config: config.clone(),
+    })
+}
+
+pub(crate) fn activate_prepared(
+    prepared: PreparedWebSocketSignal,
+) -> Result<starry_config::SubsystemAck, String> {
+    let config = prepared.config;
+    let drained = if config.enabled {
+        (0, 0)
+    } else {
+        routing::drain_all_now()?
+    };
+    let health = relay_health::reconfigure(config.enabled, &config.relay_health)?;
+    if drained.0 > 0 || drained.1 > 0 {
+        log::info!(
+            "Drained {} WebSocket signal sessions and {} admitted connections before configuration disable acknowledgement",
+            drained.0,
+            drained.1
+        );
+    }
+    Ok(starry_config::SubsystemAck {
+        subsystem: "websocket_signal".to_owned(),
+        accepted: true,
+        detail: health,
+    })
 }
 
 pub(crate) fn relay_ready() -> bool {
     relay_health::ready()
+}
+
+pub(crate) fn health_snapshot_id() -> u64 {
+    relay_health::snapshot_id()
 }
 
 pub(crate) fn eligible_relays(
@@ -96,9 +129,22 @@ pub(crate) fn inspect_upgrade(
         }
     }
 
+    // The official listener prefers a dual-stack IPv6 socket. Linux reports
+    // IPv4 proxy connections accepted by that socket as ::ffff:a.b.c.d, while
+    // operators correctly configure the proxy as an IPv4 CIDR. Compare both
+    // representations without broadening any configured trust range.
+    let direct_ip = match direct_addr.ip() {
+        IpAddr::V6(ip) => ip.to_ipv4_mapped().map(IpAddr::V4),
+        IpAddr::V4(_) => None,
+    };
     let trusted = config.trusted_proxies.iter().any(|cidr| {
         cidr.parse::<IpNetwork>()
-            .map(|network| network.contains(direct_addr.ip()))
+            .map(|network| {
+                network.contains(direct_addr.ip())
+                    || direct_ip
+                        .map(|normalized| network.contains(normalized))
+                        .unwrap_or(false)
+            })
             .unwrap_or(false)
     });
     if !trusted {
@@ -163,8 +209,9 @@ pub(crate) async fn register_connection(
     route_addr: SocketAddr,
     effective_addr: SocketAddr,
     connection_id: u64,
+    writer: WsWriteTransport,
 ) {
-    routing::register_connection(route_addr, effective_addr, connection_id).await;
+    routing::register_connection(route_addr, effective_addr, connection_id, writer).await;
 }
 
 pub(crate) async fn remove_connection(route_addr: SocketAddr, connection_id: u64) {
@@ -302,6 +349,18 @@ mod tests {
         assert_eq!(
             inspect_upgrade(&uri, &headers, direct, &config()).unwrap(),
             "198.51.100.7:32100".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn ipv4_mapped_dual_stack_proxy_matches_ipv4_trust_range() {
+        let uri: http::Uri = "/ws/id".parse().unwrap();
+        let mut headers = http::HeaderMap::new();
+        headers.insert("X-Real-IP", "198.51.100.8".parse().unwrap());
+        let direct: SocketAddr = "[::ffff:127.0.0.1]:32101".parse().unwrap();
+        assert_eq!(
+            inspect_upgrade(&uri, &headers, direct, &config()).unwrap(),
+            "198.51.100.8:32101".parse().unwrap()
         );
     }
 

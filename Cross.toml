@@ -1,0 +1,8 @@
+# The cross driver is pinned separately in the release workflow. Pinning these
+# image manifests prevents that fixed driver from resolving its mutable `main`
+# image tags during release builds.
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl@sha256:d54fdde7f1b680901a0bb21a2952e4921172b94c17e48603ccbbaeca8b5ef7e8"
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl@sha256:f604e399cbb2154ddeb013db99eb4f123d24f09a579c7e8d6ed631d15ffa8b12"

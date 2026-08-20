@@ -1,0 +1,52 @@
+# Ephemeral production-shaped local drill: one HBBS observes six independent
+# HBBR containers. Authentication is disabled here so the drill isolates Relay
+# health, allocation failover, and recovery ordering.
+version: 3
+
+relay_servers:
+  - relay1.local:21117
+  - relay2.local:21117
+  - relay3.local:21117
+  - relay4.local:21117
+  - relay5.local:21117
+  - relay6.local:21117
+
+secure_tcp:
+  mode: auto
+  handshake_timeout_ms: 18000
+  idle_timeout_ms: 30000
+  max_frame_bytes: 65536
+
+websocket_signal:
+  enabled: true
+  registration_timeout_ms: 10000
+  keepalive_interval_ms: 12000
+  idle_timeout_ms: 45000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 128
+  max_sessions_per_effective_ip: 64
+  registration_rate_per_minute: 300
+  trusted_proxies: []
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 5
+    timeout_ms: 1000
+    success_threshold: 1
+    failure_threshold: 1
+    endpoints:
+      - relay: relay1.local:21117
+        url: wss://relay1.local/ws/relay
+      - relay: relay2.local:21117
+        url: wss://relay2.local/ws/relay
+      - relay: relay3.local:21117
+        url: wss://relay3.local/ws/relay
+      - relay: relay4.local:21117
+        url: wss://relay4.local/ws/relay
+      - relay: relay5.local:21117
+        url: wss://relay5.local/ws/relay
+      - relay: relay6.local:21117
+        url: wss://relay6.local/ws/relay
+
+connection_auth:
+  mode: off

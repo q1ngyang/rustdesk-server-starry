@@ -10,9 +10,11 @@ path for most Linux operators.
 
 | Platform | Architectures | Artifacts |
 | --- | --- | --- |
-| Debian/Ubuntu | `amd64`, `arm64` | Separate HBBS, HBBR, and utilities DEB packages. |
-| Linux | `amd64`, `arm64` | Static `hbbs`, `hbbr`, and `rustdesk-utils` binaries plus a tar archive. |
-| Windows | `amd64` | Separate `.exe` files plus a zip archive. |
+| Debian/Ubuntu | `amd64` | Separate HBBS, HBBR, utilities, and Control Agent DEB packages. |
+| Linux | `amd64` | Static `hbbs`, `hbbr`, `rustdesk-utils`, and Control Agent binaries plus a tar archive. |
+
+ARM and Windows remain non-blocking compatibility targets. patch-v1.2.0 does
+not promise ARM or Windows release artifacts.
 
 The Starry release HBBR is an unmodified binary built from the same pinned
 official source as HBBS. Starry features remain confined to HBBS.
@@ -39,8 +41,7 @@ sudo apt install \
   ./rustdesk-server-starry-utils_*_amd64.deb
 ```
 
-Use the matching `arm64` filenames on an ARM host. Inspect package contents
-before installation when required by your change process:
+Inspect package contents before installation when required by your change process:
 
 ```sh
 dpkg-deb --info ./rustdesk-server-starry-hbbs_*.deb
@@ -68,11 +69,11 @@ sudo journalctl -u rustdesk-server-starry-hbbr -n 100 --no-pager
 ```
 
 The initial configuration is empty. Edit it, preserve owner and permissions,
-and reload locally:
+and restart HBBS for the initial commissioning load:
 
 ```sh
 sudoedit /etc/rustdesk-server-starry/config.yaml
-printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115
+sudo systemctl restart rustdesk-server-starry-hbbs
 ```
 
 Relative MMDB paths resolve from `/var/lib/rustdesk-server-starry`, not from
@@ -113,7 +114,10 @@ operation.
 
 ## Windows binaries
 
-Windows Release files can be run interactively for initial inspection:
+This section is retained for source-build compatibility only. The v1.2.0
+candidate does not include or support a Windows release artifact.
+
+Locally built Windows files can be run interactively for initial inspection:
 
 ```powershell
 $hbbsBinary = (Resolve-Path '.\hbbs-<release>-windows-amd64.exe').Path
@@ -147,8 +151,9 @@ Run the installer script only from an elevated PowerShell after checking the
 binary paths, data path, service accounts, ACLs, and firewall. The removal
 script deletes service definitions but deliberately preserves all data.
 
-Windows management commands can be sent with a local `TcpClient`; do not expose
-port 21115 through a remote proxy merely for management.
+On Windows, restart the service after an operator-owned configuration change.
+The legacy text management protocol is disabled; do not expose port 21115
+through a remote proxy.
 
 ## Reverse proxy
 

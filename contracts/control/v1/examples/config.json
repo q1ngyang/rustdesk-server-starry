@@ -1,0 +1,19 @@
+{
+  "status": "active",
+  "generation": 42,
+  "schema_version": 3,
+  "source_digest": "sha256:de800259fb2922a632520597bd20532d7359425e7ceb6b9321e36f573d494340",
+  "effective_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "activated_at": "2026-08-18T10:00:00Z",
+  "subsystem_acks": [
+    {"subsystem": "relay_pool", "accepted": true, "detail": "generation 42"},
+    {"subsystem": "geo", "accepted": true, "detail": "2 rules"},
+    {"subsystem": "websocket_health", "accepted": true, "detail": "health generation 17"},
+    {"subsystem": "connection_auth", "accepted": true, "detail": "audit verifier ready"}
+  ],
+  "last_error": null,
+  "etag": "\"sha256:de800259fb2922a632520597bd20532d7359425e7ceb6b9321e36f573d494340\"",
+  "drift": false,
+  "document": "version: 3\nrelay_servers:\n  - relay-asia-1.example.com:21117\n",
+  "format": "yaml"
+}

@@ -20,7 +20,7 @@
 
 需要：
 
-- 支持的 `linux/amd64` 或 `linux/arm64` 主机；
+- 正式支持的 `linux/amd64` 主机（ARM 仅尽力保持源码兼容，不是 patch-v1.2.0 发布平台）；
 - Docker Engine 与 Compose 插件；
 - 可持久保存密钥、日志、SQLite 与 MMDB 的目录；
 - 两端客户端可访问的公网 IP 或 DNS；
@@ -95,11 +95,11 @@ secure_tcp:
   mode: auto
 ```
 
-热加载并读取结果：
+重启 HBBS 完成首次加载并读取日志：
 
 ```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+docker restart rustdesk-starry-hbbs
+docker logs --tail 100 rustdesk-starry-hbbs
 ```
 
 一个无效或未知字段会拒绝整份 Starry 文档。应修正报告的字段，不要假设部分配置已经生效。
@@ -152,6 +152,9 @@ data/starry/config.yaml
 3. 需要账户功能时独立选择 API
 4. [反向代理与 TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Reverse-Proxy-and-TLS)
 5. schema v2 与可选 WebSocket Signal
-6. [运维与完整验证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Operations-and-Verification)
+6. schema v3，连接认证保持关闭
+7. 可选只读 [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)
+8. [连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication)，先 audit 后 enforce
+9. [运维与完整验证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Operations-and-Verification)
 
 每次变更后保留最后可用配置，并完成该层对应的检查。

@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        RwLock,
+        Arc, RwLock,
     },
     thread,
     time::{Duration, Instant, SystemTime},
@@ -24,8 +24,10 @@ use rules::{DbRequirements, RuleSet};
 
 const MMDB_MARKER: &[u8] = b"\xAB\xCD\xEFMaxMind.com";
 const MMDB_MARKER_WINDOW: u64 = 128 * 1024;
+const MAX_MMDB_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 
-static STATE: Lazy<RwLock<GeoState>> = Lazy::new(|| RwLock::new(GeoState::disabled()));
+static STATE: Lazy<RwLock<Arc<GeoState>>> =
+    Lazy::new(|| RwLock::new(Arc::new(GeoState::disabled())));
 static UPDATER_STARTED: AtomicBool = AtomicBool::new(false);
 static DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -34,6 +36,16 @@ struct GeoState {
     readers: GeoReaders,
     rules: RuleSet,
     warnings: Vec<String>,
+}
+
+pub(crate) struct PreparedGeo {
+    state: GeoState,
+    message: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct GeoRuntimeSnapshot {
+    state: Arc<GeoState>,
 }
 
 impl GeoState {
@@ -142,6 +154,14 @@ pub(crate) fn validate_config(config: &GeoConfig) -> Result<(), String> {
     RuleSet::compile(config).map(|_| ())
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct GeoRelaySelection {
+    pub(crate) relay: String,
+    pub(crate) rule_name: String,
+    pub(crate) rule_index: usize,
+    pub(crate) direction: &'static str,
+}
+
 pub fn reload() -> String {
     let Some(config) = starry_config::snapshot() else {
         return replace_state(
@@ -151,33 +171,47 @@ pub fn reload() -> String {
         );
     };
 
-    match GeoState::from_config(&config) {
-        Ok(new_state) => {
-            let enabled = new_state.enabled;
-            let rule_count = new_state.rules.len();
-            let databases = if new_state.readers.loaded.is_empty() {
-                "none".to_owned()
-            } else {
-                new_state.readers.loaded.join(", ")
-            };
-            let warnings = new_state.warnings.clone();
-            let message = if enabled {
-                let mut message =
-                    format!("Geo relay loaded: {rule_count} ordered rules, databases={databases}");
-                if !warnings.is_empty() {
-                    message.push_str(&format!("; warnings: {}", warnings.join("; ")));
-                }
-                message
-            } else {
-                "Geo relay disabled by Starry config; using upstream relay selection".to_owned()
-            };
-            replace_state(new_state, message)
-        }
-        Err(err) => replace_state(
-            GeoState::disabled(),
-            format!("Geo relay config is invalid; using upstream relay selection: {err}"),
-        ),
+    match prepare(&config).and_then(activate_prepared) {
+        Ok(ack) => ack.detail,
+        Err(err) => format!("Geo relay reload rejected; retained last-known-good state: {err}"),
     }
+}
+
+pub(crate) fn prepare(config: &crate::starry_config::StarryConfig) -> Result<PreparedGeo, String> {
+    let state = GeoState::from_config(config)?;
+    let enabled = state.enabled;
+    let rule_count = state.rules.len();
+    let databases = if state.readers.loaded.is_empty() {
+        "none".to_owned()
+    } else {
+        state.readers.loaded.join(", ")
+    };
+    let warnings = state.warnings.clone();
+    let message = if enabled {
+        let mut message =
+            format!("Geo relay loaded: {rule_count} ordered rules, databases={databases}");
+        if !warnings.is_empty() {
+            message.push_str(&format!("; warnings: {}", warnings.join("; ")));
+        }
+        message
+    } else {
+        "Geo relay disabled by Starry config; using upstream relay selection".to_owned()
+    };
+    Ok(PreparedGeo { state, message })
+}
+
+pub(crate) fn activate_prepared(
+    prepared: PreparedGeo,
+) -> Result<starry_config::SubsystemAck, String> {
+    let mut state = STATE
+        .write()
+        .map_err(|err| format!("Geo relay state lock failed: {err}"))?;
+    *state = Arc::new(prepared.state);
+    Ok(starry_config::SubsystemAck {
+        subsystem: "geo".to_owned(),
+        accepted: true,
+        detail: prepared.message,
+    })
 }
 
 pub fn select_relay(
@@ -186,7 +220,35 @@ pub fn select_relay(
     eligible_relays: &[String],
     requirement: RelayRequirement,
 ) -> Option<String> {
-    let state = STATE.read().ok()?;
+    select_relay_explained(pa, pb, eligible_relays, requirement).map(|selection| selection.relay)
+}
+
+pub(crate) fn select_relay_explained(
+    pa: IpAddr,
+    pb: IpAddr,
+    eligible_relays: &[String],
+    requirement: RelayRequirement,
+) -> Option<GeoRelaySelection> {
+    let snapshot = runtime_snapshot();
+    select_relay_explained_from(&snapshot, pa, pb, eligible_relays, requirement)
+}
+
+pub(crate) fn runtime_snapshot() -> GeoRuntimeSnapshot {
+    let state = STATE
+        .read()
+        .map(|state| state.clone())
+        .unwrap_or_else(|_| Arc::new(GeoState::disabled()));
+    GeoRuntimeSnapshot { state }
+}
+
+pub(crate) fn select_relay_explained_from(
+    snapshot: &GeoRuntimeSnapshot,
+    pa: IpAddr,
+    pb: IpAddr,
+    eligible_relays: &[String],
+    requirement: RelayRequirement,
+) -> Option<GeoRelaySelection> {
+    let state = snapshot.state.as_ref();
     if !state.enabled || eligible_relays.is_empty() {
         return None;
     }
@@ -200,7 +262,12 @@ pub fn select_relay(
         selection.rule_name,
         requirement
     );
-    Some(selection.relay)
+    Some(GeoRelaySelection {
+        relay: selection.relay,
+        rule_name: selection.rule_name,
+        rule_index: selection.rule_index,
+        direction: selection.direction,
+    })
 }
 
 pub fn start_mmdb_updater() -> String {
@@ -222,7 +289,7 @@ pub fn start_mmdb_updater() -> String {
 fn replace_state(new_state: GeoState, message: String) -> String {
     match STATE.write() {
         Ok(mut state) => {
-            *state = new_state;
+            *state = Arc::new(new_state);
             message
         }
         Err(err) => format!("Geo relay state lock failed: {err}"),
@@ -376,6 +443,8 @@ fn update_and_reload(config: &MmdbConfig, force: bool) {
 fn update_all(config: &MmdbConfig, force: bool) -> (usize, Vec<String>) {
     let client = match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(config.download_timeout_seconds))
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(client) => client,
@@ -422,6 +491,7 @@ fn download_database(
     minimum_bytes: u64,
 ) -> Result<(), String> {
     let target = Path::new(&database.path);
+    reject_symlink_components(target)?;
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)
         .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
@@ -442,7 +512,7 @@ fn download_to_temporary(
     minimum_bytes: u64,
 ) -> Result<(), String> {
     log::info!("Downloading Starry {label} MMDB");
-    let mut response = client
+    let response = client
         .get(&database.url)
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
@@ -458,13 +528,22 @@ fn download_to_temporary(
             };
             format!("{label} download failed: {detail}")
         })?;
+    if response
+        .content_length()
+        .map(|length| length > MAX_MMDB_DOWNLOAD_BYTES)
+        .unwrap_or(false)
+    {
+        return Err(format!(
+            "{label} download exceeds the {MAX_MMDB_DOWNLOAD_BYTES}-byte limit"
+        ));
+    }
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(temporary)
         .map_err(|err| format!("cannot create {}: {err}", temporary.display()))?;
-    response
-        .copy_to(&mut file)
+    let mut limited = response.take(MAX_MMDB_DOWNLOAD_BYTES + 1);
+    std::io::copy(&mut limited, &mut file)
         .map_err(|err| format!("cannot write {}: {err}", temporary.display()))?;
     file.flush()
         .map_err(|err| format!("cannot flush {}: {err}", temporary.display()))?;
@@ -473,6 +552,11 @@ fn download_to_temporary(
         .map_err(|err| format!("cannot inspect {}: {err}", temporary.display()))?
         .len();
     drop(file);
+    if size > MAX_MMDB_DOWNLOAD_BYTES {
+        return Err(format!(
+            "{label} download exceeds the {MAX_MMDB_DOWNLOAD_BYTES}-byte limit"
+        ));
+    }
     if size < minimum_bytes {
         return Err(format!(
             "{label} download is too small: {size} bytes, expected at least {minimum_bytes}"
@@ -517,6 +601,30 @@ fn temporary_path(target: &Path) -> PathBuf {
         std::process::id(),
         sequence
     ))
+}
+
+fn reject_symlink_components(target: &Path) -> Result<(), String> {
+    let mut current = PathBuf::new();
+    for component in target.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "MMDB path component {} must not be a symbolic link",
+                    current.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "cannot inspect MMDB path component {}: {err}",
+                    current.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]

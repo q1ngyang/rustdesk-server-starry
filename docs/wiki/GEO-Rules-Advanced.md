@@ -135,19 +135,13 @@ Patch v1.1.0 filters Relays before Geo ordering:
 This means the same two IPs can select different Relays for different
 transports. Preview all paths that your clients will use:
 
-```sh
-for mode in native wss mixed; do
-  docker exec rustdesk-starry-hbbs sh -c \
-    "printf 'test-geo 192.0.2.10 198.51.100.20 $mode\n' | nc -w 2 127.0.0.1 21115"
-done
-```
+Call authenticated `POST /control/v1/allocations:simulate` once for each of
+`native`, `wss`, and `mixed`, keeping both addresses and expected generation
+constant.
 
 For `wss` and `mixed`, inspect health first:
 
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'websocket-status\n' | nc -w 2 127.0.0.1 21115"
-```
+Use authenticated `GET /control/v1/status` to inspect WSS health first.
 
 An empty selection is safer than assigning a Relay that cannot satisfy the
 requested transport. Do not replace WSS certificate validation with ping,
@@ -175,7 +169,7 @@ For a non-trivial rule update:
 2. list a test matrix of IP pair, direction, transport, expected rule, primary
    Relay, and failover Relay;
 3. change one policy dimension at a time;
-4. run `reload-starry-config` and stop if validation is rejected;
+4. run the authenticated Control Agent plan/apply or runtime-reload operation and stop if validation is rejected;
 5. run `test-geo` for every matrix row;
 6. verify at least one real session for every transport class in use;
 7. simulate first-Relay failure and recovery; and

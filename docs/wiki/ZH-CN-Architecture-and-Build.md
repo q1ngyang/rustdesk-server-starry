@@ -20,6 +20,7 @@ RustDesk 客户端
 | --- | --- | --- |
 | HBBS | 是 | Peer 注册、连接协调、Secure TCP 协商、持久 WSS 信令、Geo 判断和 Relay 分配。 |
 | HBBR | 否 | 承载中继远控数据。Release 可为方便而包含从同一固定官方 revision 构建的版本。 |
+| Control Agent | 独立 Starry binary | 面向一个本机 HBBS 的 Linux-only 最小权限管理 API；远程使用 mTLS/service JWT，本机使用有界 loopback 协议。 |
 | `rustdesk-utils` | 否 | 上游工具的便利构建产物。 |
 | API | 不包含 | 登录、地址簿、设备/管理数据；需要独立选择和加固。 |
 | 客户端 | 不包含 | 选择原生或 WebSocket，并执行 P2P/HBBR 数据交换。 |
@@ -36,7 +37,11 @@ HBBR 健康不能证明两台客户端的桌面会话。
 | `overlay/src/geo_relay.rs` 与 `geo_relay/` | MMDB 读取/更新、信息提取、表达式编译和有序 Relay 选择。 |
 | `overlay/src/secure_tcp.rs` | 兼容客户端的原生 Secure TCP 协商、认证密钥交换和分帧加密传输。 |
 | `overlay/src/websocket_signal.rs` 与 `websocket_signal/` | `/ws/id` 接入、持久注册/session 路由、资源限制、有效客户端 IP 和 Relay 健康。 |
-| `overlay/tests/` | 真实进程 WebSocket 信令与原生/WebSocket 混合 HBBR 集成测试。 |
+| `overlay/src/connection_auth.rs` | Ed25519 JWT/JWKS/introspection 验证及有界 metric/cache state。 |
+| `overlay/src/relay_observer.rs` 与 `allocation_explain.rs` | 不可变 runtime snapshot 与共享纯 allocation decision core。 |
+| `overlay/src/local_control.rs` | 有界 loopback `STARRYCTL/1` framing 与旧本地命令兼容。 |
+| `overlay/src/control_agent.rs` 与 `control_agent/` | mTLS/RBAC Control API、本地 client、持久配置事务、audit、history、rollback 与 recovery。 |
+| `overlay/tests/` | 真实进程 WebSocket/mixed、连接认证、local-control 与 Control Agent/fault 集成测试。 |
 | `config/` | 完整 schema 示例和可部署功能模板。 |
 | `docker/Dockerfile` | 包含 Release 二进制的运行镜像；默认启动 Starry HBBS。 |
 
@@ -117,14 +122,20 @@ Rust 工具链要求同样适用。Overlay 锚点失败表示需要审查上游�
 - Rust 格式、全部库测试和服务端二进制检查；
 - 真实进程 WSS 注册与跨传输信令测试；
 - 通过未修改官方 HBBR 的 WebSocket/原生混合流量测试；
-- Linux `amd64`、`arm64` 静态构建；
-- Windows `amd64` 构建；
-- 两种 Linux 架构的 Debian 包；
-- 分架构容器冒烟测试；
-- 带 provenance 和 SBOM 的多架构镜像构建。
+- Linux `amd64` 静态构建；
+- 在 digest 固定的 Debian 测试镜像中完成 amd64 Debian 包安装和命令级 runtime 检查；
+- `linux/amd64` 容器冒烟测试；
+- 拼装精确的可下载候选包，其中包括 source/final-tree SPDX SBOM、确定性 archive、
+  build inputs 和已验证 checksum。
 
-发布是具备写权限的独立门禁 job。构建成功本身不会修改 Release 或 GHCR package。
-部署验收仍由运维者负责。
+只有另行批准的发布 job 具有写权限。它使用 GitHub/Sigstore artifact attestation 对
+candidate checksum 和 SBOM 签名并附上可移植 bundle，随后才推送带 OCI provenance/SBOM
+的 `linux/amd64` 镜像并创建或更新 GitHub Release。
+
+ARM 仅尽力保持源码兼容，Windows 构建是非阻断实验检查；两者都不进入 patch-v1.2.0 候选。
+
+候选构建成功本身不会修改 Release、attestation store 或 GHCR package。部署验收仍由
+运维者负责。
 
 ## 镜像和产物模型
 
@@ -138,8 +149,9 @@ hbbs --starry-config=/root/starry/config.yaml
 HBBR，从部署层清晰显示修改边界。Starry 镜像可以运行其中附带的未修改 `hbbr`，但
 这不会使 HBBR 成为 Starry fork。
 
-Release 摘要覆盖可下载文件。镜像摘要、OCI provenance 和 SBOM 描述容器供应链；
-请按自己的信任策略验证。
+Release checksum 覆盖可下载文件。可移植 Sigstore bundle 与 GitHub artifact
+attestation 将下载对象绑定到 build/SBOM assertion；镜像摘要、OCI provenance 和 OCI
+SBOM 描述容器供应链。请按自己的信任策略验证。
 
 ## 版本维护检查表
 

@@ -2,6 +2,9 @@ use crate::starry_config::{GeoConfig, GeoRuleConfig};
 
 use super::GeoFacts;
 
+const MAX_EXPRESSION_DEPTH: usize = 32;
+const MAX_EXPRESSION_TERMS: usize = 256;
+
 pub(super) struct RuleSet {
     rules: Vec<RelayRule>,
     requirements: DbRequirements,
@@ -10,6 +13,8 @@ pub(super) struct RuleSet {
 pub(super) struct Selection {
     pub(super) relay: String,
     pub(super) rule_name: String,
+    pub(super) rule_index: usize,
+    pub(super) direction: &'static str,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -52,14 +57,16 @@ impl RuleSet {
         facts_b: &GeoFacts,
         online_relays: &[String],
     ) -> Option<Selection> {
-        for rule in &self.rules {
-            if !rule.matches(facts_a, facts_b) {
+        for (rule_index, rule) in self.rules.iter().enumerate() {
+            let Some(direction) = rule.match_direction(facts_a, facts_b) else {
                 continue;
-            }
+            };
             if let Some(relay) = select_ordered(&rule.relays, online_relays) {
                 return Some(Selection {
                     relay,
                     rule_name: rule.name.clone(),
+                    rule_index,
+                    direction,
                 });
             }
         }
@@ -114,10 +121,16 @@ impl RelayRule {
         })
     }
 
-    fn matches(&self, facts_a: &GeoFacts, facts_b: &GeoFacts) -> bool {
+    fn match_direction(&self, facts_a: &GeoFacts, facts_b: &GeoFacts) -> Option<&'static str> {
         let direct = self.client_a.matches(facts_a) && self.client_b.matches(facts_b);
-        direct
-            || (self.symmetric && self.client_a.matches(facts_b) && self.client_b.matches(facts_a))
+        if direct {
+            Some("direct")
+        } else if self.symmetric && self.client_a.matches(facts_b) && self.client_b.matches(facts_a)
+        {
+            Some("reverse")
+        } else {
+            None
+        }
     }
 }
 
@@ -247,6 +260,8 @@ impl Predicate {
 struct ExpressionParser<'a> {
     source: &'a str,
     position: usize,
+    depth: usize,
+    terms: usize,
 }
 
 impl<'a> ExpressionParser<'a> {
@@ -254,6 +269,8 @@ impl<'a> ExpressionParser<'a> {
         let mut parser = Self {
             source,
             position: 0,
+            depth: 0,
+            terms: 0,
         };
         let expression = parser.parse_or()?;
         parser.skip_whitespace();
@@ -292,7 +309,14 @@ impl<'a> ExpressionParser<'a> {
     fn parse_primary(&mut self) -> Result<Expression, String> {
         self.skip_whitespace();
         if self.consume('(') {
+            if self.depth >= MAX_EXPRESSION_DEPTH {
+                return Err(format!(
+                    "expression nesting exceeds {MAX_EXPRESSION_DEPTH} levels"
+                ));
+            }
+            self.depth += 1;
             let expression = self.parse_or()?;
+            self.depth -= 1;
             self.skip_whitespace();
             if !self.consume(')') {
                 return Err(format!("missing ')' at byte {}", self.position));
@@ -300,6 +324,12 @@ impl<'a> ExpressionParser<'a> {
             return Ok(expression);
         }
         let raw = self.read_predicate()?;
+        self.terms += 1;
+        if self.terms > MAX_EXPRESSION_TERMS {
+            return Err(format!(
+                "expression contains more than {MAX_EXPRESSION_TERMS} terms"
+            ));
+        }
         Predicate::compile(raw)
     }
 
@@ -544,5 +574,25 @@ mod tests {
         for expression in ["CN/", "(CN/JP", "city:", "unknown:value", "USA"] {
             assert!(ExpressionParser::parse(expression).is_err(), "{expression}");
         }
+    }
+
+    #[test]
+    fn bounds_expression_nesting_and_term_count() {
+        let nested = format!(
+            "{}CN{}",
+            "(".repeat(MAX_EXPRESSION_DEPTH + 1),
+            ")".repeat(MAX_EXPRESSION_DEPTH + 1)
+        );
+        assert!(ExpressionParser::parse(&nested)
+            .unwrap_err()
+            .contains("nesting exceeds"));
+
+        let terms = std::iter::repeat("CN")
+            .take(MAX_EXPRESSION_TERMS + 1)
+            .collect::<Vec<_>>()
+            .join("/");
+        assert!(ExpressionParser::parse(&terms)
+            .unwrap_err()
+            .contains("more than"));
     }
 }

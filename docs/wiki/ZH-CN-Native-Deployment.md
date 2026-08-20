@@ -9,9 +9,10 @@ Docker Compose。
 
 | 平台 | 架构 | 产物 |
 | --- | --- | --- |
-| Debian/Ubuntu | `amd64`、`arm64` | HBBS、HBBR、工具三个独立 DEB。 |
-| Linux | `amd64`、`arm64` | 静态 `hbbs`、`hbbr`、`rustdesk-utils` 和 tar 包。 |
-| Windows | `amd64` | 独立 `.exe` 与 zip。 |
+| Debian/Ubuntu | `amd64` | HBBS、HBBR、工具和 Control Agent 独立 DEB。 |
+| Linux | `amd64` | 静态 `hbbs`、`hbbr`、`rustdesk-utils`、Control Agent 和 tar 包。 |
+
+ARM 与 Windows 仅作为非阻断兼容目标；patch-v1.2.0 不承诺对应发布制品。
 
 Starry Release 中的 HBBR 是从相同锁定官方源码构建的未修改二进制；Starry 功能仍只在 HBBS。
 
@@ -36,7 +37,7 @@ sudo apt install \
   ./rustdesk-server-starry-utils_*_amd64.deb
 ```
 
-ARM 主机使用对应 `arm64` 文件。变更流程要求时先检查包内容：
+变更流程要求时先检查包内容：
 
 ```sh
 dpkg-deb --info ./rustdesk-server-starry-hbbs_*.deb
@@ -62,11 +63,11 @@ sudo journalctl -u rustdesk-server-starry-hbbs -n 100 --no-pager
 sudo journalctl -u rustdesk-server-starry-hbbr -n 100 --no-pager
 ```
 
-初始配置为空。编辑时保持 owner 和权限，然后在本机重载：
+初始配置为空。编辑时保持 owner 和权限，然后重启 HBBS 完成首次加载：
 
 ```sh
 sudoedit /etc/rustdesk-server-starry/config.yaml
-printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115
+sudo systemctl restart rustdesk-server-starry-hbbs
 ```
 
 相对 MMDB 路径从 `/var/lib/rustdesk-server-starry` 解析，而不是从配置目录解析。
@@ -103,7 +104,9 @@ sudo systemctl enable --now rustdesk-server-starry-hbbr
 
 ## Windows 二进制
 
-首次检查可交互运行 Release 文件：
+本节仅保留源码构建兼容说明；v1.2.0 候选不包含或正式支持 Windows 发布制品。
+
+本地自行构建的 Windows 文件可用于交互检查：
 
 ```powershell
 $hbbsBinary = (Resolve-Path '.\hbbs-<release>-windows-amd64.exe').Path
@@ -134,7 +137,8 @@ try {
 只在提升权限的 PowerShell 中运行安装脚本，并先检查二进制路径、数据目录、服务账户、
 ACL 与防火墙。删除脚本只移除服务定义，有意保留所有数据。
 
-Windows 管理命令可使用本机 `TcpClient` 发送；不要为了管理而公开代理 21115。
+Windows 上由操作员修改配置后请重启服务。旧文本管理协议已关闭，不要为管理公开代理
+21115。
 
 ## 反向代理
 

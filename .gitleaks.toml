@@ -1,0 +1,22 @@
+title = "rustdesk-server-starry reviewed test-fixture allowlist"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Deterministic public Ed25519 JWT contract fixtures; their exact digests and claims are checked by scripts/check_contracts.py."
+paths = ['''(^|/)contracts/auth/v1/fixtures/(active|expired|wrong-audience)\.jwt\.txt$''']
+
+[[allowlists]]
+description = "RFC 6455 section 1.3 public WebSocket nonce used only in transport probes."
+regexTarget = "line"
+regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+
+[[allowlists]]
+description = "Literal Rust log/overlay anchors that contain no credential material."
+regexTarget = "line"
+regexes = [
+  '''Connection authentication audit: kind=punch_hole transport=\{:\?\} reason=\{\}''',
+  '''Connection authentication denied: kind=punch_hole transport=\{:\?\} reason=\{\}''',
+  '''Connection authentication denied: kind=punch_hole''',
+]

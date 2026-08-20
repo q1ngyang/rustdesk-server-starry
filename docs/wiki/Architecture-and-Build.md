@@ -20,6 +20,7 @@ RustDesk client
 | --- | --- | --- |
 | HBBS | Yes | Peer registration, rendezvous, Secure TCP negotiation, persistent WSS signalling, Geo evaluation, and Relay allocation. |
 | HBBR | No | Carries relayed remote-control data. The release may bundle a convenience build from the same pinned official revision. |
+| Control Agent | Separate Starry binary | Linux-only least-privilege management API for one local HBBS; mTLS/service JWT remotely and a bounded loopback protocol locally. |
 | `rustdesk-utils` | No | Convenience upstream utility artifact. |
 | API | Not included | Login, address book, device/admin data; select and secure independently. |
 | Client | Not included | Chooses native or WebSocket and performs P2P/HBBR data exchange. |
@@ -37,7 +38,11 @@ not prove a two-client desktop session.
 | `overlay/src/geo_relay.rs` and `geo_relay/` | MMDB readers/updater, fact extraction, expression compiler, and ordered Relay selection. |
 | `overlay/src/secure_tcp.rs` | Client-compatible native Secure TCP negotiation, authenticated key exchange, and framed encrypted transport. |
 | `overlay/src/websocket_signal.rs` and `websocket_signal/` | `/ws/id` admission, persistent registration/session routing, resource limits, effective client IP, and Relay health. |
-| `overlay/tests/` | Real-process WebSocket signalling and mixed native/WebSocket HBBR integration tests. |
+| `overlay/src/connection_auth.rs` | Ed25519 JWT/JWKS/introspection verification and bounded metrics/cache state. |
+| `overlay/src/relay_observer.rs` and `allocation_explain.rs` | Immutable runtime snapshots and the shared pure allocation-decision core. |
+| `overlay/src/local_control.rs` | Bounded loopback `STARRYCTL/1` framing and legacy local-command compatibility. |
+| `overlay/src/control_agent.rs` and `control_agent/` | mTLS/RBAC Control API, local client, durable config transactions, audit, history, rollback, and recovery. |
+| `overlay/tests/` | Real-process WebSocket/mixed, connection-auth, local-control, and Control Agent/fault integration tests. |
 | `config/` | Full schema example plus deployable feature profiles. |
 | `docker/Dockerfile` | Runtime image containing the release binaries; default command starts Starry HBBS. |
 
@@ -132,15 +137,24 @@ The workflow resolves the official ref and constructs
 - Rust formatting, all library tests, and all server-binary checks;
 - real-process WSS registration and cross-transport signalling tests;
 - mixed WebSocket/native traffic through unmodified official HBBR;
-- static Linux `amd64` and `arm64` builds;
-- Windows `amd64` builds;
-- Debian packages for both Linux architectures;
-- architecture-specific container smoke tests; and
-- multi-architecture image build with provenance and SBOM.
+- static Linux `amd64` builds;
+- installation and command-level runtime checks for amd64 Debian packages
+  under the digest-pinned Debian test image;
+- a `linux/amd64` container smoke test; and
+- assembly of the exact downloadable candidate, including source/final-tree
+  SPDX SBOMs, deterministic archives, build inputs, and verified checksums.
 
-Publication is a separate gated job with write permissions. A successful build
-does not itself change a Release or GHCR package. Deployment acceptance remains
-the operator's responsibility.
+Only the separately approved publication job has write permissions. It signs
+the candidate checksums and SBOM with GitHub/Sigstore artifact attestations,
+attaches the portable bundles, then pushes the `linux/amd64` image with
+OCI provenance and SBOM and creates or updates the GitHub Release.
+
+ARM remains best-effort source compatibility, and the Windows build is an
+experimental non-blocking check. Neither enters the patch-v1.2.0 candidate.
+
+A successful candidate build does not itself change a Release, attestation
+store, or GHCR package. Deployment acceptance remains the operator's
+responsibility.
 
 ## Image and artifact model
 
@@ -156,9 +170,10 @@ and the official RustDesk Server image for HBBR. This makes the modification
 boundary visible. The Starry image can run its bundled unmodified `hbbr`, but
 doing so does not make HBBR a Starry fork.
 
-Release checksums cover downloadable assets. Image digests, OCI provenance,
-and SBOM describe the container supply chain; verify them according to your own
-trust policy.
+Release checksums cover downloadable assets. Portable Sigstore bundles and
+GitHub artifact attestations bind the downloadable subjects to their build and
+SBOM assertions. Image digests, OCI provenance, and OCI SBOM describe the
+container supply chain; verify them according to your own trust policy.
 
 ## Version maintenance checklist
 

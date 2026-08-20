@@ -1,0 +1,12 @@
+{
+  "plan_id": "0191f6a0-0001-7000-8000-000000000010",
+  "instance_id": "0191f6a0-0000-7000-8000-000000000001",
+  "base_etag": "\"sha256:de800259fb2922a632520597bd20532d7359425e7ceb6b9321e36f573d494340\"",
+  "base_generation": 42,
+  "candidate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "changes": [
+    {"pointer": "/connection_auth/mode", "kind": "replace"}
+  ],
+  "impact": {"risk": "high", "restart_required": false},
+  "expires_at": "2026-08-18T10:10:00Z"
+}

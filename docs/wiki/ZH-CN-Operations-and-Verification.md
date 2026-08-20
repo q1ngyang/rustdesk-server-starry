@@ -27,7 +27,7 @@ docker compose --env-file .env -f compose.yaml config --images
 docker compose --env-file .env -f compose.yaml config > rendered-compose.review.txt
 sha256sum .env compose.yaml data/starry/config.yaml > deployment-inputs.sha256
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   --format '{{json .RepoDigests}}'
 ```
 
@@ -137,31 +137,20 @@ curl --http1.1 -i --max-time 5 \
 `101 Switching Protocols` 只证明 TLS 终止和 Upgrade 路由。Curl 不会发送 RustDesk
 注册或 Relay 握手，因此后续超时不是实际会话失败，而最初的 `101` 也不是完整证明。
 
-查看 Starry 经证书校验的 Relay 探测：
-
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'websocket-status\n' | nc -w 2 127.0.0.1 21115"
-```
+通过已认证的 Control Agent `GET /control/v1/status` 响应查看 Starry 经证书校验的
+Relay 探测。
 
 启用或修改 endpoint 后至少等待一个配置的探测间隔。用于 `wss` 的每台 Relay 都应
 健康；`mixed` 还要求同一台 Relay 同时处于原生在线状态。
 
 ## 6. Starry 配置和 Geo 检查
 
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
-
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115"
-
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'test-geo 192.0.2.10 198.51.100.20 native\n' | nc -w 2 127.0.0.1 21115"
-```
+使用已认证的 Control Agent 方法：`POST /control/v1/runtime:reload`、
+`GET /control/v1/relays`，以及带两端实际地址、transport、expected generation 和
+`explain: true` 的 `POST /control/v1/allocations:simulate`。
 
 把保留地址换成 HBBS 实际观测的两端公网地址。启用对应路径时，再用 `wss` 和
-`mixed` 重复 `test-geo`。运行命令前先写下预期规则和 Relay。
+`mixed` 重复分配模拟。运行前先写下预期规则和 Relay。
 
 ## 7. 原生客户端验收
 
@@ -208,7 +197,7 @@ docker exec rustdesk-starry-hbbs sh -c \
 1. 在第一优先 Relay 建立基线；
 2. 以受控、可逆方式停止或阻断该 Relay；
 3. 等待官方原生状态和/或已配置的 WSS 失败阈值；
-4. 确认 `test-geo` 改为下一台有序且符合要求的 Relay；
+4. 确认分配模拟改为下一台有序且符合要求的 Relay；
 5. 新建真实会话并确认到达备用节点；
 6. 恢复第一台 Relay；
 7. 等待成功阈值；
@@ -217,7 +206,30 @@ docker exec rustdesk-starry-hbbs sh -c \
 Relay 丢失时现有会话可能终止；除非自己的高可用设计承诺更多，本验收目标是新会话
 被正确重新分配。
 
-## 10. 验收记录
+## 10. 连接认证门禁
+
+按[连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication)
+执行完整矩阵。从 schema v3 `mode: audit` 开始，在每个 native/Secure/WSS
+`PunchHoleRequest` 与直接 `RequestRelay` 前后采集 status。确认 would-deny 增长但不改变
+预期会话结果，并确认 missing/invalid 请求既不会到达真实 target，也不会分配 Relay。
+
+支持的真实 client 未覆盖 P2P、Relay、WSS/WSS、两个 mixed 方向、logout/revoke/disable/
+password-reset、key rotation、introspection failure/recovery 与 UDP no-allocation 前，不得把
+enforce 标为 ready。unit/synthetic transport test 是必要发布证据，但不能替代部署矩阵。
+
+## 11. Control Agent 与配置恢复
+
+以 `write_enabled: false` 接入 Agent。验证 mTLS CA/SAN 失败、service-JWT audience/azp/
+scope/expiry 失败、读取 endpoint 与重复无副作用 simulation。staging 开启写入后，测试 ETag
+mismatch、重复/冲突 idempotency key、plan expiry、带匹配 runtime ack 的 apply、作为新
+revision 的 rollback、apply 中 HBBS outage 与 Agent restart recovery。
+
+任何 `manual_intervention_required`、disk/runtime drift、audit intent 缺失，或 apply response
+没有匹配 generation/digest 都是硬阻断；再次接受写入前按
+[Control Agent 恢复 runbook](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)
+处理。
+
+## 12. 验收记录
 
 每个版本或重大配置变更使用如下表格：
 
@@ -234,6 +246,12 @@ Relay 丢失时现有会话可能终止；除非自己的高可用设计承诺�
 | Geo 决策 | 测试矩阵每一行 | 未测试 | |
 | 原生故障切换/恢复 | 按顺序 | 未测试 | |
 | WSS/混合切换/恢复 | 按顺序 | 未测试 | |
+| 连接认证 audit 矩阵 | 每个预期 decision 均分类 | 未测试 | |
+| 连接认证 enforce canary | 无绕过，合法矩阵通过 | 未测试 | |
+| JWT key/introspection 故障与恢复 | fail closed，恢复无需重启 | 未测试 | |
+| 分配模拟纯度 | 不改变生产 state/counter | 未测试 | |
+| Agent 只读 mTLS/RBAC | 每个 allow/deny case | 未测试 | |
+| 配置 apply/rollback/outage recovery | ack 或显式安全 rollback/block | 未测试 | |
 | 备份恢复演练 | 恢复密钥/配置/状态 | 未测试 | |
 
 共享证据前应脱敏 Peer ID、Token 和公网地址。不得把私钥、API 凭据或完整访问 Token

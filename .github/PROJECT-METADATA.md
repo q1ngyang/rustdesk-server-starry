@@ -43,15 +43,14 @@ states the HBBR/API boundary within the limited About field.
 
 ## GHCR package metadata
 
-Proposed multi-architecture index description:
+Proposed `linux/amd64` image description:
 
 > Starry HBBS overlay for official RustDesk Server with ordered Geo Relay
 > routing, Secure TCP, and optional WebSocket Signal; bundled HBBR is unmodified
 > and no API is included
 
 The build workflow publishes OCI title, source, documentation, version,
-revision, licence, and description labels on images and matching annotations
-on the multi-architecture index. The documentation URL points directly to
+revision, licence, and description labels on the image. The documentation URL points directly to
 `CONTAINER.md`.
 
 For a linked package, GitHub documents that the package landing page displays

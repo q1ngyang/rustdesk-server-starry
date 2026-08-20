@@ -1,0 +1,13 @@
+# Release drill fixture for validating v1.1 -> v1.2 -> v1.1 rollback.
+# Connection authentication is intentionally disabled so the drill isolates
+# configuration-schema and persistent-identity compatibility.
+version: 3
+
+secure_tcp:
+  mode: auto
+  handshake_timeout_ms: 18000
+  idle_timeout_ms: 30000
+  max_frame_bytes: 65536
+
+connection_auth:
+  mode: off

@@ -1,0 +1,19 @@
+{
+  "id": "0191f6a0-0001-7000-8000-000000000002",
+  "audit_id": "0191f6a0-0001-7000-8000-000000000003",
+  "kind": "config_apply",
+  "state": "succeeded",
+  "created_at": "2026-08-18T10:00:00Z",
+  "updated_at": "2026-08-18T10:00:02Z",
+  "activation_ack": {
+    "generation": 43,
+    "schema_version": 3,
+    "source_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "effective_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "activated_at": "2026-08-18T10:00:01Z",
+    "subsystem_acks": [
+      {"subsystem": "config_core", "accepted": true, "detail": "parsed and validated"}
+    ]
+  },
+  "error": null
+}

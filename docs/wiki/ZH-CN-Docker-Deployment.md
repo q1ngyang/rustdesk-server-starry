@@ -40,7 +40,7 @@ cp /path/to/repository/examples/compose.yaml .
 cp /path/to/repository/examples/.env.example .env
 ```
 
-检查 `.env` 中的精确镜像。示例将 `1.1.16-patch-v1.1.0` 与官方 HBBR
+检查 `.env` 中的精确镜像。示例将 `1.1.16-patch-v1.2.0` 与官方 HBBR
 `1.1.16` 对齐。
 
 ## 静态校验
@@ -81,7 +81,8 @@ cp /path/to/repository/config/config.minimal.yaml \
   data/starry/config.yaml
 
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+  "test -s /starry/config.yaml"
+docker compose --env-file .env -f compose.yaml restart hbbs
 ```
 
 之后把 Geo 与 WebSocket 分成两次变更。参见

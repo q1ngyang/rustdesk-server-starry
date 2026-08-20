@@ -6,20 +6,31 @@ This document is for users who arrive from the GHCR package page and need to
 deploy the image. For the project overview and source relationship, see the
 main [`README.md`](README.md).
 
+Deployment links:
+
+- [GHCR image page](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)
+- [Recommended Docker deployment guide](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Docker-Deployment)
+- [Single-host Compose example](https://github.com/q1ngyang/rustdesk-server-starry/blob/1.1.16-patch-v1.2.0/examples/compose.yaml)
+- [Control Agent sidecar example](https://github.com/q1ngyang/rustdesk-server-starry/blob/1.1.16-patch-v1.2.0/examples/control-agent/compose.yaml)
+
 ## What the image contains
 
-The multi-architecture image is built for `linux/amd64` and `linux/arm64` from
-one pinned official RustDesk Server revision plus the Starry HBBS overlay.
+The patch-v1.2.0 release image is built and runtime-tested for `linux/amd64`
+from one pinned official RustDesk Server revision plus the Starry HBBS overlay.
+ARM remains best-effort source compatibility and is not a promised v1.2.0
+image platform.
 
 | Command | Origin | Intended use |
 | --- | --- | --- |
 | `hbbs` | Official HBBS plus the Starry overlay | ID, rendezvous, signalling, Secure TCP, Geo Relay selection, and optional WebSocket Signal. |
 | `hbbr` | Unmodified upstream HBBR | Convenience copy built from the same upstream revision. The recommended examples use the official RustDesk Server image for HBBR so the component boundary stays visible. |
 | `rustdesk-utils` | Unmodified upstream utility | Key and database maintenance utilities. |
+| `starry-control-agent` | Starry optional Linux management component | Fixed Control API for one local HBBS. It requires mTLS and scoped service JWTs and starts with configuration writes disabled. |
 
 The image does **not** contain an account/API server or any GeoLite2/MMDB
-database. Select those independently, review their licences, and keep secrets
-outside the image.
+database. The Control Agent is not an account API. Select those independent
+components separately, review their licences, and keep secrets outside the
+image.
 
 ## Choose a tag
 
@@ -32,7 +43,7 @@ Available release tags use this form:
 For example:
 
 ```text
-1.1.16-patch-v1.1.0
+1.1.16-patch-v1.2.0
 ```
 
 - Use an immutable release tag for normal production deployments.
@@ -44,7 +55,7 @@ For example:
 Pull the current documented release:
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
 ```
 
 Public GHCR images can be pulled anonymously. Inspect the resolved digest and
@@ -52,11 +63,11 @@ platforms before rollout:
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
 ```
 
 ## Recommended quick start
@@ -132,6 +143,7 @@ Never copy `id_ed25519` to a Relay-only node or into documentation. The public
 | `21117` | TCP | HBBR | Native Relay data. |
 | `21118` | TCP | HBBS | Plain WebSocket backend for `/ws/id`; restrict it to the trusted reverse proxy. |
 | `21119` | TCP | HBBR | Plain WebSocket backend for `/ws/relay`; restrict it to the trusted reverse proxy. |
+| `21120` | TCP | optional Control Agent | Private mTLS management API. It is not exposed by the image metadata or normal Compose example; keep it on loopback/private management networking. |
 | `443` | TCP | Nginx | Public TLS/WSS endpoint when WebSocket or an HTTPS API is used. |
 
 Open only the paths required by your deployment. WebSocket clients need valid
@@ -146,17 +158,18 @@ Edit the generated file on the host:
 vi data/starry/config.yaml
 ```
 
-Then reload it without replacing the process:
+For initial commissioning, restart HBBS. For later managed changes use the
+authenticated Control Agent plan/apply or runtime-reload operation:
 
 ```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+docker restart rustdesk-starry-hbbs
 ```
 
-If the reload reports an error, the whole new Starry configuration is rejected.
-The previous Starry state is not retained; HBBS returns to upstream behaviour.
-Restore or correct the file and reload again. Do not assume a container restart
-made an invalid configuration active.
+If reload reports an error, the whole candidate is rejected and HBBS retains
+the previous last-known-good generation. If no valid generation has ever
+loaded, HBBS stays on upstream-compatible behaviour. Restore or correct the
+file, reload again, and require matching generation/digest/subsystem
+acknowledgements; process survival does not make an invalid candidate active.
 
 Use these starting points:
 
@@ -166,7 +179,15 @@ Use these starting points:
 - [`config/config.geo-advanced.yaml`](config/config.geo-advanced.yaml): nested
   city/ASN/ISP rules; and
 - [`config/config.websocket.yaml`](config/config.websocket.yaml): schema v2
-  WebSocket Signal and certificate-verified Relay health.
+  WebSocket Signal and certificate-verified Relay health; and
+- [`config/config.auth-audit.yaml`](config/config.auth-audit.yaml): schema v3
+  connection-authentication audit canary.
+
+The optional Control Agent has a separate
+[`Compose example`](examples/control-agent/compose.yaml) and
+[`operator guide`](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent).
+Commission it read-only. Do not publish its listener or HBBS local control on
+the public RustDesk ports.
 
 ## Run a single command without Compose
 
@@ -175,7 +196,7 @@ testing:
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   hbbs --help
 ```
 
@@ -189,7 +210,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.1.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
@@ -215,22 +236,16 @@ docker compose --env-file .env -f compose.yaml ps
 docker compose --env-file .env -f compose.yaml logs --tail 100 hbbs hbbr
 ```
 
-Confirm the current Relay allocation pool:
-
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115"
-```
+Confirm the current Relay allocation pool with authenticated Control Agent
+`GET /control/v1/relays`.
 
 Preview a rule decision with two real public egress addresses:
 
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'test-geo 192.0.2.10 198.51.100.20 native\n' | nc -w 2 127.0.0.1 21115"
-```
+Use authenticated `POST /control/v1/allocations:simulate` with the two
+addresses, transport, expected generation, and `explain: true`.
 
 The documentation addresses above are placeholders; replace them with the
-public addresses actually observed by HBBS. A `test-geo` result previews an
+public addresses actually observed by HBBS. An allocation simulation previews an
 allocation decision. It does not create a session or prove that either client
 can reach the Relay.
 
@@ -249,10 +264,10 @@ WSS-to-WSS, and both mixed WSS/native directions as applicable. See
    real client session.
 6. Keep the previous images and backup until acceptance is complete.
 
-When rolling back from patch-v1.1.0 to patch-v1.0.0, restore a schema
-`version: 1` configuration. patch-v1.0.0 does not understand schema v2; leaving
-a v2 document in place causes Starry configuration to be rejected and HBBS to
-fall back to upstream behaviour.
+When rolling back from patch-v1.2.0 to patch-v1.1.0, restore a schema
+`version: 2` (or earlier) configuration before starting the old image.
+patch-v1.1.0 does not understand schema v3. For older rollback hops, restore
+the schema supported by that release instead of relying on validation fallback.
 
 Do not republish or overwrite an immutable version tag as an upgrade method.
 

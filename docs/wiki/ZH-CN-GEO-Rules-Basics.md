@@ -128,7 +128,8 @@ GeoNames ID 和 ASN 必须是正整数。城市和行政区名称取决于 MMDB 
 
 ```sh
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+  "test -s /starry/config.yaml"
+docker restart rustdesk-starry-hbbs
 
 docker logs --tail 100 rustdesk-starry-hbbs
 ```
@@ -140,7 +141,7 @@ docker logs --tail 100 rustdesk-starry-hbbs
 
 ```sh
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115"
+  "echo '请改用已认证的 Control Agent GET /control/v1/relays'"
 ```
 
 管理端口按设计仅限回环地址。请在容器或 HBBS 网络命名空间内执行命令，绝不能将
@@ -150,7 +151,7 @@ docker exec rustdesk-starry-hbbs sh -c \
 
 ```sh
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'test-geo 192.0.2.10 198.51.100.20 native\n' | nc -w 2 127.0.0.1 21115"
+  "echo '请改用已认证的 POST /control/v1/allocations:simulate'"
 ```
 
 将文档保留地址替换为 HBBS 实际观测到的公网源地址。两个设备共用一个 NAT 时，

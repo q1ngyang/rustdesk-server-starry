@@ -1,0 +1,63 @@
+# Strict-mode counterpart to release-drill-audit.yaml. Keep both documents in
+# lockstep except for connection_auth.mode so audit-to-enforce changes exactly
+# one reviewed setting.
+version: 3
+
+relay_servers:
+  - hbbr.local:21117
+
+secure_tcp:
+  mode: auto
+  handshake_timeout_ms: 18000
+  idle_timeout_ms: 30000
+  max_frame_bytes: 65536
+
+websocket_signal:
+  enabled: true
+  registration_timeout_ms: 10000
+  keepalive_interval_ms: 12000
+  idle_timeout_ms: 45000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 128
+  max_sessions_per_effective_ip: 64
+  registration_rate_per_minute: 300
+  trusted_proxies: []
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 5
+    timeout_ms: 1000
+    success_threshold: 1
+    failure_threshold: 1
+    endpoints:
+      - relay: hbbr.local:21117
+        url: wss://hbbr.local/ws/relay
+
+connection_auth:
+  mode: enforce
+  issuer: https://kessoku.local
+  audience: rustdesk-connect
+  token_use: access
+  required_scope: connect:initiate
+  max_token_bytes: 8192
+  clock_skew_seconds: 5
+  jwks:
+    file: /test-secrets/jwks.json
+    url: https://kessoku.local:21121/api/internal/v1/auth/jwks
+    refresh_interval_seconds: 30
+    max_stale_seconds: 60
+    ca_file: /test-secrets/ca.pem
+    cert_file: /test-secrets/client.pem
+    key_file: /test-secrets/client-key.pem
+    server_name: kessoku.local
+  introspection:
+    required: true
+    url: https://kessoku.local:21121/api/internal/v1/auth/introspect
+    timeout_ms: 1000
+    positive_cache_seconds: 1
+    negative_cache_seconds: 0
+    max_cache_entries: 256
+    ca_file: /test-secrets/ca.pem
+    cert_file: /test-secrets/client.pem
+    key_file: /test-secrets/client-key.pem
+    server_name: kessoku.local

@@ -1,0 +1,20 @@
+{
+  "ui:order": ["version", "relay_servers", "secure_tcp", "mmdb", "geo", "websocket_signal", "connection_auth"],
+  "version": {"ui:widget": "select"},
+  "connection_auth": {
+    "mode": {"ui:widget": "radio", "ui:help": "A deployment-level MUST_LOGIN enforce floor cannot be lowered here."},
+    "jwks": {
+      "file": {"ui:widget": "text", "ui:help": "Read-only last-known-good path; key material is never returned."},
+      "ca_file": {"ui:widget": "text", "ui:readonly": true},
+      "cert_file": {"ui:widget": "text", "ui:readonly": true},
+      "key_file": {"ui:widget": "password", "ui:readonly": true},
+      "url": {"ui:placeholder": "https://api.example.com/api/internal/v1/auth/jwks"}
+    },
+    "introspection": {
+      "ca_file": {"ui:widget": "text", "ui:readonly": true},
+      "cert_file": {"ui:widget": "text", "ui:readonly": true},
+      "key_file": {"ui:widget": "password", "ui:readonly": true},
+      "url": {"ui:placeholder": "https://api.example.com/api/internal/v1/auth/introspect"}
+    }
+  }
+}

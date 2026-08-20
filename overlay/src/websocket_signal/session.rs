@@ -103,8 +103,8 @@ pub(super) async fn writer_loop(
         }
         let is_close = matches!(frame, OutboundFrame::Close);
         let result = match frame {
-            OutboundFrame::Binary(bytes) => sink.send(Message::Binary(bytes)).await,
-            OutboundFrame::Pong(bytes) => sink.send(Message::Pong(bytes)).await,
+            OutboundFrame::Binary(bytes) => sink.send(Message::Binary(bytes.into())).await,
+            OutboundFrame::Pong(bytes) => sink.send(Message::Pong(bytes.into())).await,
             OutboundFrame::Close => sink.send(Message::Close(None)).await,
         };
         if result.is_err() || closed.is_closed() || is_close {

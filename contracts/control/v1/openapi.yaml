@@ -1,0 +1,624 @@
+openapi: 3.1.0
+info:
+  title: Starry Control API
+  version: 1.0.0
+  description: >-
+    Versioned, least-privilege management API for a single Starry HBBS instance.
+    Remote deployments require both mTLS and a short-lived scoped service JWT.
+servers:
+  - url: https://starry-control.example.test/control/v1
+security:
+  - mutualTLS: []
+    serviceJWT: []
+tags:
+  - name: Control
+  - name: Relay
+  - name: Configuration
+  - name: Operations
+paths:
+  /capabilities:
+    get:
+      tags: [Control]
+      operationId: getCapabilities
+      x-required-scope: starry.control.read
+      responses:
+        "200":
+          description: Negotiated protocol capabilities and hard limits.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Capabilities"}
+        default: {$ref: "#/components/responses/Problem"}
+  /status:
+    get:
+      tags: [Control]
+      operationId: getStatus
+      x-required-scope: starry.control.read
+      responses:
+        "200":
+          description: Structured HBBS, configuration, and authentication state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+        default: {$ref: "#/components/responses/Problem"}
+  /relays:
+    get:
+      tags: [Relay]
+      operationId: listRelays
+      x-required-scope: starry.relay.read
+      responses:
+        "200":
+          description: Immutable Relay inventory snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [config_generation, health_snapshot_id, relays, warning]
+                properties:
+                  config_generation: {type: integer, format: int64, minimum: 0}
+                  health_snapshot_id: {type: string}
+                  relays:
+                    type: array
+                    items: {$ref: "#/components/schemas/Relay"}
+                  warning: {type: string}
+        default: {$ref: "#/components/responses/Problem"}
+  /allocations:simulate:
+    post:
+      tags: [Relay]
+      operationId: simulateAllocation
+      x-required-scope: starry.relay.simulate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AllocationSimulationRequest"}
+      responses:
+        "200":
+          description: Non-binding, side-effect-free allocation decision trace.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AllocationTrace"}
+        default: {$ref: "#/components/responses/Problem"}
+  /config/schema:
+    get:
+      tags: [Configuration]
+      operationId: getConfigSchema
+      x-required-scope: starry.config.read
+      responses:
+        "200":
+          description: Config JSON Schema and UI Schema with an independent ETag.
+          headers:
+            ETag: {$ref: "#/components/headers/ETag"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SchemaBundle"}
+        default: {$ref: "#/components/responses/Problem"}
+  /config:
+    get:
+      tags: [Configuration]
+      operationId: getConfig
+      x-required-scope: starry.config.read
+      responses:
+        "200":
+          description: Exact managed UTF-8 YAML document and active runtime state. Referenced secret file contents are never returned.
+          headers:
+            ETag: {$ref: "#/components/headers/ETag"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ConfigState"}
+        default: {$ref: "#/components/responses/Problem"}
+  /config:validate:
+    post:
+      tags: [Configuration]
+      operationId: validateConfig
+      x-required-scope: starry.config.validate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ConfigCandidate"}
+      responses:
+        "200":
+          description: Validation result produced by the same parser used by HBBS runtime activation.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ValidationResult"}
+        default: {$ref: "#/components/responses/Problem"}
+  /config:plan:
+    post:
+      tags: [Configuration]
+      operationId: planConfig
+      x-required-scope: starry.config.plan
+      parameters:
+        - {$ref: "#/components/parameters/IfMatch"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ConfigCandidate"}
+      responses:
+        "200":
+          description: Expiring diff and impact plan bound to instance, ETag, generation, and candidate digest.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ConfigPlan"}
+        default: {$ref: "#/components/responses/Problem"}
+  /config:apply:
+    post:
+      tags: [Configuration]
+      operationId: applyConfig
+      x-required-scope: starry.config.apply
+      parameters:
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [plan_id, candidate_digest]
+              properties:
+                plan_id: {$ref: "#/components/schemas/Uuid"}
+                candidate_digest: {$ref: "#/components/schemas/Sha256"}
+                comment: {type: string, maxLength: 500}
+      responses:
+        "202":
+          description: Durable asynchronous configuration transaction accepted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Operation"}
+        default: {$ref: "#/components/responses/Problem"}
+  /config/history:
+    get:
+      tags: [Configuration]
+      operationId: getConfigHistory
+      x-required-scope: starry.config.read
+      responses:
+        "200":
+          description: Redacted revision manifests.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [revisions]
+                properties:
+                  revisions:
+                    type: array
+                    items: {$ref: "#/components/schemas/Revision"}
+        default: {$ref: "#/components/responses/Problem"}
+  /config:rollback:
+    post:
+      tags: [Configuration]
+      operationId: rollbackConfig
+      x-required-scope: starry.config.rollback
+      parameters:
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision_id]
+              properties:
+                revision_id: {$ref: "#/components/schemas/Uuid"}
+                comment: {type: string, maxLength: 500}
+      responses:
+        "202":
+          description: Rollback-as-new-transaction accepted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Operation"}
+        default: {$ref: "#/components/responses/Problem"}
+  /operations/{id}:
+    get:
+      tags: [Operations]
+      operationId: getOperation
+      x-required-scope: starry.control.read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {$ref: "#/components/schemas/Uuid"}
+      responses:
+        "200":
+          description: Durable operation state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Operation"}
+        default: {$ref: "#/components/responses/Problem"}
+  /runtime:reload:
+    post:
+      tags: [Control]
+      operationId: reloadRuntime
+      x-required-scope: starry.runtime.reload
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_source_digest]
+              properties:
+                expected_source_digest: {$ref: "#/components/schemas/Sha256"}
+      responses:
+        "200":
+          description: Synchronous runtime activation acknowledgement.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ActivationAck"}
+        default: {$ref: "#/components/responses/Problem"}
+components:
+  securitySchemes:
+    mutualTLS:
+      type: mutualTLS
+    serviceJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: EdDSA service JWT, maximum lifetime five minutes, audience urn:starry-control:<instance_id>.
+  parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: {$ref: "#/components/schemas/StrongETag"}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 16, maxLength: 128}
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema: {$ref: "#/components/schemas/Uuid"}
+  headers:
+    ETag:
+      schema: {$ref: "#/components/schemas/StrongETag"}
+      description: Strong SHA-256 ETag over exact disk bytes.
+  responses:
+    Problem:
+      description: Stable RFC 9457 problem response.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    DateTime:
+      type: string
+      format: date-time
+    Sha256:
+      type: string
+      pattern: "^sha256:[0-9a-f]{64}$"
+    StrongETag:
+      type: string
+      minLength: 73
+      maxLength: 73
+      pattern: '^"sha256:[0-9a-f]{64}"$'
+    Capabilities:
+      type: object
+      additionalProperties: false
+      required: [protocol, instance, capabilities, config, limits]
+      properties:
+        protocol:
+          type: object
+          additionalProperties: false
+          required: [name, version, major]
+          properties:
+            name: {const: starry-control}
+            version: {type: string}
+            major: {const: 1}
+        instance:
+          type: object
+          additionalProperties: false
+          required: [id, role, starry_version, upstream_version]
+          properties:
+            id: {$ref: "#/components/schemas/Uuid"}
+            role: {const: hbbs}
+            starry_version: {type: string}
+            upstream_version: {type: string}
+        capabilities:
+          type: object
+          additionalProperties: {type: integer, minimum: 1}
+        config:
+          type: object
+          additionalProperties: false
+          required: [supported_schema_versions, active_schema_version, schema_digest]
+          properties:
+            supported_schema_versions:
+              type: array
+              items: {type: integer, enum: [1, 2, 3]}
+            active_schema_version: {type: integer, enum: [1, 2, 3]}
+            schema_digest: {$ref: "#/components/schemas/Sha256"}
+        limits:
+          type: object
+          additionalProperties: false
+          required: [max_config_bytes, max_plan_lifetime_seconds, operation_retention_seconds]
+          properties:
+            max_config_bytes: {type: integer, maximum: 1048576}
+            max_plan_lifetime_seconds: {type: integer, maximum: 600}
+            operation_retention_seconds: {type: integer, minimum: 86400}
+    Status:
+      type: object
+      additionalProperties: false
+      required: [ready, config, auth]
+      properties:
+        ready: {type: boolean}
+        config: {$ref: "#/components/schemas/RuntimeConfigState"}
+        auth:
+          type: object
+          additionalProperties: false
+          required: [configured_mode, effective_mode, verifier_state, key_count, key_age_seconds, metrics]
+          properties:
+            configured_mode: {type: string, enum: [off, audit, enforce]}
+            effective_mode: {type: string, enum: [off, audit, enforce]}
+            verifier_state: {type: string, enum: [disabled, ready, degraded, unavailable]}
+            key_count: {type: integer, minimum: 0}
+            key_age_seconds: {type: [integer, "null"], minimum: 0}
+            metrics:
+              type: object
+              additionalProperties: false
+              required: [attempts, allowed, denied, audit_would_deny, cache_hits, introspection_requests, introspection_failures]
+              properties:
+                attempts: {type: integer, minimum: 0}
+                allowed: {type: integer, minimum: 0}
+                denied: {type: integer, minimum: 0}
+                audit_would_deny: {type: integer, minimum: 0}
+                cache_hits: {type: integer, minimum: 0}
+                introspection_requests: {type: integer, minimum: 0}
+                introspection_failures: {type: integer, minimum: 0}
+    Relay:
+      type: object
+      additionalProperties: false
+      required: [id, configured_order, native, websocket, eligible_for, referenced_by_rules]
+      properties:
+        id: {type: string}
+        configured_order: {type: integer, minimum: 0}
+        native:
+          type: object
+          additionalProperties: false
+          required: [state, observed_at]
+          properties:
+            state: {type: string, enum: [online, offline, unknown]}
+            observed_at: {$ref: "#/components/schemas/DateTime"}
+        websocket:
+          type: object
+          additionalProperties: false
+          required: [configured, state]
+          properties:
+            configured: {type: boolean}
+            url: {type: [string, "null"]}
+            state: {type: string, enum: [unknown, healthy, unhealthy, disabled]}
+            last_probe_at: {oneOf: [{$ref: "#/components/schemas/DateTime"}, {type: "null"}]}
+            latency_ms: {type: [integer, "null"], minimum: 0}
+            error_code: {type: [string, "null"]}
+        eligible_for:
+          type: array
+          items: {type: string, enum: [native, wss, mixed]}
+        referenced_by_rules:
+          type: array
+          items: {type: string}
+    AllocationSimulationRequest:
+      type: object
+      additionalProperties: false
+      required: [client_a, client_b, transport]
+      properties:
+        client_a: {$ref: "#/components/schemas/ClientEndpoint"}
+        client_b: {$ref: "#/components/schemas/ClientEndpoint"}
+        transport: {type: string, enum: [native, wss, mixed]}
+        explain: {type: boolean, default: true}
+        expected_config_generation: {type: integer, format: int64, minimum: 0}
+    ClientEndpoint:
+      type: object
+      additionalProperties: false
+      required: [ip]
+      properties:
+        ip: {type: string, format: ip}
+    AllocationTrace:
+      type: object
+      additionalProperties: false
+      required: [config_generation, health_snapshot_id, candidates, selection, warnings]
+      properties:
+        config_generation: {type: integer, format: int64, minimum: 0}
+        health_snapshot_id: {type: string}
+        matched_rule:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            name: {type: string}
+            index: {type: integer, minimum: 0}
+            direction: {type: string, enum: [direct, reverse]}
+        candidates:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [relay_id, configured_order, eligible]
+            properties:
+              relay_id: {type: string}
+              configured_order: {type: integer, minimum: 0}
+              priority: {type: [integer, "null"], minimum: 1}
+              eligible: {type: boolean}
+              exclusion_reason: {type: [string, "null"]}
+        selection:
+          type: object
+          additionalProperties: false
+          required: [kind, relay_id, non_binding]
+          properties:
+            kind: {type: string, enum: [geo_rule, single_candidate, rotation_prediction, no_eligible_relay]}
+            relay_id: {type: [string, "null"]}
+            predicted_index: {type: [integer, "null"], minimum: 0}
+            non_binding: {const: true}
+        warnings:
+          type: array
+          items: {type: string}
+    ConfigCandidate:
+      type: object
+      additionalProperties: false
+      required: [document, format]
+      properties:
+        document: {type: string, maxLength: 1048576}
+        format: {const: yaml}
+    SchemaBundle:
+      type: object
+      additionalProperties: false
+      required: [schema, ui_schema]
+      properties:
+        schema: {type: object}
+        ui_schema: {type: object}
+    ValidationResult:
+      type: object
+      additionalProperties: false
+      required: [valid, diagnostics]
+      properties:
+        valid: {type: boolean}
+        source_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
+        effective_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
+        diagnostics:
+          type: array
+          items: {$ref: "#/components/schemas/Diagnostic"}
+    Diagnostic:
+      type: object
+      additionalProperties: false
+      required: [code, pointer, message, severity]
+      properties:
+        code: {type: string}
+        pointer: {type: string}
+        message: {type: string}
+        line: {type: [integer, "null"], minimum: 1}
+        column: {type: [integer, "null"], minimum: 1}
+        severity: {type: string, enum: [error, warning]}
+    ConfigPlan:
+      type: object
+      additionalProperties: false
+      required: [plan_id, instance_id, base_etag, base_generation, candidate_digest, changes, impact, expires_at]
+      properties:
+        plan_id: {$ref: "#/components/schemas/Uuid"}
+        instance_id: {$ref: "#/components/schemas/Uuid"}
+        base_etag: {$ref: "#/components/schemas/StrongETag"}
+        base_generation: {type: integer, format: int64, minimum: 0}
+        candidate_digest: {$ref: "#/components/schemas/Sha256"}
+        changes: {type: array, items: {type: object}}
+        impact:
+          type: object
+          additionalProperties: false
+          required: [risk, restart_required]
+          properties:
+            risk: {type: string, enum: [low, medium, high, critical]}
+            restart_required: {type: boolean}
+        expires_at: {$ref: "#/components/schemas/DateTime"}
+    RuntimeConfigState:
+      type: object
+      additionalProperties: false
+      required: [status, generation, subsystem_acks]
+      properties:
+        status: {type: string, enum: [disabled_no_config, active, unavailable]}
+        generation: {type: integer, format: int64, minimum: 0}
+        schema_version: {type: [integer, "null"], enum: [1, 2, 3, null]}
+        source_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
+        effective_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
+        activated_at: {oneOf: [{$ref: "#/components/schemas/DateTime"}, {type: "null"}]}
+        subsystem_acks:
+          type: array
+          items: {$ref: "#/components/schemas/SubsystemAck"}
+        last_error: {type: [string, "null"]}
+    ConfigState:
+      type: object
+      additionalProperties: false
+      required: [status, generation, subsystem_acks, etag, drift, document, format]
+      properties:
+        status: {type: string, enum: [disabled_no_config, active, unavailable]}
+        generation: {type: integer, format: int64, minimum: 0}
+        schema_version: {type: [integer, "null"], enum: [1, 2, 3, null]}
+        source_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
+        effective_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
+        activated_at: {oneOf: [{$ref: "#/components/schemas/DateTime"}, {type: "null"}]}
+        subsystem_acks:
+          type: array
+          items: {$ref: "#/components/schemas/SubsystemAck"}
+        last_error: {type: [string, "null"]}
+        etag: {$ref: "#/components/schemas/StrongETag"}
+        drift: {type: boolean}
+        document:
+          type: string
+          maxLength: 1048576
+          description: Exact UTF-8 YAML bytes currently stored in the Agent-managed configuration file.
+        format: {const: yaml}
+    ActivationAck:
+      type: object
+      additionalProperties: false
+      required: [generation, schema_version, source_digest, effective_digest, activated_at, subsystem_acks]
+      properties:
+        generation: {type: integer, format: int64, minimum: 1}
+        schema_version: {type: integer, enum: [1, 2, 3]}
+        source_digest: {$ref: "#/components/schemas/Sha256"}
+        effective_digest: {$ref: "#/components/schemas/Sha256"}
+        activated_at: {$ref: "#/components/schemas/DateTime"}
+        audit_id:
+          description: Present when the acknowledgement is returned by the audited runtime reload endpoint.
+          oneOf: [{$ref: "#/components/schemas/Uuid"}, {type: "null"}]
+        subsystem_acks:
+          type: array
+          minItems: 1
+          items: {$ref: "#/components/schemas/SubsystemAck"}
+    SubsystemAck:
+      type: object
+      additionalProperties: false
+      required: [subsystem, accepted, detail]
+      properties:
+        subsystem: {type: string}
+        accepted: {type: boolean}
+        detail: {type: string}
+    Operation:
+      type: object
+      additionalProperties: false
+      required: [id, audit_id, kind, state, created_at, updated_at]
+      properties:
+        id: {$ref: "#/components/schemas/Uuid"}
+        audit_id: {oneOf: [{$ref: "#/components/schemas/Uuid"}, {type: "null"}]}
+        kind: {type: string, enum: [config_apply, config_rollback]}
+        state: {type: string, enum: [pending, running, succeeded, rolled_back, failed, manual_intervention_required]}
+        created_at: {$ref: "#/components/schemas/DateTime"}
+        updated_at: {$ref: "#/components/schemas/DateTime"}
+        activation_ack: {oneOf: [{$ref: "#/components/schemas/ActivationAck"}, {type: "null"}]}
+        error: {oneOf: [{$ref: "#/components/schemas/Problem"}, {type: "null"}]}
+    Revision:
+      type: object
+      additionalProperties: false
+      required: [id, generation, before_etag, after_etag, candidate_digest, actor, created_at, result]
+      properties:
+        id: {$ref: "#/components/schemas/Uuid"}
+        generation: {type: integer, format: int64, minimum: 1}
+        before_etag: {$ref: "#/components/schemas/StrongETag"}
+        after_etag: {$ref: "#/components/schemas/StrongETag"}
+        candidate_digest: {$ref: "#/components/schemas/Sha256"}
+        actor: {type: string}
+        comment: {type: string}
+        created_at: {$ref: "#/components/schemas/DateTime"}
+        result: {type: string}
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, detail, request_id, retryable, errors]
+      properties:
+        type: {type: string, format: uri}
+        title: {type: string}
+        status: {type: integer, minimum: 400, maximum: 599}
+        code:
+          type: string
+          enum: [REQUEST_INVALID, IP_INVALID, TRANSPORT_INVALID, AUTH_REQUIRED, TOKEN_INVALID, TOKEN_EXPIRED, AUTH_KEY_UNAVAILABLE, CLIENT_CERT_DENIED, SCOPE_DENIED, PLAN_EXPIRED, PLAN_STALE, RESTART_REQUIRED, OPERATION_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, CONFIG_ETAG_MISMATCH, PRECONDITION_REQUIRED, CONFIG_TOO_LARGE, CONFIG_INVALID, SCHEMA_UNSUPPORTED, LOCAL_CONTROL_PROTOCOL_ERROR, LOCAL_CONTROL_UNAVAILABLE, LOCAL_CONTROL_TIMEOUT, STARRY_NOT_READY, ROLLBACK_FAILED]
+        detail: {type: string}
+        request_id: {$ref: "#/components/schemas/Uuid"}
+        retryable: {type: boolean}
+        errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}

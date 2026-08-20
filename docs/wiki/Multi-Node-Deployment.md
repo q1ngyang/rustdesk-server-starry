@@ -156,37 +156,13 @@ docker compose --env-file .env -f compose.yaml up -d
 
 Do not leave the bootstrap HBBS and full-stack HBBS running as two projects.
 
-The full reference includes one community API implementation to show the
-integration boundary. It is not maintained or endorsed by Starry. Before use:
-
-- review the independent
-  [`liyan-lucky/rustdesk-api-server-pro`](https://github.com/liyan-lucky/rustdesk-api-server-pro)
-  repository, licence, releases, and open security issues;
-- replace its `latest` example with a reviewed immutable tag or digest when
-  the provider makes one available;
-- copy `examples/center/server.yaml.example` to `server.yaml`, set file mode
-  `0600`, and replace `signKey` plus the initial administrator password;
-- restrict its backend port to loopback;
-- keep its persistent data and upgrades independent; and
-- mount only the HBBS public key.
-
-On first boot, when no persistent runtime config exists, the provider's startup
-script copies `/app/server.yaml` to `/app/data/server.yaml`. Later starts do not
-overwrite the persistent copy. Complete this before starting the API:
-
-```sh
-cp /path/to/repository/examples/center/server.yaml.example server.yaml
-chmod 600 server.yaml .env
-mkdir -p data/api
-```
-
-The reference `ADMIN_USER` and `ADMIN_PASS` values are first-boot inputs for
-that independent image. Replace them before the first start and follow the
-provider's current configuration, rotation, and upgrade documentation
-afterward; do not expect later edits to the source `server.yaml` to overwrite
-`data/api/server.yaml`.
-
-Remove the API service when account features are not needed.
+The full Starry reference intentionally contains only the HBBS/HBBR data plane.
+When account, policy, or versioned Control API features are required, deploy
+`rustdesk-api-kessoku` v2.8.0 separately from an immutable release tag or image
+digest. Configure its internal mTLS and signed Control Agent boundary as
+documented by both projects. Do not add an unreviewed third-party API image to
+this Compose project, and do not mount Starry private keys into the API
+container.
 
 ## Stage 5: deploy Nginx
 

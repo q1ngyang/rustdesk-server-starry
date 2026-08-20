@@ -4,7 +4,8 @@
 
 `rustdesk-server-starry` 是官方 RustDesk Server 的 HBBS 专用 overlay。它以
 官方源码为构建基础，增加有序 Geo Relay 选择、受管理的 MMDB、Secure TCP 兼容和
-可选 WebSocket 信令。
+可选 WebSocket 信令。schema v3 还新增严格连接认证、last-known-good 激活、无副作用
+分配模拟与可选最小权限 Linux Control Agent。
 
 ## 首先理解组件边界
 
@@ -12,6 +13,7 @@
 | --- | --- | --- |
 | Starry HBBS | 注册设备、协调连接、协商 Secure TCP、计算 Geo 规则并选择 Relay。 | overlay **会修改**。 |
 | 官方 HBBR | P2P 不可用或使用 WebSocket 时转发远程控制数据。 | **不修改**。使用官方 HBBR，或 Starry 产物中从上游构建的未修改版本。 |
+| Starry Control Agent | 通过 mTLS 和细粒度 service JWT 为一个本机 HBBS 提供固定管理 API。 | 可选 Linux 组件，配置写入默认关闭。 |
 | 账户/API 服务 | 登录、地址簿、设备数据和管理。 | **不包含**。需要时独立选择并加固。 |
 | RustDesk 客户端 | 向 HBBS 注册并建立 P2P 或 Relay 会话。 | 不包含。 |
 
@@ -27,7 +29,10 @@ API 登录成功不能证明 HBBS 信令传输正常；HBBS 注册成功也不�
 - 面向受限网络的可选持久 `/ws/id` 信令。
 - 通过未修改官方 HBBR 实现 WSS↔WSS 与 WSS↔原生会话。
 - 供 WSS 和 mixed 分配使用的证书验证 `/ws/relay` 健康状态。
-- 本机配置重载、状态、Relay 列表和规则测试命令。
+- 带 generation/digest 与同步 activation ack 的 last-known-good 配置。
+- 原生 TCP、Secure TCP、WSS 上可选的严格连接 JWT audit/enforce，UDP 发起 unsupported。
+- 不可变 Relay snapshot 与无副作用 allocation simulation。
+- loopback 本地协议与可选 mTLS/RBAC Control Agent。
 
 ## 选择入口
 
@@ -39,6 +44,8 @@ API 登录成功不能证明 HBBS 信令传输正常；HBBS 注册成功也不�
 | 已有 systemd 或 Windows 环境 | [原生部署](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Native-Deployment) |
 | 一个中心和多台 HBBR | [多节点部署](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Multi-Node-Deployment) |
 | 需要 WebSocket | [反向代理与 TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Reverse-Proxy-and-TLS) |
+| 正在把登录接入 HBBS 连接授权 | [连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication) |
+| 需要 Relay 可见性或受管配置事务 | [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent) |
 | 服务已运行但功能异常 | [常见问题排查](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Troubleshooting) |
 | 准备修改版本 | [版本升级与回滚](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Upgrade-and-Rollback) |
 
@@ -51,9 +58,10 @@ API 登录成功不能证明 HBBS 信令传输正常；HBBS 注册成功也不�
 2. 对应部署方式页面；
 3. [客户端配置](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Client-Configuration)；
 4. [配置参数参考](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Configuration-Reference)；
-5. [GEO 规则入门](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Basics)；
-6. [运维与完整验证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Operations-and-Verification)；
-7. 证据显示失败后再进入[常见问题排查](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Troubleshooting)。
+5. 相关功能在范围内时阅读[连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication)或[Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)；
+6. [GEO 规则入门](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Basics)；
+7. [运维与完整验证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Operations-and-Verification)；
+8. 证据显示失败后再进入[常见问题排查](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Troubleshooting)。
 
 ## 安全默认值
 
@@ -62,6 +70,8 @@ API 登录成功不能证明 HBBS 信令传输正常；HBBS 注册成功也不�
 - 当前网络不需要时，客户端保持 WebSocket 关闭。
 - 所有 Relay 都具有有效 `/ws/relay` 前，不启用 WebSocket Signal。
 - 不绕过 TLS 验证。
+- audit 证据完整前保持连接认证关闭；不能把 `audit` 当作强制门禁。
+- Control Agent 从只读开始接入，并保持 HBBS `21115` 只在 loopback。
 - 只分发 `id_ed25519.pub`；私钥 `id_ed25519` 必须保密并备份。
 - Compose 校验、端口开放或 HTTP 101 都只是局部证据，不是桌面控制成功。
 

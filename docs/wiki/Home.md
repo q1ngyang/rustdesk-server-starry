@@ -5,7 +5,9 @@
 `rustdesk-server-starry` is an HBBS-only overlay for the official RustDesk
 Server. It keeps the official source as the build base and adds ordered Geo
 Relay selection, managed MMDB data, Secure TCP compatibility, and optional
-WebSocket signalling.
+WebSocket signalling. Schema v3 also adds strict connection authentication,
+last-known-good activation, side-effect-free allocation simulation, and an
+optional least-privilege Linux Control Agent.
 
 ## Understand the component boundary first
 
@@ -13,6 +15,7 @@ WebSocket signalling.
 | --- | --- | --- |
 | Starry HBBS | Registers peers, coordinates connections, negotiates Secure TCP, evaluates Geo rules, and selects a Relay. | **Modified** by the overlay. |
 | Official HBBR | Carries remote-control data when P2P is unavailable or a WebSocket endpoint is used. | **Not modified**. Use official HBBR or the unmodified upstream build bundled in Starry artifacts. |
+| Starry Control Agent | Exposes a fixed management API for one local HBBS over mTLS and scoped service JWTs. | Optional Linux component. Configuration writes are disabled by default. |
 | Account/API server | Handles login, address books, device data, and administration. | **Not included**. Select and secure it separately if needed. |
 | RustDesk client | Registers with HBBS and establishes P2P or Relay sessions. | Not included. |
 
@@ -30,7 +33,11 @@ these layers separate so that deployment and diagnosis stay evidence-based.
 - Optional persistent `/ws/id` signalling for constrained networks.
 - WSS-to-WSS and WSS-to-native sessions through unmodified official HBBR.
 - Certificate-verified `/ws/relay` health state for WSS and mixed allocation.
-- Local management commands for reload, status, Relay listing, and rule tests.
+- Last-known-good config generation/digests and synchronous activation ack.
+- Strict optional connection JWT audit/enforcement across native TCP, Secure
+  TCP, and WSS, with UDP initiation unsupported.
+- Immutable Relay snapshots and side-effect-free allocation simulation.
+- A loopback local protocol and optional mTLS/RBAC Control Agent.
 
 ## Choose your starting point
 
@@ -42,6 +49,8 @@ these layers separate so that deployment and diagnosis stay evidence-based.
 | Existing systemd or Windows environment | [Native Deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Native-Deployment) |
 | One centre and several HBBR nodes | [Multi-Node Deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Multi-Node-Deployment) |
 | You need WebSocket | [Reverse Proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS) |
+| You are integrating login with HBBS connection authorization | [Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication) |
+| You need Relay visibility or managed config transactions | [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent) |
 | Server runs but a feature does not | [Troubleshooting](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Troubleshooting) |
 | You are changing a version | [Upgrade and Rollback](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback) |
 
@@ -55,9 +64,10 @@ clear rollback point.
 2. the page for your deployment method;
 3. [Client Configuration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Client-Configuration);
 4. [Configuration Reference](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Configuration-Reference);
-5. [GEO Rules: Basics](https://github.com/q1ngyang/rustdesk-server-starry/wiki/GEO-Rules-Basics);
-6. [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification); and
-7. [Troubleshooting](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Troubleshooting) when evidence points to a failure.
+5. [Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication) or [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent) when those optional features are in scope;
+6. [GEO Rules: Basics](https://github.com/q1ngyang/rustdesk-server-starry/wiki/GEO-Rules-Basics);
+7. [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification); and
+8. [Troubleshooting](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Troubleshooting) when evidence points to a failure.
 
 ## Safe defaults
 
@@ -68,6 +78,9 @@ clear rollback point.
 - Do not enable WebSocket Signal until every configured Relay has a valid
   `/ws/relay` endpoint.
 - Never bypass TLS verification.
+- Keep connection authentication off until audit evidence is complete; do not
+  treat `audit` as enforcement.
+- Commission the Control Agent read-only and keep HBBS `21115` on loopback.
 - Distribute only `id_ed25519.pub`; keep `id_ed25519` private and backed up.
 - Treat Compose validation, an open port, or HTTP 101 as partial evidence, not
   as a successful desktop-control session.

@@ -1,0 +1,6 @@
+{
+  "valid": true,
+  "source_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "effective_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "diagnostics": []
+}

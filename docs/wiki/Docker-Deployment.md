@@ -45,7 +45,7 @@ cp /path/to/repository/examples/.env.example .env
 ```
 
 Review the exact images in `.env`. The provided values match
-`1.1.16-patch-v1.1.0` to official HBBR `1.1.16`.
+`1.1.16-patch-v1.2.0` to official HBBR `1.1.16`.
 
 ## Static validation
 
@@ -87,7 +87,8 @@ cp /path/to/repository/config/config.minimal.yaml \
   data/starry/config.yaml
 
 docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
+  "test -s /starry/config.yaml"
+docker compose --env-file .env -f compose.yaml restart hbbs
 ```
 
 Then add Geo and WebSocket in separate changes. See

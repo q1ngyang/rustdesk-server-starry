@@ -23,6 +23,12 @@ The
 also distinguishes ID, Relay, API, and public Key fields. Starry does not
 change their meaning.
 
+Native clients require both `21116/TCP` and `21116/UDP`. With the official
+1.1.16 server, controlled-endpoint registration and heartbeats use UDP while
+controller initiation uses TCP/Secure TCP; `disable-udp` does not turn native
+registration into a TCP-only path. Controlled endpoints that must disable UDP
+should use WSS with complete `/ws/id` and `/ws/relay` deployment.
+
 ## Why Relay Server should stay empty
 
 A non-empty static Relay field tells the client to use that address and can

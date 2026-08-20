@@ -1,0 +1,30 @@
+{
+  "config_generation": 42,
+  "health_snapshot_id": "health-17",
+  "matched_rule": {"name": "Asia preference", "index": 0, "direction": "direct"},
+  "candidates": [
+    {
+      "relay_id": "relay-asia-1.example.com:21117",
+      "configured_order": 0,
+      "priority": 1,
+      "eligible": true,
+      "exclusion_reason": null
+    },
+    {
+      "relay_id": "relay-eu-1.example.com:21117",
+      "configured_order": 1,
+      "priority": null,
+      "eligible": false,
+      "exclusion_reason": "wss_unhealthy"
+    }
+  ],
+  "selection": {
+    "kind": "geo_rule",
+    "relay_id": "relay-asia-1.example.com:21117",
+    "predicted_index": null,
+    "non_binding": true
+  },
+  "warnings": [
+    "Simulation did not register clients or establish an HBBR session."
+  ]
+}

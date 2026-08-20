@@ -1,0 +1,22 @@
+{
+  "config_generation": 42,
+  "health_snapshot_id": "health-17",
+  "relays": [
+    {
+      "id": "relay-asia-1.example.com:21117",
+      "configured_order": 0,
+      "native": {"state": "online", "observed_at": "2026-08-18T10:00:00Z"},
+      "websocket": {
+        "configured": true,
+        "url": "wss://relay-asia-1.example.com/ws/relay",
+        "state": "healthy",
+        "last_probe_at": "2026-08-18T09:59:30Z",
+        "latency_ms": 83,
+        "error_code": null
+      },
+      "eligible_for": ["native", "wss", "mixed"],
+      "referenced_by_rules": ["Asia preference"]
+    }
+  ],
+  "warning": "Relay probes do not prove a complete two-client remote-control session."
+}

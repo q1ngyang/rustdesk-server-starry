@@ -133,42 +133,34 @@ usually less ambiguous than translated names.
 
 ## 4. Reload and inspect
 
-With the supplied Compose example:
+For initial commissioning with the supplied Compose example, restart HBBS.
+Use the authenticated Control Agent for later managed reloads:
 
 ```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'reload-starry-config\n' | nc -w 2 127.0.0.1 21115"
-
+docker restart rustdesk-starry-hbbs
 docker logs --tail 100 rustdesk-starry-hbbs
 ```
 
 Look for an accepted Starry configuration, loaded Geo rule count, readable
 database paths, and no missing-database warning for fields used by the rules.
 
-Confirm the Relay pool:
+Confirm the Relay pool through authenticated Control Agent
+`GET /control/v1/relays`.
 
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'relay-servers\n' | nc -w 2 127.0.0.1 21115"
-```
-
-The management port is loopback-only by design. Run the command inside the
-container or HBBS network namespace; never expose or reverse-proxy the command
-interface publicly.
+The local control port is loopback-only, requires the independent token, and
+must never be exposed or reverse-proxied.
 
 ## 5. Preview with real public addresses
 
-```sh
-docker exec rustdesk-starry-hbbs sh -c \
-  "printf 'test-geo 192.0.2.10 198.51.100.20 native\n' | nc -w 2 127.0.0.1 21115"
-```
+Call authenticated `POST /control/v1/allocations:simulate` with the two public
+addresses, `transport: native`, the expected generation, and `explain: true`.
 
 Replace the documentation-only addresses with the public source addresses that
 HBBS actually observes. When both devices share one NAT, use that public
 address for both arguments. The output is the selected Relay in Rust's debug
 string form, or `""` if none is eligible.
 
-`test-geo` is a decision preview. It does not register clients, open HBBR, prove
+Allocation simulation is a decision preview. It does not register clients, open HBBR, prove
 that DNS or a firewall works, or measure latency.
 
 ## 6. Complete a real test
