@@ -131,6 +131,30 @@ def main() -> int:
                 f"current patch version is missing from {path.relative_to(ROOT)}"
             )
 
+    control_env = (ROOT / "examples" / "control-agent" / ".env.example").read_text(
+        encoding="utf-8"
+    )
+    if "STARRY_PERSIST_ROOT=./persist" not in control_env:
+        errors.append("Control Agent environment example has no unified persistence root")
+
+    control_compose = (
+        ROOT / "examples" / "control-agent" / "compose.yaml"
+    ).read_text(encoding="utf-8")
+    for required in (
+        "${STARRY_PERSIST_ROOT:-./persist}/auth/secrets",
+        "${STARRY_PERSIST_ROOT:-./persist}/auth/cache",
+        "${STARRY_PERSIST_ROOT:-./persist}/control/secrets",
+        "${STARRY_PERSIST_ROOT:-./persist}/control/shared",
+        "${STARRY_PERSIST_ROOT:-./persist}/control/state",
+        "target: /var/lib/starry-auth",
+        "target: /run/secrets/starry-control-shared",
+    ):
+        if required not in control_compose:
+            errors.append(f"Control Agent Compose is missing persistence boundary: {required}")
+    for deprecated in ("source: ./data/", "source: ./secrets"):
+        if deprecated in control_compose:
+            errors.append(f"Control Agent Compose retains split host path: {deprecated}")
+
     if errors:
         for error in errors:
             print(f"documentation error: {error}", file=sys.stderr)

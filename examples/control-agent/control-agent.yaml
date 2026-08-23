@@ -16,7 +16,7 @@ service_jwt:
 
 local_control:
   address: 127.0.0.1:21115
-  token_file: /run/secrets/starry-control/local-control.token
+  token_file: /run/secrets/starry-control-shared/local-control.token
 
 config:
   # Opt in only after testing apply and rollback against this instance.

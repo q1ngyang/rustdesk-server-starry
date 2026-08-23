@@ -56,7 +56,7 @@ connection_auth:
   issuer: https://kessoku.example
   audience: rustdesk-connect
   jwks:
-    file: /run/secrets/starry-auth/jwks.json
+    file: /var/lib/starry-auth/jwks.json
     url: https://kessoku.example/api/internal/v1/auth/jwks
     refresh_interval_seconds: 300
     max_stale_seconds: 3600
@@ -72,6 +72,10 @@ connection_auth:
     key_file: /run/secrets/starry-auth/hbbs-client-key.pem
     server_name: kessoku.example
 ```
+
+容器部署必须把可写持久目录挂载到 `/var/lib/starry-auth`；mTLS CA 与 client identity 继续放在
+独立的只读 `/run/secrets/starry-auth` 挂载中。Control Agent Compose 范例使用同一个宿主机
+`STARRY_PERSIST_ROOT` 实现这项拆分。
 
 配置 `jwks.url` 后必须同时配置四个 JWKS mTLS identity 字段。客户端只信任
 `jwks.ca_file`、主动提交配置的客户端证书、只允许 TLS 1.3，并要求 URL host 与

@@ -1,6 +1,7 @@
-# Control Agent sidecar example. Before starting it, create data/starry/config.yaml,
-# data/control, and the certificate/JWKS files named below. Make the two data
-# paths writable and the config/secret files readable by STARRY_CONTROL_UID/GID.
+# Control Agent sidecar example. All host persistence lives below
+# STARRY_PERSIST_ROOT, while separate bind mounts preserve the authentication,
+# secret, shared-token, and writable-state permission boundaries. Prepare the
+# exact tree and files described in README.md before starting this stack.
 # The Agent shares the HBBS network namespace solely so 127.0.0.1:21115 remains
 # a local-only channel.
 name: rustdesk-server-starry-control
@@ -13,18 +14,25 @@ services:
       - --starry-config=/starry/config.yaml
     environment:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
-      STARRY_LOCAL_CONTROL_TOKEN_FILE: /run/secrets/starry-control/local-control.token
+      STARRY_LOCAL_CONTROL_TOKEN_FILE: /run/secrets/starry-control-shared/local-control.token
     volumes:
       - type: bind
-        source: ./data/hbbs
+        source: ${STARRY_PERSIST_ROOT:-./persist}/hbbs
         target: /root
       - type: bind
-        source: ./data/starry
+        source: ${STARRY_PERSIST_ROOT:-./persist}/config
         target: /starry
         read_only: true
       - type: bind
-        source: ./secrets/local-control.token
-        target: /run/secrets/starry-control/local-control.token
+        source: ${STARRY_PERSIST_ROOT:-./persist}/auth/secrets
+        target: /run/secrets/starry-auth
+        read_only: true
+      - type: bind
+        source: ${STARRY_PERSIST_ROOT:-./persist}/auth/cache
+        target: /var/lib/starry-auth
+      - type: bind
+        source: ${STARRY_PERSIST_ROOT:-./persist}/control/shared
+        target: /run/secrets/starry-control-shared
         read_only: true
     network_mode: host
     restart: ${STARRY_RESTART_POLICY:-unless-stopped}
@@ -43,14 +51,18 @@ services:
         target: /etc/starry-control/agent.yaml
         read_only: true
       - type: bind
-        source: ./secrets
+        source: ${STARRY_PERSIST_ROOT:-./persist}/control/secrets
         target: /run/secrets/starry-control
         read_only: true
       - type: bind
-        source: ./data/starry
+        source: ${STARRY_PERSIST_ROOT:-./persist}/control/shared
+        target: /run/secrets/starry-control-shared
+        read_only: true
+      - type: bind
+        source: ${STARRY_PERSIST_ROOT:-./persist}/config
         target: /starry
       - type: bind
-        source: ./data/control
+        source: ${STARRY_PERSIST_ROOT:-./persist}/control/state
         target: /control-state
     network_mode: service:hbbs
     depends_on:
@@ -72,7 +84,7 @@ services:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
     volumes:
       - type: bind
-        source: ./data/hbbs
+        source: ${STARRY_PERSIST_ROOT:-./persist}/hbbs
         target: /root
     network_mode: host
     depends_on:

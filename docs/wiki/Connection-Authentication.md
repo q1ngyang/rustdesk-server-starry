@@ -62,7 +62,7 @@ connection_auth:
   issuer: https://kessoku.example
   audience: rustdesk-connect
   jwks:
-    file: /run/secrets/starry-auth/jwks.json
+    file: /var/lib/starry-auth/jwks.json
     url: https://kessoku.example/api/internal/v1/auth/jwks
     refresh_interval_seconds: 300
     max_stale_seconds: 3600
@@ -78,6 +78,11 @@ connection_auth:
     key_file: /run/secrets/starry-auth/hbbs-client-key.pem
     server_name: kessoku.example
 ```
+
+Container deployments must persist a writable directory at
+`/var/lib/starry-auth`; keep the mTLS CA and client identity on the separate
+read-only `/run/secrets/starry-auth` mount. The Control Agent Compose example
+implements this split under one `STARRY_PERSIST_ROOT` host directory.
 
 If `jwks.url` is configured, all four JWKS mTLS identity fields are mandatory.
 The client trusts only `jwks.ca_file`, presents its configured certificate, and
