@@ -222,7 +222,7 @@ connection_auth:
   max_token_bytes: 8192
   clock_skew_seconds: 30
   jwks:
-    file: /run/secrets/starry-auth/jwks.json
+    file: /var/lib/starry-auth/jwks.json
     url: https://kessoku.example/api/internal/v1/auth/jwks
     refresh_interval_seconds: 300
     max_stale_seconds: 3600
