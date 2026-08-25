@@ -303,6 +303,7 @@ successful activation acknowledgement; process survival alone is not success.
 
 ## Ready-made profiles
 
+- [`config.single-host.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.single-host.yaml): complete single-host commissioning profile, with Geo and WebSocket disabled until their prerequisites are ready.
 - [`config.minimal.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.minimal.yaml): Secure TCP only.
 - [`config.geo-basic.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.geo-basic.yaml): beginner Geo policy.
 - [`config.geo-advanced.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.geo-advanced.yaml): nested and direction-sensitive rules.

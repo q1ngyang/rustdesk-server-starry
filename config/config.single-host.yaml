@@ -1,0 +1,83 @@
+# Single-host Docker template for Starry HBBS and its bundled HBBR.
+# Replace rustdesk.example.com before use. Start with WebSocket and Geo disabled,
+# complete the native test, then enable each section by following the Wiki.
+version: 3
+
+relay_servers:
+  - rustdesk.example.com:21117
+
+secure_tcp:
+  mode: auto
+  handshake_timeout_ms: 18000
+  idle_timeout_ms: 30000
+  max_frame_bytes: 65536
+
+websocket_signal:
+  enabled: false
+  registration_timeout_ms: 10000
+  keepalive_interval_ms: 12000
+  idle_timeout_ms: 45000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 10000
+  max_sessions_per_effective_ip: 512
+  registration_rate_per_minute: 300
+  trusted_proxies:
+    - 127.0.0.1/32
+    - ::1/128
+  # Desktop clients normally send no Origin. Add an exact HTTPS origin only
+  # when a browser client is intentionally deployed.
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 60
+    timeout_ms: 5000
+    success_threshold: 1
+    failure_threshold: 2
+    endpoints:
+      - relay: rustdesk.example.com:21117
+        url: wss://rustdesk.example.com/ws/relay
+
+# Account/API integration is optional. Keep connection authentication off in a
+# Starry-only deployment. Follow the API provider's staged audit/enforce guide
+# before changing this value.
+connection_auth:
+  mode: off
+
+# Supply licensed MMDB files manually under data/mmdb, or add lawful HTTPS
+# direct-download URLs below. Empty URLs disable automatic downloads.
+mmdb:
+  update_interval_hours: 168
+  update_on_start: false
+  force_update: false
+  download_timeout_seconds: 600
+  minimum_bytes: 65536
+  country:
+    path: mmdb/GeoLite2-Country.mmdb
+    url: ""
+  city:
+    path: mmdb/GeoLite2-City.mmdb
+    url: ""
+  asn:
+    path: mmdb/GeoLite2-ASN.mmdb
+    url: ""
+
+# Enable only after at least a Country or City MMDB is present. The final
+# catch-all keeps the single Relay usable when a country lookup is unavailable.
+geo:
+  enabled: false
+  rules:
+    - name: Nearby clients use the local Relay
+      symmetric: true
+      match:
+        client_a: CN/JP/KR/TW
+        client_b: CN/JP/KR/TW
+      relays:
+        - rustdesk.example.com:21117
+
+    - name: Default Relay
+      symmetric: true
+      match:
+        client_a: "*"
+        client_b: "*"
+      relays:
+        - rustdesk.example.com:21117

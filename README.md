@@ -41,7 +41,7 @@ The project deliberately keeps the component boundary narrow:
 | Component | Starry scope | Deployment responsibility |
 | --- | --- | --- |
 | HBBS | Modified by the overlay | Run the Starry `hbbs` binary or image command. |
-| HBBR | Not modified | Use official HBBR. Starry release artifacts may bundle an unmodified HBBR built from the same pinned upstream revision for convenience. |
+| HBBR | Not modified | Use the HBBR bundled in the same pinned Starry image/artifact. It is built from the same upstream revision as HBBS and avoids independent version drift. |
 | Control Agent | Optional Starry component; Linux only in v1.2 | Keep HBBS local control on loopback. Expose the Agent only on a private management path with mTLS and scoped service JWTs. Configuration writes are disabled by default. |
 | Account/API server | Not included | Account login, address books, device data, and administration require a separately selected API implementation. |
 
@@ -76,13 +76,14 @@ files are shared by both languages so that executable examples cannot drift.
 
 | Guide | Purpose |
 | --- | --- |
-| [Getting started](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started) | Choose a deployment and reach the first verified client connection. |
+| [Getting started](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started) | Complete single-host Docker walkthrough from DNS and firewall to Geo, WSS, and real-client verification. |
 | [Docker image usage](CONTAINER.md) | Pull, inspect, run, pin, upgrade, and troubleshoot the GHCR image. |
 | [Docker deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Docker-Deployment) | Recommended single-host Docker Compose deployment. |
 | [Native deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Native-Deployment) | Supported amd64 DEB/Linux deployment and non-blocking compatibility notes. |
-| [Multi-node deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Multi-Node-Deployment) | Centre HBBS, official HBBR nodes, and an optional third-party API. |
+| [Multi-node deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Multi-Node-Deployment) | Centre HBBS, version-locked Starry-image HBBR nodes, and optional account services. |
 | [Reverse proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS) | Exact `/ws/id`, `/ws/relay`, API, certificate, and firewall requirements. |
 | [Client configuration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Client-Configuration) | ID Server, API Server, public key, Relay field, and WebSocket switch. |
+| [Account/API integration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/API-Integration) | Third-party compatibility, recommended Kessoku integration, responsibility boundaries, and safe rollout. |
 | [Configuration reference](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Configuration-Reference) | Every schema field, default, valid range, dependency, and fallback. |
 | [Connection authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication) | JWT profile, audit-to-enforce rollout, transport coverage, failure handling, and rollback. |
 | [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent) | Linux deployment, mTLS/service-JWT authorization, read-only mode, transactions, recovery, and API contracts. |

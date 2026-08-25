@@ -6,23 +6,41 @@ Starry 从 HBBS 数据目录下的 `starry/config.yaml` 读取配置。容器中
 `/root/starry/config.yaml`，因为 `/root` 是持久化数据挂载点。HBBS 首次启动还会
 生成 `starry/config.example.yaml` 作为本地参考。
 
-解析器会拒绝未知字段、重复列表项、超范围数值以及指向未在
-`relay_servers` 声明的 Relay。首次加载时，文件不存在、为空或无效不会部分启用
-Starry：HBBS 记录错误并保持上游兼容行为。已有有效 generation 后，reload 被拒绝会
-完整保留 last-known-good generation。这些是安全设计，但不能因此忽略日志和 activation
-ack。
+解析器会拒绝未知字段、重复列表项、超范围数值，以及未在 `relay_servers` 声明的中继
+服务器。首次加载时，如果文件不存在、为空或无效，Starry 不会只启用其中一部分：HBBS
+会记录错误并保持上游兼容行为。已经有有效配置后，新配置加载失败会完整保留最近一次
+有效配置。这些机制用于避免半生效状态，但仍必须检查日志和启用结果。
 
-## 文档版本和功能门控
+## 中文术语说明
+
+文档正文优先使用中文常用说法；配置值、接口字段和日志原文保留英文，便于对照：
+
+| 配置或日志用词 | 本文含义 |
+| --- | --- |
+| `version` / schema | 配置结构版本 |
+| generation | 配置代次；每次成功启用配置后递增 |
+| digest | 配置内容摘要，用于确认各组件采用同一内容 |
+| last-known-good | 最近一次成功启用的有效配置 |
+| activation acknowledgement | 配置启用确认 |
+| endpoint | 服务地址或健康检查地址 |
+| `audit` | 仅记录认证结果，不拦截连接 |
+| `enforce` | 强制认证，拒绝不符合要求的连接 |
+| mixed | 一端使用 WSS、另一端使用原生连接的混合方式 |
+| Control Agent | Starry 管理代理；不是账户 API 服务 |
+
+出现配置项时必须填写表格左侧的精确英文值，不能把中文说明写入 YAML。
+
+## 配置结构版本和功能范围
 
 | 字段 | 必填 | 可用值 | 含义 |
 | --- | --- | --- | --- |
-| `version` | 是 | `1`、`2`、`3` | 配置结构版本。新部署请使用 `3`。 |
+| `version` | 是 | `1`、`2`、`3` | 配置结构版本。新部署使用 `3`。 |
 
 结构版本 `1` 支持 Relay、Secure TCP、MMDB 和 Geo，并拒绝 `websocket_signal` 与
 `connection_auth`；版本 `2` 增加可选 WebSocket Signal，但仍拒绝 `connection_auth`；
 版本 `3` 新增连接认证。顶层和嵌套未知字段均会被拒绝，避免拼写错误悄悄改变部署结果。
 
-## `relay_servers`
+## 中继服务器列表：`relay_servers`
 
 ```yaml
 relay_servers:
@@ -30,7 +48,7 @@ relay_servers:
   - relay-us-1.example.com:21117
 ```
 
-这是 Starry HBBS 已知的完整 Relay 分配池。值会去除首尾空白，不能为空，并且按
+这是 Starry HBBS 可以分配的完整中继服务器列表。值会去除首尾空白，不能为空，并且按
 不区分大小写的方式保持唯一。
 
 - Geo 规则引用的每个 Relay 都必须出现在这里；
@@ -40,7 +58,7 @@ relay_servers:
 - 若需由 HBBS 执行 Geo 分配，RustDesk 客户端的“中继服务器”字段应留空。客户端
   指定的 Relay 会覆盖服务端分配。
 
-## `secure_tcp`
+## 安全 TCP：`secure_tcp`
 
 ```yaml
 secure_tcp:
@@ -60,7 +78,7 @@ secure_tcp:
 Secure TCP 作用于 `21116/TCP` 上的原生 HBBS 信令。它不会自行加密或代理 HBBR，
 也不同于 API 使用的 HTTPS。
 
-## `mmdb`
+## 地理位置数据库：`mmdb`
 
 ```yaml
 mmdb:
@@ -107,7 +125,7 @@ GeoLite2 数据，也不提供数据库许可证。
 | `subdivision`、`region`、`city`、`geoname`、`city_id` | City |
 | `asn`、`isp`、`asn_org` | ASN |
 
-## `geo`
+## 地理位置规则：`geo`
 
 ```yaml
 geo:
@@ -136,7 +154,7 @@ geo:
 继续阅读 [Geo 规则：入门](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Basics)
 和 [Geo 规则：进阶](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Advanced)。
 
-## `websocket_signal`
+## WebSocket 信令：`websocket_signal`
 
 此部分要求 `version: 2` 或 `3`，并且必须显式启用。
 
@@ -207,10 +225,11 @@ HBBS 实际看到的源地址后，才能加入 Docker 网桥或外部代理网�
 分配所需的 WSS/TLS 路径，但不能替代两台客户端的实际远控测试。参见
 [反向代理与 TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Reverse-Proxy-and-TLS)。
 
-## `connection_auth`
+## 连接认证：`connection_auth`
 
-本节要求 `version: 3`，门控原生 TCP、Secure TCP、WSS 上控制端
-`PunchHoleRequest` 与直接 `RequestRelay`。UDP 发起仍 unsupported 且不分配。
+本节要求 `version: 3`，用于控制原生 TCP、安全 TCP、WSS 上控制端发出的
+`PunchHoleRequest` 与直接 `RequestRelay`。UDP 不支持发起这种已认证连接，也不会分配
+中继服务器。
 
 ```yaml
 connection_auth:
@@ -268,7 +287,7 @@ connection_auth:
 raw token 不会作为 cache key 或 status label。进入 audit/enforce 前先阅读
 [连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication)。
 
-## 重载行为
+## 重新加载配置时的行为
 
 未部署 Control Agent 的首次接入可在修改后重启 HBBS：
 
@@ -276,16 +295,16 @@ raw token 不会作为 cache key 或 status label。进入 audit/enforce 前先�
 docker restart rustdesk-starry-hbbs
 ```
 
-后续受管变更应使用已认证的版本化 Control API plan/apply 或
-`POST /control/v1/runtime:reload` 流程。激活在 active generation 层原子；完整有效
-candidate 由所有必需 subsystem prepare；只有
-全部 ack 成功才以新 generation 激活。空/无效/被拒绝的 reload 会保留此前
-last-known-good generation、digest、Relay/auth 状态并设置 `last_error`。若从未加载过
-有效 generation，HBBS 保持上游兼容行为。修正或恢复磁盘文件并要求成功 activation ack；
-进程仍运行不等于成功。
+后续受管理的变更应使用已认证的版本化管理接口先预览再应用，或调用
+`POST /control/v1/runtime:reload`。完整有效的新配置必须得到所有相关子系统确认，之后才
+会作为新代次一次性启用。空配置、无效配置或被拒绝的重新加载会保留此前的有效配置、
+内容摘要、中继服务器和认证状态，并设置 `last_error`。若从未加载过有效配置，HBBS
+保持上游兼容行为。修正或恢复磁盘文件后必须再次加载并确认成功；进程仍在运行不代表
+新配置已经生效。
 
 ## 可直接修改的配置模板
 
+- [`config.single-host.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.single-host.yaml)：单机完整接入模板；地理位置规则和 WebSocket 默认关闭，准备好依赖后再启用；
 - [`config.minimal.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.minimal.yaml)：仅 Secure TCP；
 - [`config.geo-basic.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.geo-basic.yaml)：Geo 入门策略；
 - [`config.geo-advanced.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.geo-advanced.yaml)：嵌套和方向敏感规则；

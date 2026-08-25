@@ -75,8 +75,10 @@ authentication issuer。
 
 ```dotenv
 STARRY_VERSION=1.1.16-patch-v1.2.0
-RUSTDESK_SERVER_VERSION=1.1.16
 ```
+
+项目编排文件让 HBBS 与镜像内未经修改的 HBBR 使用同一个 Starry 版本，不再设置单独
+更新的 HBBR 镜像版本。
 
 然后执行：
 

@@ -2,8 +2,11 @@
 
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Multi-Node-Deployment)
 
-Use this topology when one Starry HBBS centre must allocate several official
-HBBR nodes. An account/API service is optional and remains independent.
+Use this topology when one Starry HBBS centre must allocate several HBBR
+nodes. Each HBBS and HBBR uses the same pinned Starry image tag. HBBR remains
+unmodified upstream code, but this version lock avoids compatibility problems
+caused by independent image updates. An account/API service is optional and
+remains independent.
 
 ## Architecture
 
@@ -13,11 +16,11 @@ flowchart LR
     B[Client B] -->|register and signal| S
     S -->|selected Relay address| A
     S -->|selected Relay address| B
-    A <-->|native 21117 or WSS /ws/relay| R1[Official HBBR 1]
+    A <-->|native 21117 or WSS /ws/relay| R1[Starry-image HBBR 1]
     B <-->|native 21117 or WSS /ws/relay| R1
     S -. optional account layer .-> API[Third-party API]
-    S --> R2[Official HBBR 2]
-    S --> R3[Official HBBR N]
+    S --> R2[Starry-image HBBR 2]
+    S --> R3[Starry-image HBBR N]
 ```
 
 HBBS chooses a Relay; HBBR carries the session. The API does neither.
@@ -41,8 +44,8 @@ failed certificate-matching name with an IP or disable verification.
 - The centre generates `id_ed25519` and `id_ed25519.pub`.
 - The private key stays only in the protected centre data and its backups.
 - Clients receive the public-key content.
-- Relay-only nodes receive only that same public key through the official HBBR
-  `KEY` setting.
+- Relay-only nodes receive only that same public key through the HBBR `KEY`
+  setting.
 - A community API that needs the server identity mounts only
   `id_ed25519.pub`, read-only.
 
@@ -59,7 +62,7 @@ Use:
 cd /opt/rustdesk-center
 cp /path/to/repository/examples/center/.env.example .env
 cp /path/to/repository/examples/center/compose.bootstrap.yaml .
-mkdir -p data/server data/api
+mkdir -p data/server
 
 docker compose --env-file .env -f compose.bootstrap.yaml config --quiet
 docker compose --env-file .env -f compose.bootstrap.yaml up -d
@@ -125,8 +128,8 @@ docker compose --env-file .env -f compose.yaml up -d
 docker compose --env-file .env -f compose.yaml logs --tail 100 hbbr
 ```
 
-The optional Relay tuning values in this example belong to official HBBR
-1.1.16, not to the Starry overlay:
+The optional Relay tuning values belong to the unmodified upstream HBBR in the
+pinned Starry image, not to the Starry HBBS overlay:
 
 | Environment variable | Example | Unit and effect |
 | --- | ---: | --- |
@@ -156,19 +159,23 @@ docker compose --env-file .env -f compose.yaml up -d
 
 Do not leave the bootstrap HBBS and full-stack HBBS running as two projects.
 
-The full Starry reference intentionally contains only the HBBS/HBBR data plane.
-When account, policy, or versioned Control API features are required, deploy
-`rustdesk-api-kessoku` v2.8.0 separately from an immutable release tag or image
-digest. Configure its internal mTLS and signed Control Agent boundary as
-documented by both projects. Do not add an unreviewed third-party API image to
-this Compose project, and do not mount Starry private keys into the API
-container.
+The full Starry reference intentionally contains only the HBBS/HBBR data
+plane. A compatible third-party API can be added separately; the recommended
+implementation is
+[`q1ngyang/rustdesk-api-kessoku`](https://github.com/q1ngyang/rustdesk-api-kessoku).
+Follow the [Kessoku Wiki](https://github.com/q1ngyang/rustdesk-api-kessoku/wiki)
+for its current version and deployment requirements. The dedicated joint
+deployment page is still in preparation and will be linked from
+[Account/API Integration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/API-Integration).
+Do not mount Starry private keys into an API container.
 
 ## Stage 5: deploy Nginx
 
 - Centre WSS: [`center.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/center.example.conf)
-- API: [`api.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/api.example.conf)
 - Every Relay: [`relay.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/relay.example.conf)
+
+The generic API example is not a Kessoku proxy contract. Follow the API
+project's own Wiki for its public and internal listeners.
 
 See [Reverse Proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS)
 before enabling WebSocket Signal.
@@ -176,8 +183,8 @@ before enabling WebSocket Signal.
 ## Verification order
 
 1. Every Relay HBBR process is running and its public port is reachable.
-2. Centre `relay-servers` lists the expected allocation pool after the official
-   health refresh interval.
+2. Centre `relay-servers` lists the expected allocation pool after the health
+   refresh interval.
 3. `test-geo` returns the intended first online Relay for representative IP
    pairs.
 4. Disable one priority Relay and prove ordered failover, then restore it.

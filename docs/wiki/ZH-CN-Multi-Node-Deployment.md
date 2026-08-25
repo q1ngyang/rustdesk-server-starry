@@ -2,7 +2,9 @@
 
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Multi-Node-Deployment) | **简体中文**
 
-一个 Starry HBBS 中心需要分配多台官方 HBBR 时使用该拓扑。账户/API 服务可选且保持独立。
+当一个 Starry HBBS 中心需要分配多台 HBBR 时使用此结构。所有 HBBS 与 HBBR 都使用
+同一个固定版本的 Starry 镜像。HBBR 本身仍是未经修改的上游代码，但统一镜像版本可
+避免两个服务分别更新造成兼容问题。账户/API 服务为可选独立组件。
 
 ## 架构
 
@@ -12,11 +14,11 @@ flowchart LR
     B[客户端 B] -->|注册与信令| S
     S -->|选中的 Relay 地址| A
     S -->|选中的 Relay 地址| B
-    A <-->|原生 21117 或 WSS /ws/relay| R1[官方 HBBR 1]
+    A <-->|原生 21117 或 WSS /ws/relay| R1[Starry 镜像 HBBR 1]
     B <-->|原生 21117 或 WSS /ws/relay| R1
     S -. 可选账户层 .-> API[第三方 API]
-    S --> R2[官方 HBBR 2]
-    S --> R3[官方 HBBR N]
+    S --> R2[Starry 镜像 HBBR 2]
+    S --> R3[Starry 镜像 HBBR N]
 ```
 
 HBBS 选择 Relay；HBBR 转发会话；API 两者都不负责。
@@ -39,7 +41,7 @@ HBBS 选择 Relay；HBBR 转发会话；API 两者都不负责。
 - 中心生成 `id_ed25519` 和 `id_ed25519.pub`。
 - 私钥只保留在受保护中心数据和备份中。
 - 客户端配置公钥内容。
-- 纯 Relay 节点只通过官方 HBBR `KEY` 设置获得相同公钥。
+- 纯中继节点只通过 HBBR 的 `KEY` 设置获得相同公钥。
 - 需要服务器身份的社区 API 只读挂载 `id_ed25519.pub`。
 
 不要把中心私钥复制到每台 Relay。
@@ -55,7 +57,7 @@ HBBS 选择 Relay；HBBR 转发会话；API 两者都不负责。
 cd /opt/rustdesk-center
 cp /path/to/repository/examples/center/.env.example .env
 cp /path/to/repository/examples/center/compose.bootstrap.yaml .
-mkdir -p data/server data/api
+mkdir -p data/server
 
 docker compose --env-file .env -f compose.bootstrap.yaml config --quiet
 docker compose --env-file .env -f compose.bootstrap.yaml up -d
@@ -65,7 +67,7 @@ test -s data/server/id_ed25519.pub
 
 继续之前先备份身份，并确认客户端能进行一次基础原生 HBBS 注册。
 
-## 阶段 2：准备 Starry Relay 配置
+## 阶段 2：准备 Starry 中继服务器配置
 
 从 `config.geo-basic.yaml` 或 `config.websocket.yaml` 开始。完整候选池写入
 `relay_servers`：
@@ -76,7 +78,8 @@ relay_servers:
   - relay-2.example.com:21117
 ```
 
-每条 Geo 规则只能引用该池中的条目。规则顺序和规则内 Relay 顺序都是严格优先级，不是轮询。
+每条地理位置规则只能引用该列表中的条目。规则顺序和规则内的中继服务器顺序都是严格
+优先级，不会轮询。
 
 启用 WebSocket Signal 时，`relay_health.endpoints` 必须精确覆盖该池：
 
@@ -93,14 +96,14 @@ websocket_signal:
 
 两条精确路径都通过有效 TLS/WebSocket Upgrade，且真实客户端验收已准备好之前不要启用。
 
-## 阶段 3：部署每台纯 Relay
+## 阶段 3：部署每台纯中继节点
 
 使用：
 
 - [`examples/relay/compose.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/relay/compose.yaml)
 - [`examples/relay/.env.example`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/relay/.env.example)
 
-每台 Relay 执行：
+每台中继节点执行：
 
 ```sh
 mkdir -p /opt/rustdesk-relay/data
@@ -117,11 +120,12 @@ docker compose --env-file .env -f compose.yaml up -d
 docker compose --env-file .env -f compose.yaml logs --tail 100 hbbr
 ```
 
-该示例中的可选 Relay 调优值属于官方 HBBR 1.1.16，而不是 Starry 覆盖层：
+这些可选带宽设置属于固定版本 Starry 镜像内未经修改的上游 HBBR，不属于 Starry 的
+HBBS 扩展层：
 
 | 环境变量 | 示例值 | 单位与作用 |
 | --- | ---: | --- |
-| `RELAY_SINGLE_BANDWIDTH` | `128` | 单个 Relay 会话上限，单位 Mb/s |
+| `RELAY_SINGLE_BANDWIDTH` | `128` | 单个中继会话上限，单位 Mb/s |
 | `RELAY_TOTAL_BANDWIDTH` | `1024` | HBBR 进程总带宽上限，单位 Mb/s |
 | `RELAY_LIMIT_SPEED` | `32` | 会话被降速后的上限，单位 Mb/s |
 | `RELAY_DOWNGRADE_START_CHECK` | `1800` | 会话进入降速判定前的秒数 |
@@ -129,7 +133,7 @@ docker compose --env-file .env -f compose.yaml logs --tail 100 hbbr
 
 这些是示例显式限值。请按节点容量调整，并从 HBBR 启动日志确认实际生效值。
 
-开放 `21117/TCP`。需要 WebSocket 时安装证书有效的 Nginx `/ws/relay` 并开放
+对公网开放 `21117/TCP`。需要 WebSocket 时配置证书有效的 Nginx `/ws/relay` 并开放
 `443/TCP`，后端 `21119/TCP` 保持私有。
 
 ## 阶段 4：中心切换到完整栈
@@ -144,18 +148,23 @@ docker compose --env-file .env -f compose.yaml config --quiet
 docker compose --env-file .env -f compose.yaml up -d
 ```
 
-不要让引导 HBBS 与完整栈 HBBS 作为两个 project 长期同时运行。
+不要让初始化 HBBS 与完整部署的 HBBS 作为两套 Compose 项目同时运行。
 
-Starry 的完整参考有意只包含 HBBS/HBBR 数据平面。需要账户、策略或版本化 Control API
-能力时，请从不可变发布标签或镜像摘要单独部署 `rustdesk-api-kessoku` v2.8.0，并按两个
-项目的文档配置内部 mTLS 与签名 Control Agent 信任边界。不要向该 Compose project 加入
-未经审核的第三方 API 镜像，也不要把 Starry 私钥挂载到 API 容器。
+Starry 的完整示例有意只包含 HBBS 和 HBBR。需要账户功能时，可以单独部署兼容的第三方
+API；推荐
+[`q1ngyang/rustdesk-api-kessoku`](https://github.com/q1ngyang/rustdesk-api-kessoku)。
+当前版本和部署要求以
+[Kessoku Wiki](https://github.com/q1ngyang/rustdesk-api-kessoku/wiki)为准。
+Kessoku + Starry 联合部署专页仍在编写中，完成后会从
+[账户与 API 服务接入](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-API-Integration)
+加入链接。不要把 Starry 私钥挂载到 API 容器。
 
 ## 阶段 5：部署 Nginx
 
 - 中心 WSS：[`center.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/center.example.conf)
-- API：[`api.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/api.example.conf)
 - 每台 Relay：[`relay.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/relay.example.conf)
+
+通用 API 示例不是 Kessoku 的反向代理规范；API 的公网和内部接口必须按该项目 Wiki 配置。
 
 启用 WebSocket Signal 前阅读
 [反向代理与 TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Reverse-Proxy-and-TLS)。
@@ -163,11 +172,11 @@ Starry 的完整参考有意只包含 HBBS/HBBR 数据平面。需要账户、�
 ## 验证顺序
 
 1. 每台 Relay HBBR 正在运行且公网端口可达；
-2. 等待官方健康刷新后，中心 `relay-servers` 列出预期分配池；
+2. 等待健康状态刷新后，中心 `relay-servers` 列出预期中继服务器；
 3. 代表性 IP 组合的 `test-geo` 返回预期第一台在线 Relay；
 4. 停止一台高优先级 Relay，证明有序故障切换，再恢复；
-5. 启用 WSS 时，`websocket-status` 显示正确的各 Relay native/WSS 状态；
-6. 完成 native、WSS、mixed 真实会话，并在证据中对齐同一 Relay UUID；
-7. 单独测试 API 登录，再在登录状态重复 Secure TCP 和远程控制。
+5. 启用 WSS 时，`websocket-status` 显示各中继服务器正确的原生/WSS 状态；
+6. 完成原生、WSS 和两个方向的混合连接，并在日志中核对同一个中继 UUID；
+7. 单独测试 API 登录，再在登录状态重复安全 TCP 和远程控制。
 
 HBBS 到 HBBR 可达不等于客户端到 Relay 的延迟或丢包。不要把中心 ping 宣称为客户端线路质量。

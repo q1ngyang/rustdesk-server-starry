@@ -160,7 +160,7 @@ through a remote proxy.
 The backend ports and paths do not change by installation method:
 
 - HBBS `/ws/id` backend: `21118/TCP`
-- official HBBR `/ws/relay` backend: `21119/TCP`
+- unmodified bundled HBBR `/ws/relay` backend: `21119/TCP`
 - optional community API: its independently configured HTTP port
 
 Use [Reverse Proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS)

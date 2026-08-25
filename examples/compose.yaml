@@ -1,7 +1,8 @@
 # Recommended single-host deployment for rustdesk-server-starry.
 #
-# Starry modifies HBBS only. This example therefore runs Starry HBBS and an
-# unmodified official HBBR built for the matching upstream version.
+# Starry modifies HBBS only, but the release image also contains the unmodified
+# HBBR built from the same pinned upstream source. Both services use one exact
+# Starry image tag so an unrelated official-image update cannot split versions.
 #
 # Repository checkout:
 #   cp examples/.env.example .env
@@ -55,7 +56,7 @@ services:
         max-file: "5"
 
   hbbr:
-    image: ${RUSTDESK_SERVER_IMAGE:-rustdesk/rustdesk-server}:${RUSTDESK_SERVER_VERSION:-1.1.16}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.0}
     container_name: ${STARRY_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
     command:
       - hbbr

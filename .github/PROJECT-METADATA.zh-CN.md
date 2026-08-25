@@ -14,9 +14,9 @@
 
 拟采用的默认英文描述：
 
-> Unofficial HBBS overlay for RustDesk Server with ordered Geo Relay routing,
-> managed MMDB, Secure TCP, and optional WebSocket signalling. Use official
-> HBBR; API not included.
+> Unofficial RustDesk Server HBBS overlay with Geo Relay policy, managed MMDB,
+> Secure TCP, WebSocket signalling, connection authentication, and bundled
+> version-locked HBBR. API not included.
 
 拟设置的网站：
 
@@ -38,15 +38,17 @@ remote-desktop
 rust
 ```
 
-仓库描述会在有限长度内明确 HBBS、非官方身份和 HBBR/API 边界。
+仓库描述会在有限长度内明确 HBBS、非官方身份，并说明 HBBR 已附带且与版本绑定、账户
+API 不包含在项目内。
 
 ## GHCR Package 元数据
 
 拟设置的 `linux/amd64` 镜像描述：
 
-> Starry HBBS overlay for official RustDesk Server with ordered Geo Relay
-> routing, Secure TCP, and optional WebSocket Signal; bundled HBBR is unmodified
-> and no API is included
+> Starry HBBS for RustDesk Server with Geo Relay policy, Secure TCP, WebSocket
+> signalling, connection authentication, and optional Control Agent; the same
+> image bundles unmodified HBBR, while account/API services and MMDB data are
+> not included
 
 构建工作流会在镜像写入 OCI 标题、源码、文档、版本、revision、许可证和描述 label，
 并在镜像写入对应元数据。文档 URL 直接指向 `CONTAINER.md`。

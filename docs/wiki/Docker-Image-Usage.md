@@ -20,9 +20,9 @@ ARM remains a best-effort source-compatibility target. patch-v1.2.0 does not
 promise or publish a `linux/arm64` image.
 
 The image contains patched `hbbs`, unmodified upstream `hbbr`, and unmodified
-`rustdesk-utils`. Starry functionality exists only in HBBS. The recommended
-deployment makes that boundary visible by running HBBR from the official
-`rustdesk/rustdesk-server` image.
+`rustdesk-utils`. Starry functionality exists only in HBBS. The supplied
+deployments run both services from the same pinned Starry image tag so that
+HBBS and HBBR cannot drift to independently updated upstream versions.
 
 No API server or MMDB data is embedded.
 
@@ -66,9 +66,11 @@ new identity accidentally.
 ## Start here
 
 - [Container manual](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CONTAINER.md)
+- [Complete beginner walkthrough](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started)
 - [Single-host Compose](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/compose.yaml)
 - [Compose ENV](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/.env.example)
 - [Docker Deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Docker-Deployment)
+- [Account/API Integration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/API-Integration)
 - [Upgrade and Rollback](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback)
 
 For a linked package, GitHub documents that the package page displays

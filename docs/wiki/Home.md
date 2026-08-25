@@ -2,21 +2,22 @@
 
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Home)
 
-`rustdesk-server-starry` is an HBBS-only overlay for the official RustDesk
-Server. It keeps the official source as the build base and adds ordered Geo
-Relay selection, managed MMDB data, Secure TCP compatibility, and optional
-WebSocket signalling. Schema v3 also adds strict connection authentication,
-last-known-good activation, side-effect-free allocation simulation, and an
-optional least-privilege Linux Control Agent.
+`rustdesk-server-starry` extends the official RustDesk Server HBBS while
+keeping the upstream source as its pinned build base. It adds ordered Geo
+Relay selection, managed MMDB data, Secure TCP, optional WebSocket signalling,
+connection authentication, safe configuration activation, Relay simulation,
+and an optional least-privilege Linux Control Agent. The container image also
+includes an **unmodified HBBR from the same pinned upstream revision**, so the
+provided deployments use one Starry image tag for both services.
 
 ## Understand the component boundary first
 
 | Component | Role | Supplied or changed by Starry? |
 | --- | --- | --- |
 | Starry HBBS | Registers peers, coordinates connections, negotiates Secure TCP, evaluates Geo rules, and selects a Relay. | **Modified** by the overlay. |
-| Official HBBR | Carries remote-control data when P2P is unavailable or a WebSocket endpoint is used. | **Not modified**. Use official HBBR or the unmodified upstream build bundled in Starry artifacts. |
+| Starry-image HBBR | Carries remote-control data when P2P is unavailable or a WebSocket endpoint is used. | **Not modified**. It is built from the same pinned upstream revision as HBBS; examples use this copy to prevent version drift. |
 | Starry Control Agent | Exposes a fixed management API for one local HBBS over mTLS and scoped service JWTs. | Optional Linux component. Configuration writes are disabled by default. |
-| Account/API server | Handles login, address books, device data, and administration. | **Not included**. Select and secure it separately if needed. |
+| Account/API server | Handles login, address books, device data, and administration. | **Not included**. A compatible third-party API can be used; Kessoku is the recommended integration. |
 | RustDesk client | Registers with HBBS and establishes P2P or Relay sessions. | Not included. |
 
 An API login does not prove that the HBBS signalling transport works. An HBBS
@@ -31,7 +32,7 @@ these layers separate so that deployment and diagnosis stay evidence-based.
 - Scheduled MMDB download with validation and last-known-good retention.
 - Client-compatible Secure TCP on native HBBS `21116/TCP`.
 - Optional persistent `/ws/id` signalling for constrained networks.
-- WSS-to-WSS and WSS-to-native sessions through unmodified official HBBR.
+- WSS-to-WSS and WSS-to-native sessions through the bundled, unmodified HBBR.
 - Certificate-verified `/ws/relay` health state for WSS and mixed allocation.
 - Last-known-good config generation/digests and synchronous activation ack.
 - Strict optional connection JWT audit/enforcement across native TCP, Secure
@@ -49,6 +50,7 @@ these layers separate so that deployment and diagnosis stay evidence-based.
 | Existing systemd or Windows environment | [Native Deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Native-Deployment) |
 | One centre and several HBBR nodes | [Multi-Node Deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Multi-Node-Deployment) |
 | You need WebSocket | [Reverse Proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS) |
+| You need accounts, login, or an API | [Account/API Integration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/API-Integration) |
 | You are integrating login with HBBS connection authorization | [Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication) |
 | You need Relay visibility or managed config transactions | [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent) |
 | Server runs but a feature does not | [Troubleshooting](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Troubleshooting) |
@@ -63,11 +65,12 @@ clear rollback point.
 1. [Getting Started](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started)
 2. the page for your deployment method;
 3. [Client Configuration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Client-Configuration);
-4. [Configuration Reference](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Configuration-Reference);
-5. [Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication) or [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent) when those optional features are in scope;
-6. [GEO Rules: Basics](https://github.com/q1ngyang/rustdesk-server-starry/wiki/GEO-Rules-Basics);
-7. [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification); and
-8. [Troubleshooting](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Troubleshooting) when evidence points to a failure.
+4. [Account/API Integration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/API-Integration), when accounts are required;
+5. [Configuration Reference](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Configuration-Reference);
+6. [Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication) or [Control Agent](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent) when those optional features are in scope;
+7. [GEO Rules: Basics](https://github.com/q1ngyang/rustdesk-server-starry/wiki/GEO-Rules-Basics);
+8. [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification); and
+9. [Troubleshooting](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Troubleshooting) when evidence points to a failure.
 
 ## Safe defaults
 

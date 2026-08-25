@@ -81,8 +81,10 @@ Set the new immutable version in `.env`:
 
 ```dotenv
 STARRY_VERSION=1.1.16-patch-v1.2.0
-RUSTDESK_SERVER_VERSION=1.1.16
 ```
+
+The supplied Compose files use that same Starry image version for HBBS and
+the bundled, unmodified HBBR. There is no separately updated HBBR image tag.
 
 Then:
 

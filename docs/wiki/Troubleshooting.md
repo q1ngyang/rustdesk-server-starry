@@ -203,7 +203,7 @@ Check that:
 
 - `relay_servers` and `relay_health.endpoints[].relay` use identical
   `host:21117` values;
-- official HBBR reports that value online;
+- the bundled unmodified HBBR reports that value online;
 - its WSS endpoint is healthy in the current configuration generation; and
 - the Geo rule lists that Relay.
 

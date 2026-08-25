@@ -1,140 +1,146 @@
-# Docker deployment
+# Docker deployment reference
 
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Docker-Deployment)
 
-Docker Compose on Linux is the recommended Starry deployment. This guide
-explains the complete single-host example instead of treating `compose up` as
-proof that the service works.
+Docker Compose on `linux/amd64` is the recommended Starry deployment. If this
+is your first self-hosted RustDesk server, follow the complete
+[single-host walkthrough](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started)
+first. This page is the day-two reference for the supplied Compose files,
+storage, networking, configuration, and change procedure.
 
-## Architecture
+## Supplied deployments
+
+| Scenario | Compose and environment | Use it for |
+| --- | --- | --- |
+| Single host | `examples/compose.yaml`, `examples/.env.example` | Starry HBBS plus HBBR on one server; recommended starting point |
+| Centre | `examples/center/compose.yaml`, `examples/center/.env.example` | One HBBS centre with its local HBBR and remote Relay nodes |
+| Relay-only node | `examples/relay/compose.yaml`, `examples/relay/.env.example` | One remote HBBR |
+| Control Agent | `examples/control-agent/compose.yaml`, `examples/control-agent/.env.example` | HBBS, HBBR, and the optional private management sidecar |
+
+Every supplied HBBR service uses the **same pinned Starry image tag** as HBBS.
+The HBBR binary is unmodified upstream code built from the release's pinned
+RustDesk Server revision. Do not substitute a separately updated official
+image in these examples.
+
+## Single-host service layout
 
 ```text
-RustDesk clients
-    │
-    ├── 21116 TCP/UDP ──> Starry HBBS
-    │                        │
-    │                        └── selects an HBBR
-    │
-    └── 21117 TCP ─────> official HBBR
+Internet
+  ├─ 21115/TCP ───────────────> HBBS NAT test
+  ├─ 21116/TCP+UDP ───────────> Starry HBBS
+  ├─ 21117/TCP ───────────────> bundled, unmodified HBBR
+  └─ 443/TCP ──> Nginx
+                   ├─ /ws/id ─────> 127.0.0.1:21118 (HBBS)
+                   └─ /ws/relay ──> 127.0.0.1:21119 (HBBR)
 
-Shared persistent directory: identity, database, logs, Starry config, MMDB
+Host data directory ──────────> /root in both containers
 ```
 
-The sample runs both services on one Linux host using host networking. HBBR is
-official and unmodified.
+The examples use host networking. This preserves the client addresses needed
+by Geo rules and exposes the RustDesk listeners directly on the Linux host.
+They are not Docker Desktop examples.
 
-## Files
+## Persistence contract
 
-- [`examples/compose.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/compose.yaml)
-- [`examples/.env.example`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/.env.example)
-- [`config/config.minimal.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.minimal.yaml)
-- [`examples/nginx/center.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/center.example.conf), only when HBBS WSS is used
-- [`examples/nginx/api.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/api.example.conf), only when the optional API is used
+Mount one durable host directory at `/root` in both HBBS and HBBR. Back up the
+directory as one unit before upgrades.
 
-## Prepare
+| Path below `/root` | Meaning | Required action |
+| --- | --- | --- |
+| `id_ed25519` | Server private identity | Keep secret; never copy to clients or Relay-only nodes |
+| `id_ed25519.pub` | Client/server public key | Back up; distribute its one-line value to clients and Relay-only nodes |
+| `db_v2.sqlite3` | RustDesk server state | Back up consistently |
+| `starry/config.yaml` | Active Starry configuration candidate | Version privately and validate every change |
+| `starry/config.example.yaml` | Generated local reference | Reference only; do not assume it is active |
+| `mmdb/*.mmdb` | Operator-provided Geo databases | Keep current and respect the data licence |
 
-Create a dedicated directory and copy the files:
+Container replacement must not create a new identity accidentally. If
+`id_ed25519` disappears, stop and restore the data directory before clients
+are reconfigured.
 
-```sh
-sudo install -d -m 0750 -o "$(id -u)" -g "$(id -g)" \
-  /opt/rustdesk-server-starry/data
-cd /opt/rustdesk-server-starry
+## Required and recommended settings
 
-cp /path/to/repository/examples/compose.yaml .
-cp /path/to/repository/examples/.env.example .env
-```
+In `.env`:
 
-Review the exact images in `.env`. The provided values match
-`1.1.16-patch-v1.2.0` to official HBBR `1.1.16`.
+| Setting | Requirement |
+| --- | --- |
+| `STARRY_IMAGE` | Required; keep the GHCR image unless using a verified private mirror |
+| `STARRY_VERSION` | Required; pin an exact release, not `latest`, in production |
+| `STARRY_DATA_DIR` or `STARRY_PERSIST_ROOT` | Required; use a dedicated, backed-up absolute host path |
+| `RUSTDESK_LOG_LEVEL` | Keep `info`; use `debug` only temporarily |
 
-## Static validation
+For a complete single host, begin with
+[`config/config.single-host.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.single-host.yaml).
+Replace the example hostname and keep these commissioning defaults:
+
+- `secure_tcp.mode: auto`;
+- `geo.enabled: false` until the required MMDB files exist;
+- `websocket_signal.enabled: false` until TLS and both proxy paths work; and
+- `connection_auth.mode: off` until a compatible token issuer is deployed and
+  audited.
+
+The configuration parser rejects unknown fields and invalid dependencies as a
+whole candidate. Check HBBS logs after every restart or managed activation.
+
+## Start or update the stack
 
 ```sh
 docker compose --env-file .env -f compose.yaml config
 docker compose --env-file .env -f compose.yaml config --quiet
-```
-
-The first command lets you inspect the merged configuration. Confirm:
-
-- the intended image tags;
-- the absolute or expected relative data path;
-- exactly one HBBS and one HBBR;
-- host networking; and
-- no real secret or unintended environment variable is injected.
-
-## First start and identity
-
-```sh
 docker compose --env-file .env -f compose.yaml pull
 docker compose --env-file .env -f compose.yaml up -d
 docker compose --env-file .env -f compose.yaml ps
-docker compose --env-file .env -f compose.yaml logs --tail 100 hbbs hbbr
+docker compose --env-file .env -f compose.yaml logs --tail 120 hbbs hbbr
 ```
 
-Confirm `data/id_ed25519` and `data/id_ed25519.pub` are non-empty. The private
-file stays on this centre. Store a protected backup before client rollout.
-
-The HBBS health check validates local process reachability and key files only.
-It does not validate external routing or a desktop session.
-
-## Configure Starry
-
-For the first connection, copy the minimal template to the generated functional
-path:
+Confirm that HBBS and HBBR resolved to the same image:
 
 ```sh
-cp /path/to/repository/config/config.minimal.yaml \
-  data/starry/config.yaml
-
-docker exec rustdesk-starry-hbbs sh -c \
-  "test -s /starry/config.yaml"
-docker compose --env-file .env -f compose.yaml restart hbbs
+docker inspect rustdesk-starry-hbbs --format '{{.Config.Image}}'
+docker inspect rustdesk-hbbr --format '{{.Config.Image}}'
 ```
 
-Then add Geo and WebSocket in separate changes. See
-[Configuration Reference](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Configuration-Reference).
+Static Compose validation and a running status are partial checks. Complete a
+real native session and a real Relay session before declaring the deployment
+usable.
 
-## Firewall
+## Firewall and reverse proxy
 
-For native RustDesk, permit inbound `21116/TCP`, `21116/UDP`, and `21117/TCP`.
-Follow the official RustDesk guidance for `21115/TCP` NAT testing. Do not create
-a public HTTP endpoint for the loopback management commands.
+Open `21115/TCP`, `21116/TCP`, `21116/UDP`, and `21117/TCP` for normal native
+operation. Open `80/TCP` for certificate issuance/redirect and `443/TCP` when
+WSS is used. Do not expose `21118/TCP` or `21119/TCP`; only the local trusted
+Nginx process should reach them. Keep optional Control Agent `21120/TCP` on
+loopback or a private management network.
 
-When WSS is enabled:
+The complete single-host Nginx files are:
 
-- expose `443/TCP` through Nginx;
-- keep `21118/TCP` and `21119/TCP` reachable only from the local or explicitly
-  trusted proxy network; and
-- retain native ports if clients may switch WebSocket off.
+- `examples/nginx/single-host.bootstrap.conf` for initial certificate setup;
+- `examples/nginx/single-host.example.conf` for `/ws/id` and `/ws/relay` after
+  the certificate exists.
 
-## Client setup
+See [Reverse Proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS)
+for separate centre/Relay hosts and verification rules.
 
-Configure both endpoints with the centre ID Server and the exact
-`data/id_ed25519.pub` value. Leave Relay Server empty. Leave API and WebSocket
-off for the first native test.
+## API services
 
-See [Client Configuration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Client-Configuration).
+No account/API server is included in the image or Compose examples. Compatible
+third-party APIs may be deployed separately; the recommended implementation is
+[`q1ngyang/rustdesk-api-kessoku`](https://github.com/q1ngyang/rustdesk-api-kessoku).
+Read [Account/API Integration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/API-Integration)
+before adding it. The joint-deployment tutorial link will be added when that
+Kessoku Wiki page is ready.
 
-## Verification
+## Change and rollback procedure
 
-Complete all of these, not just `docker compose ps`:
+1. Back up the data directory, `.env`, Compose file, Starry configuration, and
+   TLS material.
+2. Change one layer at a time: image, Starry configuration, proxy, or API.
+3. Run static validation before recreation.
+4. Inspect HBBS/HBBR logs and confirm the accepted configuration.
+5. Repeat native, forced-Relay, Geo, and WSS tests for every enabled path.
+6. If acceptance fails, restore the previous pinned image and configuration
+   without deleting the persistent data.
 
-1. HBBS and HBBR logs have no startup error.
-2. Both clients register with the self-hosted ID Server.
-3. A native control request and desktop session work.
-4. A Relay session is exercised when HBBR is part of the acceptance scope.
-5. Secure TCP is tested after API login when an API is deployed.
-6. Geo decisions are previewed and then verified in a real Relay session.
-7. WSS-to-WSS and both mixed directions are tested when WSS is enabled.
-
-Use the commands and evidence rules in
-[Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification).
-
-## Back up and upgrade
-
-Back up the entire data directory before changing the image. Pin the current
-tag/digest, read both upstream and Starry release notes, pull the target, run
-static validation, recreate, and repeat real-client acceptance. Keep the old
-image and configuration until verification finishes.
-
-See [Upgrade and Rollback](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback).
+Use [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification)
+and [Upgrade and Rollback](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback)
+for the full acceptance and recovery checklists.

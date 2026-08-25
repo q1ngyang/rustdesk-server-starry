@@ -10,7 +10,7 @@ HBBS and HBBR continue to listen on plain private backend ports.
 | Public path | Backend | Purpose |
 | --- | --- | --- |
 | `wss://id.example.com/ws/id` | Starry HBBS `127.0.0.1:21118` | Persistent identity registration and signalling. |
-| `wss://relay-1.example.com/ws/relay` | Official HBBR `127.0.0.1:21119` | Relay data for that exact node. |
+| `wss://relay-1.example.com/ws/relay` | Starry-image HBBR `127.0.0.1:21119` | Relay data for that exact node. |
 | `https://api.example.com/` | Optional API `127.0.0.1:12345` | Independent account/admin API. |
 
 Do not rewrite `/ws/id` to `/ws/relay` or combine all Relay names behind one
@@ -19,6 +19,8 @@ HBBS allocates.
 
 ## Reference configurations
 
+- Complete single-host bootstrap: [`single-host.bootstrap.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/single-host.bootstrap.conf)
+- Complete single-host HBBS + HBBR WSS: [`single-host.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/single-host.example.conf)
 - Complete centre WSS server: [`center.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/center.example.conf)
 - Complete Relay WSS server: [`relay.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/relay.example.conf)
 - Complete optional API server: [`api.example.conf`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/nginx/api.example.conf)
@@ -26,6 +28,10 @@ HBBS allocates.
 
 Replace every example name and certificate path. Do not copy an existing site
 configuration without first checking for duplicate `location` blocks.
+
+The API file is a generic placeholder, not a Kessoku proxy contract. Follow
+the [Kessoku Wiki](https://github.com/q1ngyang/rustdesk-api-kessoku/wiki) for
+its public/internal listeners and trust boundary.
 
 ## Centre `/ws/id`
 

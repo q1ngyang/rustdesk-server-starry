@@ -1,11 +1,12 @@
-# Relay-only node. Starry does not modify HBBR; use the official image.
+# Relay-only node. Run the unmodified HBBR bundled in the exact Starry release
+# image used by the centre so upstream and protocol versions cannot drift.
 # Copy the centre public key into RUSTDESK_PUBLIC_KEY. Never copy id_ed25519.
 
 name: ${RELAY_COMPOSE_PROJECT_NAME:-rustdesk-relay}
 
 services:
   hbbr:
-    image: ${RUSTDESK_SERVER_IMAGE:-rustdesk/rustdesk-server}:${RUSTDESK_SERVER_VERSION:-1.1.16}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.0}
     container_name: ${RELAY_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
     command:
       - hbbr

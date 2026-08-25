@@ -922,7 +922,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-only
-            org.opencontainers.image.description=patch-v1.2.0 Starry HBBS with strict connection JWT authentication, last-known-good configuration, Relay simulation, persistent WebSocket Signal, and an optional mTLS Control Agent; Docker Compose is recommended and bundled HBBR remains unmodified
+            org.opencontainers.image.description=patch-v1.2.0 Starry HBBS with connection authentication, safe configuration activation, Relay simulation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles unmodified HBBR, while account/API services and MMDB data are not included
           annotations: |
             index:org.opencontainers.image.title=rustdesk-server-starry
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -931,7 +931,7 @@ jobs:
             index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             index:org.opencontainers.image.revision=${{ github.sha }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-            index:org.opencontainers.image.description=patch-v1.2.0 Starry HBBS with strict connection JWT authentication, last-known-good configuration, Relay simulation, persistent WebSocket Signal, and an optional mTLS Control Agent; Docker Compose is recommended and bundled HBBR remains unmodified
+            index:org.opencontainers.image.description=patch-v1.2.0 Starry HBBS with connection authentication, safe configuration activation, Relay simulation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles unmodified HBBR, while account/API services and MMDB data are not included
 
       - name: Publish GitHub release assets
         env:

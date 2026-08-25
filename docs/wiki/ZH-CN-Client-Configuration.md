@@ -11,22 +11,23 @@
 | 客户端字段 | 值 |
 | --- | --- |
 | ID Server | 公网 HBBS 域名，例如 `id.example.com`；非默认端口时显式写 `:21116`。 |
-| Key | 中心 `id_ed25519.pub` 的完整单行内容；不是 API Token 或许可证 Key。 |
-| Relay Server | 由 Starry HBBS 动态分配 Geo Relay 时保持为空。 |
+| Key | 中心 `id_ed25519.pub` 的完整单行内容；不是 API 访问令牌或许可证密钥。 |
+| Relay Server | 由 Starry HBBS 动态分配中继服务器时保持为空。 |
 | API Server | 只在部署独立 API 时填写，例如 `https://api.example.com`。 |
 | 使用 WebSocket | 默认关闭；仅在该客户端网络需要 WSS 时逐端开启。 |
 
 [官方 RustDesk 客户端配置说明](https://rustdesk.com/docs/en/self-host/client-configuration/)
 同样区分 ID、Relay、API 与公钥字段；Starry 不改变其含义。
 
-原生客户端需要同时可达 `21116/TCP` 和 `21116/UDP`。官方 1.1.16 服务端的被控端注册与
-心跳走 UDP，控制端发起远控仍走 TCP/Secure TCP；`disable-udp` 不会把被控端注册改成
-TCP-only。必须禁用 UDP 的被控端应启用 WSS，并完整部署 `/ws/id` 与 `/ws/relay`。
+原生客户端需要同时访问 `21116/TCP` 和 `21116/UDP`。RustDesk Server 1.1.16 的被控端
+注册与心跳使用 UDP，控制端发起远控仍使用 TCP/安全 TCP；`disable-udp` 不会让被控端
+注册改为只使用 TCP。必须禁用 UDP 的被控端应启用 WSS，并完整部署 `/ws/id` 与
+`/ws/relay`。
 
-## 为什么 Relay Server 要留空
+## 为什么“中继服务器”要留空
 
-非空静态 Relay 字段会让客户端使用该地址，并可能绕过 HBBS 返回的动态 Relay。要验证
-Starry 规则和故障切换，应保持为空。
+填写固定中继地址会让客户端优先使用该地址，并可能绕过 HBBS 动态返回的结果。要验证
+Starry 的选择规则和故障切换，应保持为空。
 
 若排障时临时填写 Relay，验证 Geo 分配前必须删除。
 
@@ -44,14 +45,18 @@ Starry 规则和故障切换，应保持为空。
 
 ## API 登录
 
-基础自建远程控制不强制 API，Starry 也不提供 API。使用 API 时：
+基础自建远程控制不强制使用 API，Starry 也不包含 API。可以搭配兼容的第三方 API；
+推荐同一开发者维护的
+[`q1ngyang/rustdesk-api-kessoku`](https://github.com/q1ngyang/rustdesk-api-kessoku)。
+使用 API 时：
 
 1. 独立验证 HTTPS API 状态与登录；
 2. 确认 API 暴露的 HBBS 公钥和 ID Server 与客户端预期相同；
 3. Relay Server 留空以便 Geo 分配；
 4. 登录后重复远程控制，因为认证客户端可能在打洞或 Relay 前先在 `21116/TCP` 协商 Secure TCP。
 
-API 登录成功不能证明 Secure TCP、HBBR 或桌面数据链路正常。
+API 登录成功不能证明安全 TCP、HBBR 或桌面数据链路正常。接入账户或连接令牌前，请先
+阅读[账户与 API 服务接入](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-API-Integration)。
 
 ## 第一组验收客户端
 

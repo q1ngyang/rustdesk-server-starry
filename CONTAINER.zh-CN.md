@@ -8,25 +8,28 @@
 部署入口：
 
 - [GHCR 镜像页面](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)
+- [零基础单机部署教程](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Getting-Started)
 - [推荐 Docker 部署指南](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Docker-Deployment)
-- [单机 Compose 范例](https://github.com/q1ngyang/rustdesk-server-starry/blob/1.1.16-patch-v1.2.0/examples/compose.yaml)
-- [Control Agent sidecar 范例](https://github.com/q1ngyang/rustdesk-server-starry/blob/1.1.16-patch-v1.2.0/examples/control-agent/compose.yaml)
+- [单机编排示例](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/compose.yaml)
+- [管理代理编排示例](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/control-agent/compose.yaml)
 
 ## 镜像包含什么
 
 patch-v1.2.0 发布镜像以 `linux/amd64` 为正式构建和运行验收平台，由一个锁定的官方
-RustDesk Server 版本加 Starry HBBS overlay 构建。ARM 仅保留尽力的源码兼容，不属于
+RustDesk Server 版本加 Starry HBBS 扩展层构建。ARM 仅尽力保持源码兼容，不属于
 v1.2.0 承诺的镜像平台。
 
 | 命令 | 来源 | 用途 |
 | --- | --- | --- |
-| `hbbs` | 官方 HBBS 加 Starry overlay | ID、会合、信令、Secure TCP、Geo Relay 选择和可选 WebSocket Signal。 |
-| `hbbr` | 未修改的上游 HBBR | 从相同上游版本构建的便捷副本。推荐示例使用官方 RustDesk Server 镜像运行 HBBR，使组件边界保持清晰。 |
+| `hbbs` | 官方 HBBS 加 Starry 扩展层 | ID 注册、会合、信令、安全 TCP、按地理位置选择中继服务器和可选 WebSocket 信令。 |
+| `hbbr` | 未修改的上游 HBBR | 与 HBBS 从同一锁定上游版本构建。所有示例都从同一 Starry 镜像版本运行它，防止版本不一致。 |
 | `rustdesk-utils` | 未修改的上游工具 | 密钥和数据库维护工具。 |
-| `starry-control-agent` | Starry 可选 Linux 管理组件 | 面向一个本机 HBBS 的固定 Control API；强制 mTLS 与细粒度 service JWT，配置写入默认关闭。 |
+| `starry-control-agent` | Starry 可选 Linux 管理组件 | 管理一台本机 HBBS 的固定接口；强制使用 mTLS 与按权限划分的服务令牌，默认禁止写入配置。 |
 
-镜像**不包含**账户/API 服务，也不包含任何 GeoLite2/MMDB 数据库；Control Agent 不是
-账户 API。请独立选择这些组件、审查其许可证，并将秘密保留在镜像之外。
+镜像**不包含**账户/API 服务，也不包含任何 GeoLite2/MMDB 数据库；管理代理不是账户
+API。可以另行部署兼容的第三方 API，推荐
+[`q1ngyang/rustdesk-api-kessoku`](https://github.com/q1ngyang/rustdesk-api-kessoku)。
+请审查各组件许可证，并将秘密保留在镜像之外。
 
 ## 选择标签
 
@@ -43,7 +46,7 @@ v1.2.0 承诺的镜像平台。
 ```
 
 - 日常生产部署使用不可变版本标签。
-- 必须完全锁定 manifest 时使用镜像 digest。
+- 必须完全锁定镜像内容时使用镜像摘要。
 - `latest` 跟随最近一次成功发布的 Starry 版本，仅适合评估，或已建立自动更新与
   回滚流程的运维者。
 
@@ -53,7 +56,7 @@ v1.2.0 承诺的镜像平台。
 docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
 ```
 
-公开 GHCR 镜像可匿名拉取。上线前检查实际 digest 和平台：
+公开 GHCR 镜像可匿名拉取。上线前检查实际镜像摘要和平台：
 
 ```sh
 docker image inspect \
@@ -69,7 +72,7 @@ docker buildx imagetools inspect \
 仓库的 [`examples/compose.yaml`](examples/compose.yaml) 会启动：
 
 - 本镜像中的 Starry HBBS；
-- 与上游版本匹配、未经修改的官方 HBBR。
+- **同一个固定版本 Starry 镜像**中的未经修改 HBBR。
 
 在 Linux Docker 主机上执行：
 
@@ -77,12 +80,14 @@ docker buildx imagetools inspect \
 mkdir -p /opt/rustdesk-server-starry
 cd /opt/rustdesk-server-starry
 
-curl -fsSLO \
-  https://github.com/q1ngyang/rustdesk-server-starry/releases/latest/download/compose.yaml
+curl -fsSLo compose.yaml \
+  https://raw.githubusercontent.com/q1ngyang/rustdesk-server-starry/main/examples/compose.yaml
 curl -fsSLo .env \
-  https://github.com/q1ngyang/rustdesk-server-starry/releases/latest/download/compose.env.example
+  https://raw.githubusercontent.com/q1ngyang/rustdesk-server-starry/main/examples/.env.example
 
-mkdir -p data
+mkdir -p data/starry
+curl -fsSLo data/starry/config.yaml \
+  https://raw.githubusercontent.com/q1ngyang/rustdesk-server-starry/main/config/config.single-host.yaml
 docker compose --env-file .env -f compose.yaml config --quiet
 docker compose --env-file .env -f compose.yaml up -d
 ```
@@ -128,12 +133,12 @@ data/
 | 端口 | 协议 | 进程 | 用途 |
 | --- | --- | --- | --- |
 | `21115` | TCP | HBBS | NAT 测试和仅限回环地址的管理命令；不要公开代理管理入口。 |
-| `21116` | TCP | HBBS | 原生信令、打洞协调与 Secure TCP。 |
+| `21116` | TCP | HBBS | 原生信令、打洞协调与安全 TCP。 |
 | `21116` | UDP | HBBS | 注册与心跳。 |
-| `21117` | TCP | HBBR | 原生 Relay 数据。 |
+| `21117` | TCP | HBBR | 原生中继数据。 |
 | `21118` | TCP | HBBS | `/ws/id` 明文 WebSocket 后端；只允许可信反向代理访问。 |
 | `21119` | TCP | HBBR | `/ws/relay` 明文 WebSocket 后端；只允许可信反向代理访问。 |
-| `21120` | TCP | 可选 Control Agent | 私有 mTLS 管理 API；镜像 metadata 和普通 Compose 示例不暴露该端口，只允许 loopback/私有管理网络。 |
+| `21120` | TCP | 可选管理代理 | 私有 mTLS 管理接口；普通编排示例不对外发布该端口，只允许本机或私有管理网络访问。 |
 | `443` | TCP | Nginx | 使用 WebSocket 或 HTTPS API 时的公网 TLS/WSS 入口。 |
 
 只开放部署所需入口。WebSocket 客户端必须同时具备证书有效的 `/ws/id` 和
@@ -147,27 +152,28 @@ data/
 vi data/starry/config.yaml
 ```
 
-首次配置建议重启 HBBS；后续受管变更使用 Control Agent 的 plan/apply 或 runtime reload：
+首次配置建议重启 HBBS；后续受管理的变更使用管理代理先预览再应用，或执行运行时重新加载：
 
 ```sh
 docker restart rustdesk-starry-hbbs
 ```
 
-若 reload 返回错误，整份 candidate 都不会生效，HBBS 保留此前 last-known-good
-generation。若从未加载有效 generation，HBBS 保持上游兼容行为。恢复或修正文件后再次
-加载，并要求 generation/digest/subsystem ack 一致；进程仍运行不代表 candidate 已激活。
+如果重新加载返回错误，整份待加载配置都不会生效，HBBS 会保留最近一次有效配置。若
+从未加载过有效配置，HBBS 保持上游兼容行为。恢复或修正文件后应再次加载，并确认配置
+代次、内容摘要和各子系统结果一致；进程仍在运行不代表新配置已经启用。
 
 可从以下模板开始：
 
-- [`config/config.minimal.yaml`](config/config.minimal.yaml)：仅启用 Secure TCP；
-- [`config/config.geo-basic.yaml`](config/config.geo-basic.yaml)：按国家有序选择 Relay；
+- [`config/config.single-host.yaml`](config/config.single-host.yaml)：单机完整接入配置；
+- [`config/config.minimal.yaml`](config/config.minimal.yaml)：仅启用安全 TCP；
+- [`config/config.geo-basic.yaml`](config/config.geo-basic.yaml)：按国家依次选择中继服务器；
 - [`config/config.geo-advanced.yaml`](config/config.geo-advanced.yaml)：嵌套城市/ASN/ISP 规则；
-- [`config/config.websocket.yaml`](config/config.websocket.yaml)：schema v2 WebSocket Signal 与证书验证的 Relay 健康检查；
-- [`config/config.auth-audit.yaml`](config/config.auth-audit.yaml)：schema v3 连接认证 audit canary。
+- [`config/config.websocket.yaml`](config/config.websocket.yaml)：配置结构版本 2 的 WebSocket 信令和中继健康检查；
+- [`config/config.auth-audit.yaml`](config/config.auth-audit.yaml)：配置结构版本 3 的连接认证审计示例。
 
-可选 Control Agent 使用独立的 [`Compose 示例`](examples/control-agent/compose.yaml)与
+可选管理代理使用独立的 [`Compose 示例`](examples/control-agent/compose.yaml)与
 [`运维指南`](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)。
-请从只读模式接入，绝不能在公网 RustDesk 端口发布 Agent listener 或 HBBS local control。
+请先按只读模式接入，绝不能通过公网 RustDesk 端口开放管理代理或 HBBS 本地管理通道。
 
 ## 不使用 Compose 执行命令
 
@@ -193,7 +199,7 @@ docker run -d \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
-单机部署使用同一持久目录启动官方 HBBR：
+单机部署使用同一持久目录，从同一固定版本的 Starry 镜像启动未经修改的 HBBR：
 
 ```sh
 docker run -d \
@@ -201,7 +207,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  rustdesk/rustdesk-server:1.1.16 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   hbbr -k _
 ```
 
@@ -238,16 +244,16 @@ WSS↔WSS 和两个方向的 WSS↔原生测试。详见
 
 ## 升级与回滚
 
-1. 在 `.env` 中记录当前运行标签或 digest。
+1. 在 `.env` 中记录当前运行标签或镜像摘要。
 2. 备份完整数据目录，尤其是 `id_ed25519`、`id_ed25519.pub`、数据库与 `starry/config.yaml`。
 3. 阅读目标版本说明与配置迁移要求。
 4. 拉取目标镜像并执行 `docker compose config --quiet`。
 5. 重建服务、检查日志、执行管理命令并完成真实客户端会话。
 6. 验收完成前保留旧镜像和备份。
 
-从 patch-v1.2.0 回滚到 patch-v1.1.0 时，必须先恢复 schema `version: 2`（或更早）
-配置；patch-v1.1.0 不理解 schema v3。回滚到更早版本时也必须恢复该版本支持的 schema，
-不能依赖 validation fallback。
+从 patch-v1.2.0 回滚到 patch-v1.1.0 时，必须先恢复配置结构 `version: 2`（或更早）；
+patch-v1.1.0 不支持 `version: 3`。回滚到更早版本时也必须恢复该版本支持的配置结构，
+不能依赖校验失败后的兼容行为。
 
 不要通过覆盖不可变版本标签来实施升级。
 
@@ -257,9 +263,9 @@ WSS↔WSS 和两个方向的 WSS↔原生测试。详见
 | --- | --- |
 | `config.yaml` 一直为空 | 首次启动为空是正常现象，请从生成的示例复制所需部分。 |
 | 修改 YAML 后 Starry 功能消失 | 查看 HBBS 启动/重载错误；一个未知或无效字段会拒绝整份 Starry 配置。 |
-| `test-geo` 返回 `""` | 检查 `relay_servers`、官方 HBBS Relay 在线状态、MMDB 可用性与规则内 Relay 名称。 |
-| 原生正常但 WSS 失败 | 同时检查两条精确 Nginx 路径、证书域名、`trusted_proxies`、endpoint 覆盖与 `websocket-status`。 |
-| API 登录成功但控制超时 | 将 API 登录与 HBBS Secure TCP 分层处理，检查 `21116/TCP`、HBBS 公钥和 `secure_tcp.mode`。 |
+| `test-geo` 返回 `""` | 检查 `relay_servers`、HBBS 记录的中继在线状态、MMDB 可用性和规则内中继名称。 |
+| 原生连接正常但 WSS 失败 | 同时检查两条 Nginx 精确路径、证书域名、`trusted_proxies`、健康检查地址覆盖和 `websocket-status`。 |
+| API 登录成功但控制超时 | 分别排查 API 登录和 HBBS 安全 TCP，检查 `21116/TCP`、HBBS 公钥和 `secure_tcp.mode`。 |
 | 容器健康但桌面控制失败 | 进程和端口检查不是协议会话；对齐同一次连接的两端客户端与服务器日志。 |
 
 按症状排查见
@@ -267,6 +273,6 @@ WSS↔WSS 和两个方向的 WSS↔原生测试。详见
 
 ## 许可证与声明
 
-镜像按 AGPL-3.0 发布，由锁定的官方 RustDesk Server 源码加 Starry overlay
+镜像按 AGPL-3.0 发布，由锁定的官方 RustDesk Server 源码加 Starry 扩展层
 构建。这是非官方社区镜像，不包含 GeoLite2 数据库。部分代码和文档使用 AI 辅助
 生成或修订，不附带任何额外保证。

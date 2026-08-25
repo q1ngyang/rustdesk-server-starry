@@ -13,7 +13,7 @@ RustDesk 客户端
   |-- API HTTPS --------------------> 可选第三方 API
   |-- 原生 21116 或 WSS /ws/id ----> Starry HBBS
   |                                     | 选择一台 Relay
-  |-- P2P、原生 21117 或 /ws/relay --> 官方 HBBR
+  |-- P2P、原生 21117 或 /ws/relay --> 发布物中未经修改的 HBBR
 ```
 
 | 组件 | Starry 是否修改 | 状态/职责 |
@@ -121,7 +121,7 @@ Rust 工具链要求同样适用。Overlay 锚点失败表示需要审查上游�
 - 两次应用 overlay 的幂等性及依赖锁定检查；
 - Rust 格式、全部库测试和服务端二进制检查；
 - 真实进程 WSS 注册与跨传输信令测试；
-- 通过未修改官方 HBBR 的 WebSocket/原生混合流量测试；
+- 通过发布物中未经修改 HBBR 的 WebSocket/原生混合流量测试；
 - Linux `amd64` 静态构建；
 - 在 digest 固定的 Debian 测试镜像中完成 amd64 Debian 包安装和命令级 runtime 检查；
 - `linux/amd64` 容器冒烟测试；
@@ -145,9 +145,9 @@ GHCR 镜像为方便包含 `hbbs`、`hbbr` 和 `rustdesk-utils`，默认命令�
 hbbs --starry-config=/root/starry/config.yaml
 ```
 
-推荐 Compose 有意只让 Starry 镜像运行 HBBS，并让官方 RustDesk Server 镜像运行
-HBBR，从部署层清晰显示修改边界。Starry 镜像可以运行其中附带的未修改 `hbbr`，但
-这不会使 HBBR 成为 Starry fork。
+推荐编排文件让 HBBS 与 HBBR 使用同一个固定版本的 Starry 镜像，防止两个镜像分别
+更新。命令仍清楚区分修改范围：`hbbs` 包含 Starry 扩展，镜像内的 `hbbr` 保持上游
+代码不变。
 
 Release checksum 覆盖可下载文件。可移植 Sigstore bundle 与 GitHub artifact
 attestation 将下载对象绑定到 build/SBOM assertion；镜像摘要、OCI provenance 和 OCI

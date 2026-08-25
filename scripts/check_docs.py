@@ -124,6 +124,7 @@ def main() -> int:
         ROOT / "README.zh-CN.md",
         ROOT / "examples/.env.example",
         ROOT / "examples/center/.env.example",
+        ROOT / "examples/relay/.env.example",
         ROOT / "examples/control-agent/.env.example",
     ):
         if f"patch-v{patch_version}" not in path.read_text(encoding="utf-8"):
@@ -154,6 +155,40 @@ def main() -> int:
     for deprecated in ("source: ./data/", "source: ./secrets"):
         if deprecated in control_compose:
             errors.append(f"Control Agent Compose retains split host path: {deprecated}")
+
+    # Docker examples intentionally use one exact Starry release for both HBBS
+    # and its bundled, unmodified HBBR. A separate official image can drift
+    # independently and recreate the compatibility problem these examples
+    # are designed to avoid.
+    docker_examples = {
+        ROOT / "examples" / "compose.yaml": 2,
+        ROOT / "examples" / "center" / "compose.yaml": 2,
+        ROOT / "examples" / "relay" / "compose.yaml": 1,
+        ROOT / "examples" / "control-agent" / "compose.yaml": 3,
+    }
+    for compose, expected_starry_services in docker_examples.items():
+        text = compose.read_text(encoding="utf-8")
+        if "rustdesk/rustdesk-server" in text or "RUSTDESK_SERVER_IMAGE" in text:
+            errors.append(
+                f"Docker example uses a separately versioned official image: {compose.relative_to(ROOT)}"
+            )
+        if text.count("image: ${STARRY_IMAGE") != expected_starry_services:
+            errors.append(
+                "Docker example does not use one Starry release image for all "
+                f"services: {compose.relative_to(ROOT)}"
+            )
+
+    for env_example in (
+        ROOT / "examples" / ".env.example",
+        ROOT / "examples" / "center" / ".env.example",
+        ROOT / "examples" / "relay" / ".env.example",
+        ROOT / "examples" / "control-agent" / ".env.example",
+    ):
+        text = env_example.read_text(encoding="utf-8")
+        if "RUSTDESK_SERVER_IMAGE" in text or "RUSTDESK_SERVER_VERSION" in text:
+            errors.append(
+                f"Environment example retains a separate HBBR image: {env_example.relative_to(ROOT)}"
+            )
 
     if errors:
         for error in errors:

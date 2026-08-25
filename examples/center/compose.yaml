@@ -1,10 +1,10 @@
 # Complete Starry data-plane reference centre:
-#   Starry HBBS + unmodified official HBBR.
+#   Starry HBBS + the unmodified HBBR bundled in the same Starry image tag.
 #
 # Account and management APIs are a separate trust boundary. Deploy the
-# version-matched Kessoku v2.8.0 candidate from its own immutable Docker
-# release input; this Starry file intentionally does not execute a mutable or
-# third-party API image and does not carry a bootstrap administrator secret.
+# recommended Kessoku release from its own immutable Docker input and follow
+# the Kessoku Wiki. This Starry file intentionally does not execute an API
+# image and does not carry a bootstrap administrator secret.
 
 name: ${CENTER_COMPOSE_PROJECT_NAME:-rustdesk-center}
 
@@ -42,7 +42,7 @@ services:
         max-file: "5"
 
   hbbr:
-    image: ${RUSTDESK_SERVER_IMAGE:-rustdesk/rustdesk-server}:${RUSTDESK_SERVER_VERSION:-1.1.16}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.0}
     container_name: ${CENTER_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
     command:
       - hbbr

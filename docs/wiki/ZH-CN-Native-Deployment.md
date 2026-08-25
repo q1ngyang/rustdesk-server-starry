@@ -145,7 +145,7 @@ Windows 上由操作员修改配置后请重启服务。旧文本管理协议已
 安装方式不会改变后端端口和路径：
 
 - HBBS `/ws/id` 后端：`21118/TCP`
-- 官方 HBBR `/ws/relay` 后端：`21119/TCP`
+- 发布物中未经修改的 HBBR `/ws/relay` 后端：`21119/TCP`
 - 可选社区 API：其独立配置的 HTTP 端口
 
 参见[反向代理与 TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Reverse-Proxy-and-TLS)，

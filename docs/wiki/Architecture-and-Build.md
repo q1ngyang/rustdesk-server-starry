@@ -13,7 +13,7 @@ RustDesk client
   |-- API HTTPS --------------------> optional third-party API
   |-- native 21116 or WSS /ws/id ---> Starry HBBS
   |                                     | selects one Relay
-  |-- P2P, native 21117, or /ws/relay -> official HBBR
+  |-- P2P, native 21117, or /ws/relay -> bundled unmodified HBBR
 ```
 
 | Component | Starry change | State/role |
@@ -136,7 +136,7 @@ The workflow resolves the official ref and constructs
 - twice-applied overlay/idempotency and dependency-lock checks;
 - Rust formatting, all library tests, and all server-binary checks;
 - real-process WSS registration and cross-transport signalling tests;
-- mixed WebSocket/native traffic through unmodified official HBBR;
+- mixed WebSocket/native traffic through the bundled unmodified HBBR;
 - static Linux `amd64` builds;
 - installation and command-level runtime checks for amd64 Debian packages
   under the digest-pinned Debian test image;
@@ -165,10 +165,10 @@ Its default command runs:
 hbbs --starry-config=/root/starry/config.yaml
 ```
 
-The recommended Compose file deliberately uses the Starry image only for HBBS
-and the official RustDesk Server image for HBBR. This makes the modification
-boundary visible. The Starry image can run its bundled unmodified `hbbr`, but
-doing so does not make HBBR a Starry fork.
+The recommended Compose files use one pinned Starry image tag for both HBBS
+and HBBR. This prevents independently updated images from drifting while the
+command boundary still makes the modification scope explicit: `hbbs` contains
+the overlay and bundled `hbbr` remains unmodified upstream code.
 
 Release checksums cover downloadable assets. Portable Sigstore bundles and
 GitHub artifact attestations bind the downloadable subjects to their build and

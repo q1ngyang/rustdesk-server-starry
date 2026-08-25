@@ -9,9 +9,10 @@ main [`README.md`](README.md).
 Deployment links:
 
 - [GHCR image page](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)
+- [Complete beginner walkthrough](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started)
 - [Recommended Docker deployment guide](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Docker-Deployment)
-- [Single-host Compose example](https://github.com/q1ngyang/rustdesk-server-starry/blob/1.1.16-patch-v1.2.0/examples/compose.yaml)
-- [Control Agent sidecar example](https://github.com/q1ngyang/rustdesk-server-starry/blob/1.1.16-patch-v1.2.0/examples/control-agent/compose.yaml)
+- [Single-host Compose example](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/compose.yaml)
+- [Control Agent sidecar example](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/control-agent/compose.yaml)
 
 ## What the image contains
 
@@ -23,14 +24,15 @@ image platform.
 | Command | Origin | Intended use |
 | --- | --- | --- |
 | `hbbs` | Official HBBS plus the Starry overlay | ID, rendezvous, signalling, Secure TCP, Geo Relay selection, and optional WebSocket Signal. |
-| `hbbr` | Unmodified upstream HBBR | Convenience copy built from the same upstream revision. The recommended examples use the official RustDesk Server image for HBBR so the component boundary stays visible. |
+| `hbbr` | Unmodified upstream HBBR | Built from the same pinned upstream revision as HBBS. All supplied examples use this copy from the same Starry image tag to prevent version drift. |
 | `rustdesk-utils` | Unmodified upstream utility | Key and database maintenance utilities. |
 | `starry-control-agent` | Starry optional Linux management component | Fixed Control API for one local HBBS. It requires mTLS and scoped service JWTs and starts with configuration writes disabled. |
 
 The image does **not** contain an account/API server or any GeoLite2/MMDB
-database. The Control Agent is not an account API. Select those independent
-components separately, review their licences, and keep secrets outside the
-image.
+database. The Control Agent is not an account API. Compatible third-party APIs
+can be deployed separately; the recommended integration is
+[`q1ngyang/rustdesk-api-kessoku`](https://github.com/q1ngyang/rustdesk-api-kessoku).
+Review each component's licence and keep secrets outside the image.
 
 ## Choose a tag
 
@@ -75,7 +77,7 @@ docker buildx imagetools inspect \
 The repository's [`examples/compose.yaml`](examples/compose.yaml) starts:
 
 - Starry HBBS from this image; and
-- unmodified official HBBR from the matching official server release.
+- the unmodified HBBR from the **same pinned Starry image tag**.
 
 On a Linux Docker host:
 
@@ -83,12 +85,14 @@ On a Linux Docker host:
 mkdir -p /opt/rustdesk-server-starry
 cd /opt/rustdesk-server-starry
 
-curl -fsSLO \
-  https://github.com/q1ngyang/rustdesk-server-starry/releases/latest/download/compose.yaml
+curl -fsSLo compose.yaml \
+  https://raw.githubusercontent.com/q1ngyang/rustdesk-server-starry/main/examples/compose.yaml
 curl -fsSLo .env \
-  https://github.com/q1ngyang/rustdesk-server-starry/releases/latest/download/compose.env.example
+  https://raw.githubusercontent.com/q1ngyang/rustdesk-server-starry/main/examples/.env.example
 
-mkdir -p data
+mkdir -p data/starry
+curl -fsSLo data/starry/config.yaml \
+  https://raw.githubusercontent.com/q1ngyang/rustdesk-server-starry/main/config/config.single-host.yaml
 docker compose --env-file .env -f compose.yaml config --quiet
 docker compose --env-file .env -f compose.yaml up -d
 ```
@@ -173,6 +177,8 @@ acknowledgements; process survival does not make an invalid candidate active.
 
 Use these starting points:
 
+- [`config/config.single-host.yaml`](config/config.single-host.yaml): complete
+  single-host commissioning profile;
 - [`config/config.minimal.yaml`](config/config.minimal.yaml): Secure TCP only;
 - [`config/config.geo-basic.yaml`](config/config.geo-basic.yaml): country-based
   ordered Relay selection;
@@ -214,7 +220,8 @@ docker run -d \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
-Start official HBBR with the same persistent directory on a single host:
+Start the bundled, unmodified HBBR from the same Starry image tag and with the
+same persistent directory on a single host:
 
 ```sh
 docker run -d \
@@ -222,7 +229,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  rustdesk/rustdesk-server:1.1.16 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
   hbbr -k _
 ```
 

@@ -78,7 +78,10 @@ services:
       - no-new-privileges:true
 
   hbbr:
-    image: ${RUSTDESK_SERVER_IMAGE}:${RUSTDESK_SERVER_VERSION}
+    # The Starry image includes the unmodified upstream HBBR built from the
+    # same pinned RustDesk Server revision. Using the same image tag for both
+    # services prevents independent HBBS/HBBR version drift.
+    image: ${STARRY_IMAGE}:${STARRY_VERSION}
     command: [hbbr, -k, _]
     environment:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}

@@ -14,9 +14,9 @@ Current description:
 
 Proposed default English description:
 
-> Unofficial HBBS overlay for RustDesk Server with ordered Geo Relay routing,
-> managed MMDB, Secure TCP, and optional WebSocket signalling. Use official
-> HBBR; API not included.
+> Unofficial RustDesk Server HBBS overlay with Geo Relay policy, managed MMDB,
+> Secure TCP, WebSocket signalling, connection authentication, and bundled
+> version-locked HBBR. API not included.
 
 Proposed website:
 
@@ -39,15 +39,16 @@ rust
 ```
 
 The description deliberately names HBBS, calls the project unofficial, and
-states the HBBR/API boundary within the limited About field.
+states that HBBR is bundled/version-locked while the account API is not.
 
 ## GHCR package metadata
 
 Proposed `linux/amd64` image description:
 
-> Starry HBBS overlay for official RustDesk Server with ordered Geo Relay
-> routing, Secure TCP, and optional WebSocket Signal; bundled HBBR is unmodified
-> and no API is included
+> Starry HBBS for RustDesk Server with Geo Relay policy, Secure TCP, WebSocket
+> signalling, connection authentication, and optional Control Agent; the same
+> image bundles unmodified HBBR, while account/API services and MMDB data are
+> not included
 
 The build workflow publishes OCI title, source, documentation, version,
 revision, licence, and description labels on the image. The documentation URL points directly to

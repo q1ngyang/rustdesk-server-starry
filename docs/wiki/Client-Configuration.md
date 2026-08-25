@@ -54,7 +54,9 @@ missing `/ws/id`, `/ws/relay`, or invalid certificate.
 ## API login
 
 An API is optional for base self-hosted control and is not supplied by Starry.
-When used:
+A compatible third-party API can be used; the recommended integration is
+[`q1ngyang/rustdesk-api-kessoku`](https://github.com/q1ngyang/rustdesk-api-kessoku).
+When an API is used:
 
 1. verify the HTTPS API status and login independently;
 2. confirm the API exposes the same HBBS public key and ID Server expected by
@@ -65,6 +67,9 @@ When used:
 
 Successful API login is not evidence that Secure TCP, HBBR, or the desktop data
 path works.
+
+See [Account/API Integration](https://github.com/q1ngyang/rustdesk-server-starry/wiki/API-Integration)
+before adding accounts or connection tokens.
 
 ## First acceptance pair
 
