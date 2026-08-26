@@ -1,5 +1,7 @@
 # RustDesk 1.4.9 controller-only compatibility trace
 
+**English** | [简体中文](client-compatibility.zh-CN.md)
+
 Pinned client source: `rustdesk/rustdesk@1.4.9`.
 
 | Flow | Client source behavior | Starry v1 profile |
@@ -13,3 +15,5 @@ The existing protobuf fields are sufficient. This contract therefore does not
 modify `rendezvous.proto` or introduce a new failure enum. Client-facing text
 is stable and deliberately does not reveal target existence or internal token
 failure reasons.
+
+See the [authentication profile](profile.md) for the verification rules.

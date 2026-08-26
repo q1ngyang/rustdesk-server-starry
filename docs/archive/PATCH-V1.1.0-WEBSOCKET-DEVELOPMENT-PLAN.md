@@ -1,5 +1,9 @@
 # rustdesk-server-starry patch-v1.1.0 WebSocket 开发方案
 
+> 历史归档：本文保留制定时的开发背景和状态，不作为当前部署或发布状态说明。
+> 使用项目请从[快速开始](../wiki/getting-started/ZH-CN-Getting-Started.md)阅读；
+> 版本变更请查看[更新日志](../releases/CHANGELOG.zh-CN.md)。
+
 > 文档状态：核心代码与核心自动化验收已完成；发布流水线验收以对应 GitHub Actions 运行记录为准，完整压力与真实环境验收待执行
 >
 > 制定日期：2026-08-10
@@ -837,10 +841,10 @@ patch-v1.1.0 不给原生客户端引入额外网络跳转。NativeOnly 路径�
 
 ## 26. 参考基线
 
-- [当前 Starry overlay 注入脚本](scripts/apply_overlay.py)
-- [当前外部配置示例](config/config.example.yaml)
-- [当前 Secure TCP 实现](overlay/src/secure_tcp.rs)
-- [当前 Geo Relay 实现](overlay/src/geo_relay.rs)
+- [当前 Starry overlay 注入脚本](../../scripts/apply_overlay.py)
+- [当前外部配置示例](../../config/config.example.yaml)
+- [当前 Secure TCP 实现](../../overlay/src/secure_tcp.rs)
+- [当前 Geo Relay 实现](../../overlay/src/geo_relay.rs)
 - [官方 rustdesk-server 1.1.16 HBBS](https://github.com/rustdesk/rustdesk-server/blob/1.1.16/src/rendezvous_server.rs)
 - [官方 rustdesk-server 1.1.16 HBBR](https://github.com/rustdesk/rustdesk-server/blob/1.1.16/src/relay_server.rs)
 - [RustDesk 1.4.9 持久信令客户端](https://github.com/rustdesk/rustdesk/blob/1.4.9/src/rendezvous_mediator.rs)

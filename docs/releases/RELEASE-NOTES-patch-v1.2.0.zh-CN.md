@@ -75,7 +75,8 @@ docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
   存在无关的既有 protobuf 拒绝字段。
 - `--must-login` 是部署层 enforce floor，配置 reload 和远程管理面都不能降低。
 
-规范与字节 fixtures 位于 [`contracts/auth/v1`](contracts/auth/v1)。
+规范见[连接认证约定](../reference/auth/v1/profile.zh-CN.md)；字节级测试样本仍位于
+[`contracts/auth/v1`](../../contracts/auth/v1)。
 
 ## Relay 可见性与模拟
 
@@ -111,7 +112,7 @@ docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
 - 启用写入的 Agent 会在启动时确认现有 managed config 是单 hard-link 普通文件，且由 Agent
   的 effective UID 与 primary GID 所有，避免保留 owner 的原子替换到 apply 后期才失败。
 
-详见 [`contracts/control/v1/openapi.yaml`](contracts/control/v1/openapi.yaml)及
+详见 [`contracts/control/v1/openapi.yaml`](../../contracts/control/v1/openapi.yaml)及
 [Control Agent 指南](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)。
 
 ## 升级与灰度

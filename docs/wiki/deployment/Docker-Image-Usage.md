@@ -3,7 +3,7 @@
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Docker-Image-Usage)
 
 The authoritative container manual is distributed with the source and Release
-assets as [`CONTAINER.md`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CONTAINER.md).
+assets as [`CONTAINER.md`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/container/CONTAINER.md).
 This page provides the package-oriented index.
 
 ## Image identity
@@ -65,7 +65,7 @@ new identity accidentally.
 
 ## Start here
 
-- [Container manual](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CONTAINER.md)
+- [Container manual](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/container/CONTAINER.md)
 - [Complete beginner walkthrough](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started)
 - [Single-host Compose](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/compose.yaml)
 - [Compose ENV](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/.env.example)

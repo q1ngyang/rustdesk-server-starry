@@ -18,8 +18,8 @@
 
 ## 当前 patch 说明
 
-- [patch-v1.2.0 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)
-- [中文更新日志](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CHANGELOG.zh-CN.md)
+- [patch-v1.2.0 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)
+- [中文更新日志](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.zh-CN.md)
 
 patch v1.2.0 新增 schema v3 last-known-good 激活、严格可选连接 JWT audit/enforce、
 不可变 Relay snapshot、无副作用 simulation 与可选最小权限 Linux Control Agent。

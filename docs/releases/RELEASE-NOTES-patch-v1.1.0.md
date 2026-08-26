@@ -112,7 +112,7 @@ DNS, proxy, certificate, API, client, or network environments.
 
 ## Documentation
 
-- [Container image usage](CONTAINER.md)
+- [Container image usage](../container/CONTAINER.md)
 - [Configuration reference](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Configuration-Reference)
 - [Operations and verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification)
 - [Troubleshooting](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Troubleshooting)

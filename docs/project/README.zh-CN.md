@@ -1,6 +1,6 @@
 # rustdesk-server-starry
 
-[English](README.md) | **简体中文**
+[English](../../README.md) | **简体中文**
 
 ## 项目介绍
 
@@ -10,7 +10,7 @@
 加入按规则选择中继服务器和登录客户端所需的传输兼容能力。
 
 每次构建都从精确锁定的官方 RustDesk Server 版本开始。
-[`scripts/apply_overlay.py`](scripts/apply_overlay.py)
+[`scripts/apply_overlay.py`](../../scripts/apply_overlay.py)
 会验证固定源码锚点并注入 Starry 模块；在同一份源码上第二次执行必须不再产生变化。
 一旦上游结构变化导致锚点或测试失效，发布流程会停止，而不会生成只注入了部分功能的服务端。
 
@@ -40,8 +40,8 @@ Starry 为 **HBBS** 增加以下能力：
 协议层。Starry 不会让第三方 API 代替中继服务器，不会修改 HBBR，也不会替代 RustDesk 客户端。
 
 当前版本：**patch-v1.2.0**。参见
-[`patch-v1.2.0` 版本说明](RELEASE-NOTES-patch-v1.2.0.zh-CN.md)和
-[`更新日志`](CHANGELOG.zh-CN.md)。Docker 镜像发布于
+[`patch-v1.2.0` 版本说明](../releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)和
+[`更新日志`](../releases/CHANGELOG.zh-CN.md)。Docker 镜像发布于
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)。
 
 patch-v1.2.0 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制文件和 amd64 DEB
@@ -58,10 +58,12 @@ patch-v1.2.0 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制�
 英文是默认文档语言；每篇说明性文档均提供简体中文版本。可直接执行的配置和编排文件由
 两种语言共同引用，避免两套示例发生功能漂移。
 
+[分类文档索引](../README.zh-CN.md)集中收录 Wiki 源文档、容器指南、版本说明和技术参考。
+
 | 文档 | 用途 |
 | --- | --- |
 | [快速开始](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Getting-Started) | 从域名、防火墙到地理位置规则、WSS 和真实客户端验收的单机 Docker 完整教程。 |
-| [Docker 镜像使用](CONTAINER.zh-CN.md) | 拉取、检查、运行、固定、升级和排查 GHCR 镜像。 |
+| [Docker 镜像使用](../container/CONTAINER.zh-CN.md) | 拉取、检查、运行、固定、升级和排查 GHCR 镜像。 |
 | [Docker 部署](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Docker-Deployment) | 推荐的单机 Docker Compose 部署。 |
 | [原生部署](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Native-Deployment) | 正式 amd64 DEB/Linux 部署与非阻断兼容说明。 |
 | [多节点部署](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Multi-Node-Deployment) | 中心 HBBS、使用同一固定镜像版本的 HBBR 节点和可选账户服务。 |
@@ -83,4 +85,4 @@ patch-v1.2.0 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制�
 
 官方 RustDesk Server 源码与 Starry 扩展层均按 GNU Affero General Public
 License v3.0 发布。二进制和镜像由对应的锁定上游版本加本扩展层构建；详见
-[`LICENSE`](LICENSE)。
+[`LICENSE`](../../LICENSE)。

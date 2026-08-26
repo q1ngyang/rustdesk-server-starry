@@ -168,7 +168,9 @@ jobs:
             config --quiet
 
       - name: Validate bilingual documentation and local links
-        run: python3 scripts/check_docs.py
+        run: |
+          python3 scripts/check_docs.py
+          python3 -m unittest discover -s scripts -p 'test_docs.py'
 
       - name: Validate versioned contracts and least-privilege API surface
         run: python3 scripts/check_contracts.py
@@ -765,13 +767,12 @@ jobs:
           cp config/config.example.yaml candidate/release-assets/config.example.yaml
           cp examples/compose.yaml candidate/release-assets/compose.yaml
           cp examples/.env.example candidate/release-assets/compose.env.example
-          cp README.md README.zh-CN.md CONTAINER.md CONTAINER.zh-CN.md \
-            CHANGELOG.md CHANGELOG.zh-CN.md candidate/release-assets/
-          cp "RELEASE-NOTES-patch-v${PATCH_VERSION}.md" \
-            "RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md" \
-            candidate/release-assets/
+          python3 scripts/export_docs.py release \
+            --output candidate/release-assets \
+            --ref "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY"
           tar --sort=name --mtime='UTC 1970-01-01' \
-            --owner=0 --group=0 --numeric-owner -cf - examples config \
+            --owner=0 --group=0 --numeric-owner -cf - \
+            examples config docs/examples \
             | gzip -n > \
               "candidate/release-assets/deployment-examples-${RELEASE_TAG}.tar.gz"
           cat > candidate/release-assets/BUILD-INPUTS.txt <<EOF
@@ -918,7 +919,7 @@ jobs:
             org.opencontainers.image.title=rustdesk-server-starry
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}
-            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ needs.resolve.outputs.release_tag }}/CONTAINER.md
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md
             org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-only
@@ -927,7 +928,7 @@ jobs:
             index:org.opencontainers.image.title=rustdesk-server-starry
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
             index:org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}
-            index:org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ needs.resolve.outputs.release_tag }}/CONTAINER.md
+            index:org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md
             index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             index:org.opencontainers.image.revision=${{ github.sha }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
@@ -941,8 +942,8 @@ jobs:
           PATCH_VERSION: ${{ needs.resolve.outputs.patch_version }}
         run: |
           set -euo pipefail
-          notes_file="RELEASE-NOTES-patch-v${PATCH_VERSION}.md"
-          chinese_notes="RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md"
+          notes_file="candidate/release-assets/RELEASE-NOTES-patch-v${PATCH_VERSION}.md"
+          chinese_notes="docs/releases/RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md"
           test -f "$notes_file"
           test -f "$chinese_notes"
           cat > release-notes.md <<EOF
@@ -952,22 +953,19 @@ jobs:
 
           Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment
 
-          Container guide: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/CONTAINER.md
+          Container guide: https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/container/CONTAINER.md
 
           Single-host Compose asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/compose.yaml
 
           Control Agent sidecar example: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/examples/control-agent/compose.yaml
 
-          中文发布说明：https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/${chinese_notes}
+          中文发布说明：https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/${chinese_notes}
 
           Verify binaries, packages, documentation, and the deployment-example
           archive against \`SHA256SUMS\` before use.
 
           EOF
-          sed \
-            -e "s#(RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md)#(https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/${chinese_notes})#" \
-            -e "s#(CONTAINER.md)#(https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/CONTAINER.md)#" \
-            "$notes_file" >> release-notes.md
+          cat "$notes_file" >> release-notes.md
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" candidate/release-assets/* --clobber
             gh release edit "$RELEASE_TAG" --notes-file release-notes.md --latest

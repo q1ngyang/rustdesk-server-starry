@@ -4,7 +4,7 @@
 
 This document is for users who arrive from the GHCR package page and need to
 deploy the image. For the project overview and source relationship, see the
-main [`README.md`](README.md).
+main [`README.md`](../../README.md).
 
 Deployment links:
 
@@ -74,7 +74,7 @@ docker buildx imagetools inspect \
 
 ## Recommended quick start
 
-The repository's [`examples/compose.yaml`](examples/compose.yaml) starts:
+The repository's [`examples/compose.yaml`](../../examples/compose.yaml) starts:
 
 - Starry HBBS from this image; and
 - the unmodified HBBR from the **same pinned Starry image tag**.
@@ -132,7 +132,7 @@ data/
 configuration disables the entire Starry configuration and leaves HBBS on its
 upstream command-line behaviour. Copy only the required sections from
 `starry/config.example.yaml`, or start from one of the files under
-[`config/`](config/).
+[`config/`](../../config).
 
 Never copy `id_ed25519` to a Relay-only node or into documentation. The public
 `id_ed25519.pub` value is the key configured in clients and may be distributed.
@@ -177,20 +177,20 @@ acknowledgements; process survival does not make an invalid candidate active.
 
 Use these starting points:
 
-- [`config/config.single-host.yaml`](config/config.single-host.yaml): complete
+- [`config/config.single-host.yaml`](../../config/config.single-host.yaml): complete
   single-host commissioning profile;
-- [`config/config.minimal.yaml`](config/config.minimal.yaml): Secure TCP only;
-- [`config/config.geo-basic.yaml`](config/config.geo-basic.yaml): country-based
+- [`config/config.minimal.yaml`](../../config/config.minimal.yaml): Secure TCP only;
+- [`config/config.geo-basic.yaml`](../../config/config.geo-basic.yaml): country-based
   ordered Relay selection;
-- [`config/config.geo-advanced.yaml`](config/config.geo-advanced.yaml): nested
+- [`config/config.geo-advanced.yaml`](../../config/config.geo-advanced.yaml): nested
   city/ASN/ISP rules; and
-- [`config/config.websocket.yaml`](config/config.websocket.yaml): schema v2
+- [`config/config.websocket.yaml`](../../config/config.websocket.yaml): schema v2
   WebSocket Signal and certificate-verified Relay health; and
-- [`config/config.auth-audit.yaml`](config/config.auth-audit.yaml): schema v3
+- [`config/config.auth-audit.yaml`](../../config/config.auth-audit.yaml): schema v3
   connection-authentication audit canary.
 
 The optional Control Agent has a separate
-[`Compose example`](examples/control-agent/compose.yaml) and
+[`Compose example`](../../examples/control-agent/compose.yaml) and
 [`operator guide`](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent).
 Commission it read-only. Do not publish its listener or HBBS local control on
 the public RustDesk ports.

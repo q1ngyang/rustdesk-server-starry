@@ -3,7 +3,7 @@
 [English](CONTAINER.md) | **简体中文**
 
 本文面向从 GHCR 包页面进入、需要直接部署镜像的用户。项目介绍和源码关系见主
-[`README.zh-CN.md`](README.zh-CN.md)。
+[`README.zh-CN.md`](../project/README.zh-CN.md)。
 
 部署入口：
 
@@ -69,7 +69,7 @@ docker buildx imagetools inspect \
 
 ## 推荐快速部署
 
-仓库的 [`examples/compose.yaml`](examples/compose.yaml) 会启动：
+仓库的 [`examples/compose.yaml`](../../examples/compose.yaml) 会启动：
 
 - 本镜像中的 Starry HBBS；
 - **同一个固定版本 Starry 镜像**中的未经修改 HBBR。
@@ -123,7 +123,7 @@ data/
 
 `starry/config.yaml` 初始为空，这是有意设计。空配置或无效配置会禁用整份 Starry
 配置，使 HBBS 使用上游命令行行为。请从 `starry/config.example.yaml` 复制需要的
-部分，或从 [`config/`](config/) 中选择入门模板。
+部分，或从 [`config/`](../../config) 中选择入门模板。
 
 绝不要把 `id_ed25519` 复制到纯 Relay 节点或文档中。公钥 `id_ed25519.pub` 是客户端
 需要配置的 Key，可以分发。
@@ -164,14 +164,14 @@ docker restart rustdesk-starry-hbbs
 
 可从以下模板开始：
 
-- [`config/config.single-host.yaml`](config/config.single-host.yaml)：单机完整接入配置；
-- [`config/config.minimal.yaml`](config/config.minimal.yaml)：仅启用安全 TCP；
-- [`config/config.geo-basic.yaml`](config/config.geo-basic.yaml)：按国家依次选择中继服务器；
-- [`config/config.geo-advanced.yaml`](config/config.geo-advanced.yaml)：嵌套城市/ASN/ISP 规则；
-- [`config/config.websocket.yaml`](config/config.websocket.yaml)：配置结构版本 2 的 WebSocket 信令和中继健康检查；
-- [`config/config.auth-audit.yaml`](config/config.auth-audit.yaml)：配置结构版本 3 的连接认证审计示例。
+- [`config/config.single-host.yaml`](../../config/config.single-host.yaml)：单机完整接入配置；
+- [`config/config.minimal.yaml`](../../config/config.minimal.yaml)：仅启用安全 TCP；
+- [`config/config.geo-basic.yaml`](../../config/config.geo-basic.yaml)：按国家依次选择中继服务器；
+- [`config/config.geo-advanced.yaml`](../../config/config.geo-advanced.yaml)：嵌套城市/ASN/ISP 规则；
+- [`config/config.websocket.yaml`](../../config/config.websocket.yaml)：配置结构版本 2 的 WebSocket 信令和中继健康检查；
+- [`config/config.auth-audit.yaml`](../../config/config.auth-audit.yaml)：配置结构版本 3 的连接认证审计示例。
 
-可选管理代理使用独立的 [`Compose 示例`](examples/control-agent/compose.yaml)与
+可选管理代理使用独立的 [`Compose 示例`](../../examples/control-agent/compose.yaml)与
 [`运维指南`](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)。
 请先按只读模式接入，绝不能通过公网 RustDesk 端口开放管理代理或 HBBS 本地管理通道。
 

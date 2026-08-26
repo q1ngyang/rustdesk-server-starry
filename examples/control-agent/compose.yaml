@@ -1,7 +1,10 @@
 # Control Agent sidecar example. All host persistence lives below
 # STARRY_PERSIST_ROOT, while separate bind mounts preserve the authentication,
 # secret, shared-token, and writable-state permission boundaries. Prepare the
-# exact tree and files described in README.md before starting this stack.
+# exact tree and files described in
+# docs/examples/control-agent/README.md (from the repository/archive root).
+# https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/examples/control-agent/README.md
+# Read that guide before starting this stack.
 # The Agent shares the HBBS network namespace solely so 127.0.0.1:21115 remains
 # a local-only channel.
 name: rustdesk-server-starry-control

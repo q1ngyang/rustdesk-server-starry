@@ -1,5 +1,7 @@
 # Starry connection authentication profile v1
 
+**English** | [简体中文](profile.zh-CN.md)
+
 This profile applies to controller-initiated HBBS connection attempts. It does
 not require the controlled endpoint to log in and it does not change the
 RustDesk protobuf schema.
@@ -53,3 +55,6 @@ validation. Fixtures reproduce Kessoku's wire shape: issuer
 token use `access`, scope `connect:initiate`, numeric user ID `42`, and key ID
 `kessoku-fixture-2030-01`. The fixture key is test-only public material and
 must never be trusted in a deployment.
+
+Test fixtures remain in [`contracts/auth/v1/fixtures`](../../../../contracts/auth/v1/fixtures).
+See also the [client compatibility reference](client-compatibility.md).

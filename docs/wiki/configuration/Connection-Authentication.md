@@ -33,7 +33,7 @@ endpoint on a UDP-free network must use WSS registration instead of expecting
 native TCP-only registration.
 
 No protobuf change is required. The exact client-compatible denial contract is
-locked by [`contracts/auth/v1/client-compatibility.md`](../../contracts/auth/v1/client-compatibility.md).
+locked by the [client compatibility reference](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/auth/v1/client-compatibility.md).
 
 ## JWT profile
 
@@ -51,7 +51,7 @@ trying every key, subject mismatch, and malformed time windows are rejected.
 
 ## Start in audit
 
-Copy [`config/config.auth-audit.yaml`](../../config/config.auth-audit.yaml),
+Copy [`config/config.auth-audit.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.auth-audit.yaml),
 replace every example hostname/path, mount the required files read-only, and
 keep `mode: audit`:
 

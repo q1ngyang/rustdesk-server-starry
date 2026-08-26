@@ -209,7 +209,7 @@ def main() -> None:
     )
     for container_release_metadata in (
         "org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}",
-        "org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ needs.resolve.outputs.release_tag }}/CONTAINER.md",
+        "org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md",
         "the same image bundles unmodified HBBR",
         "account/API services and MMDB data are not included",
         "Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment",
@@ -218,6 +218,18 @@ def main() -> None:
     ):
         assert container_release_metadata in build, (
             f"release metadata is missing Docker guidance: {container_release_metadata}"
+        )
+    for documentation_control in (
+        "python3 scripts/export_docs.py release",
+        '--ref "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY"',
+        "examples config docs/examples",
+        'notes_file="candidate/release-assets/RELEASE-NOTES-patch-v${PATCH_VERSION}.md"',
+        'chinese_notes="docs/releases/RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md"',
+        'cat "$notes_file" >> release-notes.md',
+        "python3 -m unittest discover -s scripts -p 'test_docs.py'",
+    ):
+        assert documentation_control in build, (
+            f"release workflow is missing classified documentation support: {documentation_control}"
         )
 
     action_count = 0

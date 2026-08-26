@@ -86,7 +86,7 @@ Compose 和容器烟测覆盖两个发布架构。
 
 ## 文档
 
-- [容器镜像使用](CONTAINER.zh-CN.md)
+- [容器镜像使用](../container/CONTAINER.zh-CN.md)
 - [配置参数参考](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Configuration-Reference)
 - [运维与完整验证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Operations-and-Verification)
 - [常见问题排查](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Troubleshooting)

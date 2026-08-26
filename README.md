@@ -1,6 +1,6 @@
 # rustdesk-server-starry
 
-**English** | [简体中文](README.zh-CN.md)
+**English** | [简体中文](docs/project/README.zh-CN.md)
 
 ## Project overview
 
@@ -51,8 +51,8 @@ not turn a third-party API into a Relay, does not fork HBBR, and does not
 replace the RustDesk client.
 
 Current release: **patch-v1.2.0**. See the
-[`patch-v1.2.0` release notes](RELEASE-NOTES-patch-v1.2.0.md) and
-[`changelog`](CHANGELOG.md). Docker images are published at
+[`patch-v1.2.0` release notes](docs/releases/RELEASE-NOTES-patch-v1.2.0.md) and
+[`changelog`](docs/releases/CHANGELOG.md). Docker images are published at
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry).
 
 The patch-v1.2.0 supported release matrix is Docker `linux/amd64` plus Linux
@@ -74,10 +74,13 @@ English is the default documentation language. Every narrative guide has a
 Simplified Chinese counterpart. Copy-ready configuration and orchestration
 files are shared by both languages so that executable examples cannot drift.
 
+The [classified documentation index](docs/README.md) contains the local
+sources, container manual, release notes, and technical references.
+
 | Guide | Purpose |
 | --- | --- |
 | [Getting started](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Getting-Started) | Complete single-host Docker walkthrough from DNS and firewall to Geo, WSS, and real-client verification. |
-| [Docker image usage](CONTAINER.md) | Pull, inspect, run, pin, upgrade, and troubleshoot the GHCR image. |
+| [Docker image usage](docs/container/CONTAINER.md) | Pull, inspect, run, pin, upgrade, and troubleshoot the GHCR image. |
 | [Docker deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Docker-Deployment) | Recommended single-host Docker Compose deployment. |
 | [Native deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Native-Deployment) | Supported amd64 DEB/Linux deployment and non-blocking compatibility notes. |
 | [Multi-node deployment](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Multi-Node-Deployment) | Centre HBBS, version-locked Starry-image HBBR nodes, and optional account services. |

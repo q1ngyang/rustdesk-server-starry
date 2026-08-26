@@ -22,7 +22,7 @@ Every remote request requires both:
    `urn:starry-control:<instance_id>`.
 
 Connection JWT keys and service JWT keys are deliberately separate. The API
-surface is fixed by [`contracts/control/v1/openapi.yaml`](../../contracts/control/v1/openapi.yaml).
+surface is fixed by [`contracts/control/v1/openapi.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/contracts/control/v1/openapi.yaml).
 There is no arbitrary command, arbitrary path, Docker/systemd control, URL
 fetch, shell, or raw `21115` proxy.
 
@@ -37,7 +37,7 @@ contain the Agent. The DEB installs but does not automatically enable its
 systemd service. No Windows Agent artifact is published in v1.2.0 because the
 atomic transaction implementation is release-supported only on Unix filesystems.
 
-Start from [`config/control-agent.example.yaml`](../../config/control-agent.example.yaml):
+Start from [`config/control-agent.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/control-agent.example.yaml):
 
 ```yaml
 version: 1
@@ -80,7 +80,7 @@ The state root and its generated subdirectories must be Agent-owned mode
 TLS keys, the Agent YAML, and service JWKS remain
 root-owned and read-only to the Agent.
 
-For containers, use [`examples/control-agent/compose.yaml`](../../examples/control-agent/compose.yaml).
+For containers, use [`examples/control-agent/compose.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/control-agent/compose.yaml).
 The sidecar shares the HBBS network namespace solely so `127.0.0.1:21115`
 remains local. It shares the Starry config volume read/write while HBBS mounts
 the same volume read-only. The example Agent binds host loopback and starts in

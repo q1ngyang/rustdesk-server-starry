@@ -3,7 +3,7 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Docker-Image-Usage) | **简体中文**
 
 权威容器手册随源码和 Release 产物发布为
-[`CONTAINER.zh-CN.md`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CONTAINER.zh-CN.md)。
+[`CONTAINER.zh-CN.md`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/container/CONTAINER.zh-CN.md)。
 本页提供面向包页面的索引。
 
 ## 镜像标识
@@ -60,7 +60,7 @@ docker run --rm IMAGE rustdesk-utils --help
 
 ## 从这里开始
 
-- [容器手册](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CONTAINER.zh-CN.md)
+- [容器手册](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/container/CONTAINER.zh-CN.md)
 - [零基础单机部署教程](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Getting-Started)
 - [单机 Compose](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/compose.yaml)
 - [Compose ENV](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/.env.example)

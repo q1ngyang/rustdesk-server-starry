@@ -28,7 +28,7 @@ TCP/Secure TCP 发送并验证 `PunchHoleRequest`/`RequestRelay`。若被控端�
 禁用 UDP，应改用 WSS 注册；不能在禁用 UDP 后期待原生被控端仅靠 TCP 保持注册。
 
 无需修改 protobuf；精确 client-compatible 拒绝契约由
-[`contracts/auth/v1/client-compatibility.md`](../../contracts/auth/v1/client-compatibility.md)
+[客户端兼容性参考](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/auth/v1/client-compatibility.zh-CN.md)
 锁定。
 
 ## JWT profile
@@ -46,7 +46,7 @@ HBBS 只接受：
 
 ## 从 audit 开始
 
-复制 [`config/config.auth-audit.yaml`](../../config/config.auth-audit.yaml)，替换全部示例
+复制 [`config/config.auth-audit.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/config.auth-audit.yaml)，替换全部示例
 hostname/path，以只读方式挂载所需文件，并保持 `mode: audit`：
 
 ```yaml

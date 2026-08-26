@@ -3,81 +3,62 @@
 
 from __future__ import annotations
 
-import re
+import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+
+from export_docs import DOCS, LINK, ROOT, WIKI, local_target, release_documents, wiki_pages
 
 
-ROOT = Path(__file__).resolve().parents[1]
-WIKI = ROOT / "docs" / "wiki"
-LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
-
-
-def paired_documents() -> list[tuple[Path, Path]]:
-    pairs = [
-        (ROOT / "README.md", ROOT / "README.zh-CN.md"),
-        (ROOT / "CONTAINER.md", ROOT / "CONTAINER.zh-CN.md"),
-        (ROOT / "CHANGELOG.md", ROOT / "CHANGELOG.zh-CN.md"),
-        (
-            ROOT / ".github" / "PROJECT-METADATA.md",
-            ROOT / ".github" / "PROJECT-METADATA.zh-CN.md",
-        ),
-    ]
-    patch_version = (ROOT / "PATCH_VERSION").read_text(encoding="utf-8").strip()
-    pairs.append(
-        (
-            ROOT / f"RELEASE-NOTES-patch-v{patch_version}.md",
-            ROOT / f"RELEASE-NOTES-patch-v{patch_version}.zh-CN.md",
-        )
+def managed_markdown() -> list[Path]:
+    # Include untracked drafts during local review, but never inspect ignored
+    # private plans, deployment data, or an upstream checkout.
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.md"],
+        cwd=ROOT, check=True, capture_output=True,
     )
-    for english in sorted(WIKI.glob("*.md")):
-        if english.name == "_Sidebar.md" or english.name.startswith("ZH-CN-"):
+    return sorted({
+        ROOT / name.decode("utf-8")
+        for name in result.stdout.split(b"\0")
+        if name and (ROOT / name.decode("utf-8")).is_file()
+    })
+
+
+def paired_documents(documents: list[Path]) -> list[tuple[Path, Path]]:
+    root_pair = (ROOT / "README.md", DOCS / "project/README.zh-CN.md")
+    pairs = {root_pair}
+    for document in documents:
+        if document in root_pair or document == WIKI / "_Sidebar.md":
             continue
-        pairs.append((english, english.with_name(f"ZH-CN-{english.name}")))
-    return pairs
-
-
-def managed_markdown(pairs: list[tuple[Path, Path]]) -> list[Path]:
-    files = {WIKI / "_Sidebar.md"}
-    for english, chinese in pairs:
-        files.add(english)
-        files.add(chinese)
-    return sorted(files)
-
-
-def local_target(source: Path, raw: str) -> Path | None:
-    target = raw.strip()
-    if target.startswith("<") and target.endswith(">"):
-        target = target[1:-1]
-    target = target.split("#", 1)[0]
-    if not target or target.startswith("mailto:"):
-        return None
-    if target.startswith(("http://", "https://")):
-        parsed = urlparse(target)
-        if parsed.netloc.lower() != "github.com":
-            return None
-        project = "/q1ngyang/rustdesk-server-starry"
-        path = unquote(parsed.path)
-        wiki_prefix = f"{project}/wiki/"
-        blob_prefix = f"{project}/blob/main/"
-        tree_prefix = f"{project}/tree/main/"
-        if path.startswith(wiki_prefix):
-            return WIKI / f"{path.removeprefix(wiki_prefix)}.md"
-        if path.startswith(blob_prefix):
-            return ROOT / path.removeprefix(blob_prefix)
-        if path.startswith(tree_prefix):
-            return ROOT / path.removeprefix(tree_prefix)
-        return None
-    # This documentation set does not use optional Markdown link titles. Keep
-    # the validator strict so an accidental space in a path is reported.
-    return (source.parent / unquote(target)).resolve()
+        if document.is_relative_to(DOCS / "archive"):
+            continue  # Historical records retain their original language.
+        if document.is_relative_to(WIKI):
+            english = document.with_name(document.name.removeprefix("ZH-CN-"))
+            chinese = english.with_name(f"ZH-CN-{english.name}")
+        else:
+            english = document.with_name(document.name.replace(".zh-CN.md", ".md"))
+            chinese = english.with_suffix(".zh-CN.md")
+        pairs.add((english, chinese))
+    return sorted(pairs)
 
 
 def main() -> int:
     errors: list[str] = []
-    pairs = paired_documents()
+    documents = managed_markdown()
+    pairs = paired_documents(documents)
     patch_version = (ROOT / "PATCH_VERSION").read_text(encoding="utf-8").strip()
+    try:
+        pages = wiki_pages()
+    except ValueError as error:
+        print(f"documentation error: {error}", file=sys.stderr)
+        return 1
+
+    for document in documents:
+        if document != ROOT / "README.md" and not document.is_relative_to(DOCS):
+            errors.append(f"Markdown belongs under docs/: {document.relative_to(ROOT)}")
+    for document in release_documents():
+        if not document.is_file():
+            errors.append(f"missing release document: {document.relative_to(ROOT)}")
 
     for english, chinese in pairs:
         if not english.is_file():
@@ -85,19 +66,6 @@ def main() -> int:
         if not chinese.is_file():
             errors.append(f"missing Chinese document: {chinese.relative_to(ROOT)}")
 
-    chinese_wiki = {
-        page.name.removeprefix("ZH-CN-")
-        for page in WIKI.glob("ZH-CN-*.md")
-    }
-    english_wiki = {
-        page.name
-        for page in WIKI.glob("*.md")
-        if page.name != "_Sidebar.md" and not page.name.startswith("ZH-CN-")
-    }
-    for orphan in sorted(chinese_wiki - english_wiki):
-        errors.append(f"Chinese Wiki page has no English peer: ZH-CN-{orphan}")
-
-    documents = managed_markdown(pairs)
     for document in documents:
         if not document.is_file():
             continue
@@ -107,7 +75,7 @@ def main() -> int:
         if sum(line.startswith("```") for line in text.splitlines()) % 2:
             errors.append(f"unbalanced code fence: {document.relative_to(ROOT)}")
         for match in LINK.finditer(text):
-            target = local_target(document, match.group(1))
+            target = local_target(document, match.group(1), pages)
             if target is None:
                 continue
             candidates = [target]
@@ -121,13 +89,13 @@ def main() -> int:
 
     for path in (
         ROOT / "README.md",
-        ROOT / "README.zh-CN.md",
+        DOCS / "project/README.zh-CN.md",
         ROOT / "examples/.env.example",
         ROOT / "examples/center/.env.example",
         ROOT / "examples/relay/.env.example",
         ROOT / "examples/control-agent/.env.example",
     ):
-        if f"patch-v{patch_version}" not in path.read_text(encoding="utf-8"):
+        if not path.is_file() or f"patch-v{patch_version}" not in path.read_text(encoding="utf-8"):
             errors.append(
                 f"current patch version is missing from {path.relative_to(ROOT)}"
             )

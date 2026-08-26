@@ -6,6 +6,11 @@
 [Control Agent 指南](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)。
 仓库中的配置为只读（`write_enabled: false`），mTLS API 绑定 host loopback。
 
+实际编排与配置文件仍在
+[`examples/control-agent/`](../../../examples/control-agent)。从仓库根目录
+或部署示例压缩包的解压目录执行 `cd examples/control-agent`，再运行下文命令。
+不要在文档目录中执行 Docker Compose。
+
 在 `.env` 中把 `STARRY_PERSIST_ROOT` 设置为一个宿主机目录。默认值是 `./persist`；生产环境
 可以使用绝对路径 `/www/wwwroot/rustdesk/starry`。Compose 仍分别挂载各个子目录，因此统一
 宿主机根目录不会合并容器内的权限域：

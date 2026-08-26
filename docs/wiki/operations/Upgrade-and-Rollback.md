@@ -21,8 +21,8 @@ digest used in production.
 
 ## Read the current patch notes
 
-- [patch-v1.2.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/RELEASE-NOTES-patch-v1.2.0.md)
-- [Changelog](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/CHANGELOG.md)
+- [patch-v1.2.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.0.md)
+- [Changelog](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.md)
 
 Patch v1.2.0 adds schema v3 last-known-good activation, strict optional
 connection JWT audit/enforcement, immutable Relay snapshots, side-effect-free

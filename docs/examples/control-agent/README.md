@@ -7,6 +7,12 @@ This example is an opt-in Linux sidecar deployment. Read the full
 before starting it. The checked-in configuration is read-only
 (`write_enabled: false`) and binds the mTLS API to host loopback.
 
+The runnable files remain in
+[`examples/control-agent/`](../../../examples/control-agent). From the
+repository root (or the extracted deployment archive root), run
+`cd examples/control-agent` before the commands below. The documentation
+directory is not a Compose working directory.
+
 Set `STARRY_PERSIST_ROOT` in `.env` to one host directory. The default is
 `./persist`; an absolute production example is
 `/www/wwwroot/rustdesk/starry`. Compose mounts its children separately, so a

@@ -20,7 +20,7 @@ Agent 不是账户 API，也不是 HBBS 数据面的必需组件。停止 Agent 
    `urn:starry-control:<instance_id>`。
 
 连接 JWT key 与 service JWT key 必须分离。API surface 由
-[`contracts/control/v1/openapi.yaml`](../../contracts/control/v1/openapi.yaml)固定；不提供
+[`contracts/control/v1/openapi.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/contracts/control/v1/openapi.yaml)固定；不提供
 任意命令、任意路径、Docker/systemd 控制、URL fetch、shell 或裸 `21115` proxy。
 
 同机 controller 应让 Agent 监听 host loopback；远程 controller 应使用 firewall 限制的
@@ -32,7 +32,7 @@ Linux archive/container 和 `rustdesk-server-starry-control-agent` DEB 包含 Ag
 后不会自动 enable systemd service。v1.2.0 不发布 Windows Agent，因为原子配置事务只在
 Unix filesystem 上属于发布支持范围。
 
-从 [`config/control-agent.example.yaml`](../../config/control-agent.example.yaml)开始：
+从 [`config/control-agent.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/control-agent.example.yaml)开始：
 
 ```yaml
 version: 1
@@ -68,7 +68,7 @@ root-owned 文件设为 group-writable 并不够：原子 rename 会创建新 in
 state root 及其生成的子目录必须由 Agent 所有且 mode `0700`，持久 JSON/YAML 必须是 mode
 `0600` 的单链接普通文件。TLS key、Agent YAML 与 service JWKS 仍由 root 所有，Agent 只读。
 
-容器使用 [`examples/control-agent/compose.yaml`](../../examples/control-agent/compose.yaml)。
+容器使用 [`examples/control-agent/compose.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/examples/control-agent/compose.yaml)。
 sidecar 共享 HBBS network namespace 仅为了保持 `127.0.0.1:21115` 为本地通道；Agent
 读写 Starry config volume，HBBS 以只读方式挂载同一 volume。示例 Agent 绑定 host
 loopback，并默认只读。
