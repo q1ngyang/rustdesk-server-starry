@@ -41,24 +41,24 @@ The project deliberately keeps the component boundary narrow:
 | Component | Starry scope | Deployment responsibility |
 | --- | --- | --- |
 | HBBS | Modified by the overlay | Run the Starry `hbbs` binary or image command. |
-| HBBR | Not modified | Use the HBBR bundled in the same pinned Starry image/artifact. It is built from the same upstream revision as HBBS and avoids independent version drift. |
+| HBBR | Version-advertising only | Uses the upstream relay data path and adds one bounded `X-Starry-Version` WebSocket handshake header so authenticated management can inventory the running Relay version. Use the HBBR bundled in the same pinned Starry image/artifact. |
 | Control Agent | Optional Starry component; Linux only in v1.2 | Keep HBBS local control on loopback. Expose the Agent only on a private management path with mTLS and scoped service JWTs. Configuration writes are disabled by default. |
 | Account/API server | Not included | Account login, address books, device data, and administration require a separately selected API implementation. |
 
 An account API login, the HBBS signalling connection, the optional Starry
 Control API, and the HBBR data path are separate protocol layers. Starry does
-not turn a third-party API into a Relay, does not fork HBBR, and does not
-replace the RustDesk client.
+not turn a third-party API into a Relay, does not alter the HBBR relay data
+path, and does not replace the RustDesk client.
 
-Current release: **patch-v1.2.0**. See the
-[`patch-v1.2.0` release notes](docs/releases/RELEASE-NOTES-patch-v1.2.0.md) and
+Current release: **patch-v1.2.1**. See the
+[`patch-v1.2.1` release notes](docs/releases/RELEASE-NOTES-patch-v1.2.1.md) and
 [`changelog`](docs/releases/CHANGELOG.md). Docker images are published at
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry).
 
-The patch-v1.2.0 supported release matrix is Docker `linux/amd64` plus Linux
+The patch-v1.2.1 supported release matrix is Docker `linux/amd64` plus Linux
 x86_64 binaries and amd64 DEB packages. ARM is best-effort source
 compatibility; Windows is an experimental non-blocking build. Neither is a
-promised v1.2.0 artifact.
+promised v1.2.1 artifact.
 
 > This is an unofficial community project and is not affiliated with or
 > endorsed by RustDesk, MaxMind, any MMDB mirror provider, or any AI service

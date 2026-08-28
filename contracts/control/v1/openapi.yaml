@@ -381,9 +381,10 @@ components:
     Relay:
       type: object
       additionalProperties: false
-      required: [id, configured_order, native, websocket, eligible_for, referenced_by_rules]
+      required: [id, version, configured_order, native, websocket, eligible_for, referenced_by_rules]
       properties:
         id: {type: string}
+        version: {type: [string, "null"], description: Exact Starry HBBR version observed in the most recent successful WSS handshake; null for legacy or unprobed Relays.}
         configured_order: {type: integer, minimum: 0}
         native:
           type: object

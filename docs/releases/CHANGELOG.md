@@ -6,6 +6,15 @@ This file records Starry overlay changes. The full artifact version combines
 the official RustDesk Server version with the Starry patch version, for example
 `1.1.16-patch-v1.2.0`.
 
+## patch-v1.2.1 — 2026-08-28
+
+Release notes: [`RELEASE-NOTES-patch-v1.2.1.md`](RELEASE-NOTES-patch-v1.2.1.md)
+
+### Added
+
+- Relay version reporting from the HBBR WebSocket handshake through HBBS
+  health observation to the Control API v1 Relay inventory.
+
 ## patch-v1.2.0 — 2026-08-20
 
 Release notes: [`RELEASE-NOTES-patch-v1.2.0.md`](RELEASE-NOTES-patch-v1.2.0.md)

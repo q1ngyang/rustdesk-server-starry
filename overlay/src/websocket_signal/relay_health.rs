@@ -38,6 +38,7 @@ struct EndpointState {
     last_failure_millis: Option<u64>,
     last_probe_unix_millis: Option<u64>,
     latency_ms: Option<u64>,
+    version: Option<String>,
     last_error_code: Option<&'static str>,
     last_error: Option<String>,
 }
@@ -52,6 +53,7 @@ impl Default for EndpointState {
             last_failure_millis: None,
             last_probe_unix_millis: None,
             latency_ms: None,
+            version: None,
             last_error_code: None,
             last_error: None,
         }
@@ -62,6 +64,12 @@ impl Default for EndpointState {
 struct ProbeFailure {
     code: &'static str,
     message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProbeSuccess {
+    latency_ms: u64,
+    version: Option<String>,
 }
 
 impl ProbeFailure {
@@ -99,6 +107,7 @@ pub(crate) struct RuntimeEndpointSnapshot {
     pub(crate) state: &'static str,
     pub(crate) last_probe_at: Option<String>,
     pub(crate) latency_ms: Option<u64>,
+    pub(crate) version: Option<String>,
     pub(crate) error_code: Option<String>,
     pub(crate) error_message: Option<String>,
     pub(crate) consecutive_successes: u32,
@@ -214,7 +223,7 @@ async fn run_cycle(generation: u64, config: RelayHealthConfig) {
     }
 }
 
-async fn probe(url: &str, timeout_ms: u64) -> Result<u64, ProbeFailure> {
+async fn probe(url: &str, timeout_ms: u64) -> Result<ProbeSuccess, ProbeFailure> {
     let started = Instant::now();
     let connected = timeout(timeout_ms, tokio_tungstenite::connect_async(url)).await;
     let (mut stream, response) = connected
@@ -230,13 +239,29 @@ async fn probe(url: &str, timeout_ms: u64) -> Result<u64, ProbeFailure> {
         .send(tungstenite::Message::Close(None))
         .await
         .map_err(|err| ProbeFailure::new("close_failed", err.to_string()))?;
-    Ok(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64)
+    Ok(ProbeSuccess {
+        latency_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        version: relay_version(&response),
+    })
+}
+
+fn relay_version<T>(response: &http::Response<T>) -> Option<String> {
+    let version = response.headers().get("x-starry-version")?.to_str().ok()?;
+    if version.is_empty()
+        || version.len() > 128
+        || !version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._+-".contains(&byte))
+    {
+        return None;
+    }
+    Some(version.to_owned())
 }
 
 fn record(
     generation: u64,
     relay: &str,
-    result: Result<u64, ProbeFailure>,
+    result: Result<ProbeSuccess, ProbeFailure>,
     success_threshold: u32,
     failure_threshold: u32,
 ) {
@@ -251,11 +276,12 @@ fn record(
     };
     endpoint.last_probe_unix_millis = Some(unix_millis());
     match result {
-        Ok(latency_ms) => {
+        Ok(success) => {
             endpoint.consecutive_successes = endpoint.consecutive_successes.saturating_add(1);
             endpoint.consecutive_failures = 0;
             endpoint.last_success_millis = Some(now_millis());
-            endpoint.latency_ms = Some(latency_ms);
+            endpoint.latency_ms = Some(success.latency_ms);
+            endpoint.version = success.version;
             endpoint.last_error_code = None;
             endpoint.last_error = None;
             if endpoint.consecutive_successes >= success_threshold {
@@ -331,6 +357,7 @@ pub(crate) fn runtime_snapshot() -> RuntimeHealthSnapshot {
                     state: status_name(endpoint.status),
                     last_probe_at: endpoint.last_probe_unix_millis.and_then(rfc3339_millis),
                     latency_ms: endpoint.latency_ms,
+                    version: endpoint.version,
                     error_code: endpoint.last_error_code.map(str::to_owned),
                     error_message: endpoint.last_error,
                     consecutive_successes: endpoint.consecutive_successes,
@@ -483,21 +510,47 @@ mod tests {
         let configured = vec![relay.clone()];
         let native_online = vec![relay.clone()];
 
-        record(41, &relay, Ok(10), 2, 2);
+        record(
+            41,
+            &relay,
+            probe_success(10, Some("1.1.16-patch-v1.2.1")),
+            2,
+            2,
+        );
         assert_eq!(snapshot_id(), 7);
         assert!(
             eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly)
                 .is_empty()
         );
-        record(42, &relay, Ok(10), 2, 2);
+        record(
+            42,
+            &relay,
+            probe_success(10, Some("1.1.16-patch-v1.2.1")),
+            2,
+            2,
+        );
         let first_probe_snapshot = snapshot_id();
         assert_ne!(first_probe_snapshot, 7);
         assert!(
             eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly)
                 .is_empty()
         );
-        record(42, &relay, Ok(10), 2, 2);
+        record(
+            42,
+            &relay,
+            probe_success(10, Some("1.1.16-patch-v1.2.1")),
+            2,
+            2,
+        );
         assert_ne!(snapshot_id(), first_probe_snapshot);
+        let runtime = runtime_snapshot();
+        assert_eq!(
+            runtime
+                .endpoints
+                .get(&relay.to_ascii_lowercase())
+                .and_then(|endpoint| endpoint.version.as_deref()),
+            Some("1.1.16-patch-v1.2.1")
+        );
         assert_eq!(
             eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly),
             configured
@@ -530,5 +583,30 @@ mod tests {
             eligible_relays(&configured, &native_online, RelayRequirement::WebSocketOnly)
                 .is_empty()
         );
+    }
+
+    fn probe_success(latency_ms: u64, version: Option<&str>) -> Result<ProbeSuccess, ProbeFailure> {
+        Ok(ProbeSuccess {
+            latency_ms,
+            version: version.map(str::to_owned),
+        })
+    }
+
+    #[test]
+    fn relay_version_header_is_bounded_and_validated() {
+        let response = http::Response::builder()
+            .header("x-starry-version", "1.1.16-patch-v1.2.1")
+            .body(())
+            .unwrap();
+        assert_eq!(
+            relay_version(&response).as_deref(),
+            Some("1.1.16-patch-v1.2.1")
+        );
+
+        let response = http::Response::builder()
+            .header("x-starry-version", "invalid version")
+            .body(())
+            .unwrap();
+        assert_eq!(relay_version(&response), None);
     }
 }

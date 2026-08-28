@@ -3,7 +3,7 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback) | **简体中文**
 
 升级同时涉及两个版本：官方 RustDesk Server 基线和 Starry patch。例如
-`1.1.16-patch-v1.2.0` 表示官方服务端 `1.1.16` 加 Starry patch `1.2.0`。生产环境
+`1.1.16-patch-v1.2.1` 表示官方服务端 `1.1.16` 加 Starry patch `1.2.1`。生产环境
 应锁定完整标签，并记录实际镜像摘要。
 
 ## 升级原则
@@ -18,10 +18,12 @@
 
 ## 当前 patch 说明
 
+- [patch-v1.2.1 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.1.zh-CN.md)
 - [patch-v1.2.0 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)
 - [中文更新日志](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.zh-CN.md)
 
-patch v1.2.0 新增 schema v3 last-known-good 激活、严格可选连接 JWT audit/enforce、
+patch v1.2.1 新增 Relay 版本上报，无需迁移配置。patch v1.2.0 新增 schema v3
+last-known-good 激活、严格可选连接 JWT audit/enforce、
 不可变 Relay snapshot、无副作用 simulation 与可选最小权限 Linux Control Agent。
 schema v1/v2 继续有效，并保持连接认证关闭。
 
@@ -74,11 +76,11 @@ authentication issuer。
 在 `.env` 设置新的不可变版本：
 
 ```dotenv
-STARRY_VERSION=1.1.16-patch-v1.2.0
+STARRY_VERSION=1.1.16-patch-v1.2.1
 ```
 
-项目编排文件让 HBBS 与镜像内未经修改的 HBBR 使用同一个 Starry 版本，不再设置单独
-更新的 HBBR 镜像版本。
+项目编排文件让 HBBS 与镜像内保留上游中继数据路径的 HBBR 使用同一个 Starry 版本，
+不再设置单独更新的 HBBR 镜像版本。
 
 然后执行：
 
@@ -193,7 +195,7 @@ sudo systemctl restart rustdesk-server-starry-hbbr
 sudo systemctl status rustdesk-server-starry-hbbr --no-pager
 ```
 
-HBBR 包是从固定官方 revision 构建的未修改上游 HBBR。回滚需要保留旧包或仓库快照，
+HBBR 包从固定官方 revision 构建，保留上游中继数据路径并增加 Starry 版本响应头。回滚需要保留旧包或仓库快照，
 不能假定包缓存仍然保存它们。
 
 独立二进制应使用带版本的文件名，以原子方式更新服务软链接或路径。记录摘要并备份前，

@@ -119,6 +119,7 @@ def check_openapi_surface() -> None:
     history = read_json(examples / "history.json")
     assert isinstance(status, dict) and {"ready", "config", "auth"} <= status.keys()
     assert isinstance(relays, dict) and isinstance(relays.get("relays"), list)
+    assert relays["relays"][0]["version"].endswith("-patch-v1.2.1")
     assert isinstance(simulation, dict) and simulation["selection"]["non_binding"] is True
     assert isinstance(validation, dict) and isinstance(validation.get("diagnostics"), list)
     assert isinstance(plan, dict) and plan["instance_id"] == capabilities["instance"]["id"]
@@ -173,6 +174,10 @@ def check_release_version() -> None:
     assert (
         f'const STARRY_PATCH_VERSION: &str = "{patch_version}";' in agent
     ), "Control Agent capability version must match PATCH_VERSION"
+    overlay = (ROOT / "scripts/apply_overlay.py").read_text(encoding="utf-8")
+    assert 'repo_root / "PATCH_VERSION"' in overlay
+    assert 'include_str!(\\"../PATCH_VERSION\\").trim()' in overlay
+    assert '"x-starry-version"' in overlay
 
 
 def main() -> None:

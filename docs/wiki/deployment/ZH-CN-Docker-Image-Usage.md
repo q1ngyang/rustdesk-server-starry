@@ -16,7 +16,7 @@ ghcr.io/q1ngyang/rustdesk-server-starry
 
 - `linux/amd64`
 
-ARM 目前仅作为尽力的源码兼容目标；patch-v1.2.0 不承诺或发布 `linux/arm64` 镜像。
+ARM 目前仅作为尽力的源码兼容目标；patch-v1.2.1 不承诺或发布 `linux/arm64` 镜像。
 
 镜像包含修改后的 `hbbs`、未经修改的上游 `hbbr` 和 `rustdesk-utils`。Starry 功能只
 存在于 HBBS。项目部署示例让两个服务使用同一个固定版本的 Starry 镜像，避免 HBBS 与
@@ -27,10 +27,10 @@ HBBR 因分别更新而出现版本不一致。
 ## 标签与镜像摘要
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1
 ```
 
 使用版本标签实施可控升级；使用镜像摘要完全锁定产物。`latest` 会随新版本移动。

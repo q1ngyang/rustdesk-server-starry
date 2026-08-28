@@ -98,7 +98,9 @@ Verify in order:
 2. missing/expired/wrong audience, `azp`, or scope service JWT fails;
 3. `GET /control/v1/capabilities`, `/status`, `/relays`, `/config/schema`, and
    `/config` return structured data; `/config` includes the exact managed UTF-8
-   YAML and strong ETag but never dereferences secret-file references;
+   YAML and strong ETag but never dereferences secret-file references; each
+   Relay entry reports the exact HBBR Starry version last observed through its
+   WSS handshake, or `null` for a legacy or unprobed endpoint;
 4. `POST /allocations:simulate` returns a trace while repeated calls leave
    rotation/health/generation and production counters unchanged; and
 5. the listener is unreachable from public networks and HBBS `21115` remains

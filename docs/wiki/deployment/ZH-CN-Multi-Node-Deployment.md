@@ -120,8 +120,8 @@ docker compose --env-file .env -f compose.yaml up -d
 docker compose --env-file .env -f compose.yaml logs --tail 100 hbbr
 ```
 
-这些可选带宽设置属于固定版本 Starry 镜像内未经修改的上游 HBBR，不属于 Starry 的
-HBBS 扩展层：
+这些可选带宽设置属于固定版本 Starry 镜像内的上游 HBBR 数据路径，不属于 Starry 的
+HBBS 扩展层或版本响应头：
 
 | 环境变量 | 示例值 | 单位与作用 |
 | --- | ---: | --- |

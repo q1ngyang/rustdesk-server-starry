@@ -41,7 +41,7 @@ API 不包含在项目内。
 
 > Starry HBBS for RustDesk Server with Geo Relay policy, Secure TCP, WebSocket
 > signalling, connection authentication, and optional Control Agent; the same
-> image bundles unmodified HBBR, while account/API services and MMDB data are
+> image bundles upstream-data-path HBBR with version reporting, while account/API services and MMDB data are
 > not included
 
 构建工作流会在镜像写入 OCI 标题、源码、文档、版本、revision、许可证和描述 label，

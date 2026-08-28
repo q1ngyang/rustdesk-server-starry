@@ -4,7 +4,8 @@
 
 Starry is a reproducible source overlay, not a permanent fork of the complete
 RustDesk Server tree. It keeps the official server revision explicit, patches
-only HBBS-related source paths, and uses the unmodified upstream HBBR contract.
+HBBS plus one bounded HBBR WebSocket response header, and otherwise preserves
+the upstream HBBR relay contract and data path.
 
 ## Component and traffic boundaries
 
@@ -13,13 +14,13 @@ RustDesk client
   |-- API HTTPS --------------------> optional third-party API
   |-- native 21116 or WSS /ws/id ---> Starry HBBS
   |                                     | selects one Relay
-  |-- P2P, native 21117, or /ws/relay -> bundled unmodified HBBR
+  |-- P2P, native 21117, or /ws/relay -> bundled HBBR (upstream data path)
 ```
 
 | Component | Starry change | State/role |
 | --- | --- | --- |
 | HBBS | Yes | Peer registration, rendezvous, Secure TCP negotiation, persistent WSS signalling, Geo evaluation, and Relay allocation. |
-| HBBR | No | Carries relayed remote-control data. The release may bundle a convenience build from the same pinned official revision. |
+| HBBR | Version header only | Carries relayed remote-control data through the upstream path and advertises the exact Starry build during a WebSocket handshake. |
 | Control Agent | Separate Starry binary | Linux-only least-privilege management API for one local HBBS; mTLS/service JWT remotely and a bounded loopback protocol locally. |
 | `rustdesk-utils` | No | Convenience upstream utility artifact. |
 | API | Not included | Login, address book, device/admin data; select and secure independently. |
@@ -136,7 +137,7 @@ The workflow resolves the official ref and constructs
 - twice-applied overlay/idempotency and dependency-lock checks;
 - Rust formatting, all library tests, and all server-binary checks;
 - real-process WSS registration and cross-transport signalling tests;
-- mixed WebSocket/native traffic through the bundled unmodified HBBR;
+- mixed WebSocket/native traffic through the bundled HBBR's upstream data path;
 - static Linux `amd64` builds;
 - installation and command-level runtime checks for amd64 Debian packages
   under the digest-pinned Debian test image;
@@ -150,7 +151,7 @@ attaches the portable bundles, then pushes the `linux/amd64` image with
 OCI provenance and SBOM and creates or updates the GitHub Release.
 
 ARM remains best-effort source compatibility, and the Windows build is an
-experimental non-blocking check. Neither enters the patch-v1.2.0 candidate.
+experimental non-blocking check. Neither enters the patch-v1.2.1 candidate.
 
 A successful candidate build does not itself change a Release, attestation
 store, or GHCR package. Deployment acceptance remains the operator's

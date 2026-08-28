@@ -42,6 +42,7 @@ def replace_between_once(path: Path, start: str, end: str, replacement: str) -> 
 
 def copy_overlay(repo_root: Path, upstream: Path) -> None:
     shutil.copyfile(repo_root / "Cross.toml", upstream / "Cross.toml")
+    shutil.copyfile(repo_root / "PATCH_VERSION", upstream / "PATCH_VERSION")
     shutil.copyfile(repo_root / "overlay/Cargo.lock", upstream / "Cargo.lock")
     for name in (
         "allocation_explain.rs",
@@ -395,6 +396,32 @@ def patch_relay(upstream: Path) -> None:
             relay,
             ".send(tungstenite::Message::Binary(bytes.to_vec()))",
             ".send(tungstenite::Message::Binary(bytes))",
+        )
+    content = relay.read_text(encoding="utf-8")
+    if '"x-starry-version"' not in content:
+        replace_once(
+            relay,
+            "        let callback = |req: &Request, response: Response| {\n",
+            "        let callback = |req: &Request, mut response: Response| {\n",
+        )
+        replace_once(
+            relay,
+            "            Ok(response)\n"
+            "        };\n"
+            "        let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;\n",
+            "            let version = format!(\n"
+            "                \"{}-patch-v{}\",\n"
+            "                env!(\"CARGO_PKG_VERSION\"),\n"
+            "                include_str!(\"../PATCH_VERSION\").trim(),\n"
+            "            );\n"
+            "            if let Ok(value) =\n"
+            "                tokio_tungstenite::tungstenite::http::HeaderValue::from_bytes(version.as_bytes())\n"
+            "            {\n"
+            "                response.headers_mut().insert(\"x-starry-version\", value);\n"
+            "            }\n"
+            "            Ok(response)\n"
+            "        };\n"
+            "        let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;\n",
         )
 
 

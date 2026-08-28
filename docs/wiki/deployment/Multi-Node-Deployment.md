@@ -128,8 +128,8 @@ docker compose --env-file .env -f compose.yaml up -d
 docker compose --env-file .env -f compose.yaml logs --tail 100 hbbr
 ```
 
-The optional Relay tuning values belong to the unmodified upstream HBBR in the
-pinned Starry image, not to the Starry HBBS overlay:
+The optional Relay tuning values belong to the upstream HBBR data path in the
+pinned Starry image, not to the Starry HBBS overlay or version response header:
 
 | Environment variable | Example | Unit and effect |
 | --- | ---: | --- |

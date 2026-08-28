@@ -5,6 +5,15 @@
 本文记录 Starry overlay 的变化。完整产物版本由官方 RustDesk Server 版本与 Starry
 patch 版本组合，例如 `1.1.16-patch-v1.2.0`。
 
+## patch-v1.2.1 — 2026-08-28
+
+完整说明：[`RELEASE-NOTES-patch-v1.2.1.zh-CN.md`](RELEASE-NOTES-patch-v1.2.1.zh-CN.md)
+
+### 新增
+
+- Relay 版本上报：从 HBBR WebSocket 握手，经 HBBS 健康探测采集，最终在
+  Control API v1 的 Relay 清单中返回。
+
 ## patch-v1.2.0 — 2026-08-20
 
 完整说明：[`RELEASE-NOTES-patch-v1.2.0.zh-CN.md`](RELEASE-NOTES-patch-v1.2.0.zh-CN.md)
