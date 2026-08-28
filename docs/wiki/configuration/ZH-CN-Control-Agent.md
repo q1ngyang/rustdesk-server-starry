@@ -84,7 +84,8 @@ loopback，并默认只读。
 2. service JWT missing/expired/错误 audience、`azp` 或 scope 均失败；
 3. `GET /control/v1/capabilities`、`/status`、`/relays`、`/config/schema`、`/config`
    返回结构化数据；`/config` 包含精确 managed UTF-8 YAML 与 strong ETag，但绝不读取
-   secret-file reference 指向的内容；
+   secret-file reference 指向的内容；每个 Relay 条目同时返回最近一次 WSS 握手观测到的
+   HBBR Starry 精确版本，legacy 或尚未探测的 endpoint 返回 `null`；
 4. `POST /allocations:simulate` 返回 trace，重复调用不改变 rotation/health/generation 或
    production counter；
 5. 公网无法访问 listener，HBBS `21115` 继续只在 loopback。

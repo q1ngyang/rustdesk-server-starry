@@ -60,7 +60,19 @@ fn official_hbbr_bridges_websocket_and_native_streams() {
 
 async fn run_pair(port: u16, uuid: &str, websocket_first: bool) {
     let ws_url = format!("ws://127.0.0.1:{}/ws/relay", port + 2);
-    let (mut websocket, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
+    let (mut websocket, response) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
+    let expected_version = format!(
+        "{}-patch-v{}",
+        env!("CARGO_PKG_VERSION"),
+        include_str!("../PATCH_VERSION").trim()
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("x-starry-version")
+            .and_then(|value| value.to_str().ok()),
+        Some(expected_version.as_str())
+    );
     // Official HBBR reserves non-WebSocket loopback connections for its local
     // management command channel, so the native relay leg must use a
     // non-loopback local address even though the test server is on this host.

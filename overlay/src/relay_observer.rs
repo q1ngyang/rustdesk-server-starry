@@ -42,6 +42,7 @@ pub(crate) struct WebSocketRuntimeStatus {
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct RelayRuntimeView {
     pub(crate) id: String,
+    pub(crate) version: Option<String>,
     pub(crate) configured_order: usize,
     pub(crate) native: NativeRuntimeStatus,
     pub(crate) websocket: WebSocketRuntimeStatus,
@@ -334,6 +335,7 @@ fn build_snapshot(
             }
             RelayRuntimeView {
                 id: relay.clone(),
+                version: endpoint.and_then(|endpoint| endpoint.version.clone()),
                 configured_order,
                 native: NativeRuntimeStatus {
                     state: if native { "online" } else { "offline" }.to_owned(),

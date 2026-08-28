@@ -15,14 +15,14 @@
 
 ## 镜像包含什么
 
-patch-v1.2.0 发布镜像以 `linux/amd64` 为正式构建和运行验收平台，由一个锁定的官方
+patch-v1.2.1 发布镜像以 `linux/amd64` 为正式构建和运行验收平台，由一个锁定的官方
 RustDesk Server 版本加 Starry HBBS 扩展层构建。ARM 仅尽力保持源码兼容，不属于
-v1.2.0 承诺的镜像平台。
+v1.2.1 承诺的镜像平台。
 
 | 命令 | 来源 | 用途 |
 | --- | --- | --- |
 | `hbbs` | 官方 HBBS 加 Starry 扩展层 | ID 注册、会合、信令、安全 TCP、按地理位置选择中继服务器和可选 WebSocket 信令。 |
-| `hbbr` | 未修改的上游 HBBR | 与 HBBS 从同一锁定上游版本构建。所有示例都从同一 Starry 镜像版本运行它，防止版本不一致。 |
+| `hbbr` | 上游中继数据路径 + Starry 版本握手响应头 | 与 HBBS 从同一锁定上游版本构建。所有示例都从同一 Starry 镜像版本运行它，防止版本不一致。 |
 | `rustdesk-utils` | 未修改的上游工具 | 密钥和数据库维护工具。 |
 | `starry-control-agent` | Starry 可选 Linux 管理组件 | 管理一台本机 HBBS 的固定接口；强制使用 mTLS 与按权限划分的服务令牌，默认禁止写入配置。 |
 
@@ -42,7 +42,7 @@ API。可以另行部署兼容的第三方 API，推荐
 例如：
 
 ```text
-1.1.16-patch-v1.2.0
+1.1.16-patch-v1.2.1
 ```
 
 - 日常生产部署使用不可变版本标签。
@@ -53,18 +53,18 @@ API。可以另行部署兼容的第三方 API，推荐
 拉取当前文档对应版本：
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1
 ```
 
 公开 GHCR 镜像可匿名拉取。上线前检查实际镜像摘要和平台：
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1
 ```
 
 ## 推荐快速部署
@@ -72,7 +72,7 @@ docker buildx imagetools inspect \
 仓库的 [`examples/compose.yaml`](../../examples/compose.yaml) 会启动：
 
 - 本镜像中的 Starry HBBS；
-- **同一个固定版本 Starry 镜像**中的未经修改 HBBR。
+- **同一个固定版本 Starry 镜像**中保留上游中继数据路径的 HBBR。
 
 在 Linux Docker 主机上执行：
 
@@ -181,7 +181,7 @@ docker restart rustdesk-starry-hbbs
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
   hbbs --help
 ```
 
@@ -195,11 +195,11 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
-单机部署使用同一持久目录，从同一固定版本的 Starry 镜像启动未经修改的 HBBR：
+单机部署使用同一持久目录，从同一固定版本的 Starry 镜像启动保留上游中继数据路径的 HBBR：
 
 ```sh
 docker run -d \
@@ -207,7 +207,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
   hbbr -k _
 ```
 
@@ -251,7 +251,7 @@ WSS↔WSS 和两个方向的 WSS↔原生测试。详见
 5. 重建服务、检查日志、执行管理命令并完成真实客户端会话。
 6. 验收完成前保留旧镜像和备份。
 
-从 patch-v1.2.0 回滚到 patch-v1.1.0 时，必须先恢复配置结构 `version: 2`（或更早）；
+从 patch-v1.2.1 回滚到 patch-v1.1.0 时，必须先恢复配置结构 `version: 2`（或更早）；
 patch-v1.1.0 不支持 `version: 3`。回滚到更早版本时也必须恢复该版本支持的配置结构，
 不能依赖校验失败后的兼容行为。
 

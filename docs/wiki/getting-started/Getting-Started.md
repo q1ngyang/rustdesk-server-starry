@@ -83,7 +83,7 @@ recommended values:
 | Variable | Requirement | Recommended value |
 | --- | --- | --- |
 | `STARRY_IMAGE` | Required | `ghcr.io/q1ngyang/rustdesk-server-starry` |
-| `STARRY_VERSION` | Required | Exact release, currently `1.1.16-patch-v1.2.0`; do not use `latest` in production. |
+| `STARRY_VERSION` | Required | Exact release, currently `1.1.16-patch-v1.2.1`; do not use `latest` in production. |
 | `STARRY_DATA_DIR` | Required | `/opt/rustdesk-server-starry/data` is clearer than a relative path under service managers. |
 | `RUSTDESK_LOG_LEVEL` | Recommended | `info`; use `debug` only temporarily during diagnosis. |
 | Restart policy and container names | Optional | Keep the example values unless they conflict locally. |
@@ -98,7 +98,7 @@ Next edit `data/starry/config.yaml`:
    issuer.
 
 The file uses configuration structure version `3`, which is required for the
-current patch-v1.2.0 feature set. Unknown fields reject the whole candidate;
+current patch-v1.2.1 feature set. Unknown fields reject the whole candidate;
 never guess a key name.
 
 ## 5. Configure the firewall

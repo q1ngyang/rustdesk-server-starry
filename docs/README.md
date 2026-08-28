@@ -27,7 +27,7 @@ the published reading experience.
 | GHCR image | [Standalone container manual](container/CONTAINER.md), [Wiki image guide](wiki/deployment/Docker-Image-Usage.md) |
 | Configuration and features | [Parameter Reference](wiki/configuration/Configuration-Reference.md), [GEO Basics](wiki/configuration/GEO-Rules-Basics.md), [Advanced GEO Rules](wiki/configuration/GEO-Rules-Advanced.md), [Connection Authentication](wiki/configuration/Connection-Authentication.md), [Control Agent](wiki/configuration/Control-Agent.md) |
 | Operations | [Verification](wiki/operations/Operations-and-Verification.md), [Troubleshooting](wiki/operations/Troubleshooting.md), [Upgrade and Rollback](wiki/operations/Upgrade-and-Rollback.md) |
-| Releases | [Changelog](releases/CHANGELOG.md), [patch-v1.2.0](releases/RELEASE-NOTES-patch-v1.2.0.md), [patch-v1.1.0](releases/RELEASE-NOTES-patch-v1.1.0.md) |
+| Releases | [Changelog](releases/CHANGELOG.md), [patch-v1.2.1](releases/RELEASE-NOTES-patch-v1.2.1.md), [patch-v1.2.0](releases/RELEASE-NOTES-patch-v1.2.0.md), [patch-v1.1.0](releases/RELEASE-NOTES-patch-v1.1.0.md) |
 | Technical reference | [Architecture and Build](wiki/reference/Architecture-and-Build.md), [Authentication Profile](reference/auth/v1/profile.md), [Client Compatibility](reference/auth/v1/client-compatibility.md) |
 | Example walkthroughs | [Control Agent Compose](examples/control-agent/README.md); runnable files stay in the root [examples directory](../examples) |
 | Project maintenance | [Publication and metadata](project/PROJECT-METADATA.md), [Chinese project README](project/README.zh-CN.md) |

@@ -18,9 +18,9 @@ storage, networking, configuration, and change procedure.
 | Control Agent | `examples/control-agent/compose.yaml`, `examples/control-agent/.env.example` | HBBS, HBBR, and the optional private management sidecar |
 
 Every supplied HBBR service uses the **same pinned Starry image tag** as HBBS.
-The HBBR binary is unmodified upstream code built from the release's pinned
-RustDesk Server revision. Do not substitute a separately updated official
-image in these examples.
+Its relay data path comes from the release's pinned RustDesk Server revision;
+Starry adds only the bounded version response header. Do not substitute a
+separately updated official image in these examples.
 
 ## Single-host service layout
 
@@ -28,7 +28,7 @@ image in these examples.
 Internet
   ├─ 21115/TCP ───────────────> HBBS NAT test
   ├─ 21116/TCP+UDP ───────────> Starry HBBS
-  ├─ 21117/TCP ───────────────> bundled, unmodified HBBR
+  ├─ 21117/TCP ───────────────> bundled HBBR (upstream relay data path)
   └─ 443/TCP ──> Nginx
                    ├─ /ws/id ─────> 127.0.0.1:21118 (HBBS)
                    └─ /ws/relay ──> 127.0.0.1:21119 (HBBR)

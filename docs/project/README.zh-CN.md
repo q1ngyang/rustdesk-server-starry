@@ -32,20 +32,20 @@ Starry 为 **HBBS** 增加以下能力：
 | 组件 | Starry 范围 | 部署责任 |
 | --- | --- | --- |
 | HBBS | 由 Starry 扩展层修改 | 运行 Starry 镜像或发布物中的 `hbbs`。 |
-| HBBR | 不做任何修改 | 使用同一 Starry 镜像或发布物中附带的 HBBR。它与 HBBS 来自同一锁定上游版本，可避免分别更新。 |
+| HBBR | 仅增加版本声明 | 保留上游中继数据路径，只在 WebSocket 握手中增加有界 `X-Starry-Version` 响应头，供认证后的管理端盘点实际运行版本。使用同一 Starry 镜像或发布物中附带的 HBBR。 |
 | 管理代理 | 可选 Starry 组件；v1.2 仅支持 Linux | HBBS 本地控制保持仅本机可用；管理代理只通过私有 mTLS 管理通道访问，默认禁止写入配置。 |
 | 账户/API 服务 | 不包含 | 可搭配兼容的第三方 API；推荐同一开发者维护的 Kessoku。 |
 
 账户 API 登录、HBBS 信令连接、可选的 Starry 管理接口与 HBBR 数据转发是相互独立的
-协议层。Starry 不会让第三方 API 代替中继服务器，不会修改 HBBR，也不会替代 RustDesk 客户端。
+协议层。Starry 不会让第三方 API 代替中继服务器，不会改动 HBBR 中继数据路径，也不会替代 RustDesk 客户端。
 
-当前版本：**patch-v1.2.0**。参见
-[`patch-v1.2.0` 版本说明](../releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)和
+当前版本：**patch-v1.2.1**。参见
+[`patch-v1.2.1` 版本说明](../releases/RELEASE-NOTES-patch-v1.2.1.zh-CN.md)和
 [`更新日志`](../releases/CHANGELOG.zh-CN.md)。Docker 镜像发布于
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)。
 
-patch-v1.2.0 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制文件和 amd64 DEB
-安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.2.0
+patch-v1.2.1 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制文件和 amd64 DEB
+安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.2.1
 正式发布文件。
 
 > 这是非官方社区项目，与 RustDesk、MaxMind、任何 MMDB 镜像提供方或任何 AI

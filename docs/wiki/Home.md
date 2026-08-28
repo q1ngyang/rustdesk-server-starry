@@ -7,15 +7,16 @@ keeping the upstream source as its pinned build base. It adds ordered Geo
 Relay selection, managed MMDB data, Secure TCP, optional WebSocket signalling,
 connection authentication, safe configuration activation, Relay simulation,
 and an optional least-privilege Linux Control Agent. The container image also
-includes an **unmodified HBBR from the same pinned upstream revision**, so the
-provided deployments use one Starry image tag for both services.
+includes an HBBR from the same pinned upstream revision. Its relay data path is
+unchanged; Starry adds only a bounded version header to the WebSocket handshake
+so the provided deployments can inventory the exact running Relay build.
 
 ## Understand the component boundary first
 
 | Component | Role | Supplied or changed by Starry? |
 | --- | --- | --- |
 | Starry HBBS | Registers peers, coordinates connections, negotiates Secure TCP, evaluates Geo rules, and selects a Relay. | **Modified** by the overlay. |
-| Starry-image HBBR | Carries remote-control data when P2P is unavailable or a WebSocket endpoint is used. | **Not modified**. It is built from the same pinned upstream revision as HBBS; examples use this copy to prevent version drift. |
+| Starry-image HBBR | Carries remote-control data when P2P is unavailable or a WebSocket endpoint is used. | The upstream data path is unchanged. Starry adds only a bounded WebSocket-handshake version header; examples use the same pinned image as HBBS to prevent drift. |
 | Starry Control Agent | Exposes a fixed management API for one local HBBS over mTLS and scoped service JWTs. | Optional Linux component. Configuration writes are disabled by default. |
 | Account/API server | Handles login, address books, device data, and administration. | **Not included**. A compatible third-party API can be used; Kessoku is the recommended integration. |
 | RustDesk client | Registers with HBBS and establishes P2P or Relay sessions. | Not included. |
@@ -32,7 +33,7 @@ these layers separate so that deployment and diagnosis stay evidence-based.
 - Scheduled MMDB download with validation and last-known-good retention.
 - Client-compatible Secure TCP on native HBBS `21116/TCP`.
 - Optional persistent `/ws/id` signalling for constrained networks.
-- WSS-to-WSS and WSS-to-native sessions through the bundled, unmodified HBBR.
+- WSS-to-WSS and WSS-to-native sessions through the bundled HBBR, with its upstream relay data path unchanged.
 - Certificate-verified `/ws/relay` health state for WSS and mixed allocation.
 - Last-known-good config generation/digests and synchronous activation ack.
 - Strict optional connection JWT audit/enforcement across native TCP, Secure

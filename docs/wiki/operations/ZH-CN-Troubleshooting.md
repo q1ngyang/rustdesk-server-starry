@@ -178,7 +178,7 @@ Relay 域名检查 DNS、公网 `443`、证书链、主机名/SNI、精确 `/ws/
 Mixed 要求**同一个 Relay 名称**既原生在线，又 WSS 健康。检查：
 
 - `relay_servers` 与 `relay_health.endpoints[].relay` 使用完全相同的 `host:21117`；
-- 发布物中未经修改的 HBBR 将该值报告为在线；
+- 发布物中保留上游中继数据路径的 HBBR 将该值报告为在线；
 - 当前配置 generation 中对应 WSS endpoint 健康；
 - Geo 规则列出该 Relay。
 

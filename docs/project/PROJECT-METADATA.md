@@ -42,7 +42,7 @@ states that HBBR is bundled/version-locked while the account API is not.
 
 > Starry HBBS for RustDesk Server with Geo Relay policy, Secure TCP, WebSocket
 > signalling, connection authentication, and optional Control Agent; the same
-> image bundles unmodified HBBR, while account/API services and MMDB data are
+> image bundles upstream-data-path HBBR with version reporting, while account/API services and MMDB data are
 > not included
 
 The build workflow publishes OCI title, source, documentation, version,

@@ -210,7 +210,7 @@ def main() -> None:
     for container_release_metadata in (
         "org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}",
         "org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md",
-        "the same image bundles unmodified HBBR",
+        "the same image bundles upstream-data-path HBBR with version reporting",
         "account/API services and MMDB data are not included",
         "Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment",
         "Single-host Compose asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/compose.yaml",

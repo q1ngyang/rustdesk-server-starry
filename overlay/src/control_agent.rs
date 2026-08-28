@@ -45,9 +45,17 @@ const CONTROL_BODY_LIMIT: u64 = 1024 * 1024 + 4096;
 const MAX_CONNECTIONS: usize = 256;
 const CONNECTION_DEADLINE_SECONDS: u64 = 30;
 const REQUESTS_PER_MINUTE: u32 = 120;
-const STARRY_PATCH_VERSION: &str = "1.2.0";
+const STARRY_PATCH_VERSION: &str = "1.2.1";
 const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v3/config.schema.json");
 const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v3/config.ui-schema.json");
+
+fn starry_version() -> String {
+    format!(
+        "{}-patch-v{}",
+        env!("CARGO_PKG_VERSION"),
+        STARRY_PATCH_VERSION
+    )
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -458,11 +466,7 @@ async fn capabilities(
         "instance": {
             "id": state.instance_id,
             "role": "hbbs",
-            "starry_version": format!(
-                "{}-patch-v{}",
-                env!("CARGO_PKG_VERSION"),
-                STARRY_PATCH_VERSION
-            ),
+            "starry_version": starry_version(),
             "upstream_version": env!("CARGO_PKG_VERSION")
         },
         "capabilities": capabilities,

@@ -16,9 +16,9 @@ Deployment links:
 
 ## What the image contains
 
-The patch-v1.2.0 release image is built and runtime-tested for `linux/amd64`
+The patch-v1.2.1 release image is built and runtime-tested for `linux/amd64`
 from one pinned official RustDesk Server revision plus the Starry HBBS overlay.
-ARM remains best-effort source compatibility and is not a promised v1.2.0
+ARM remains best-effort source compatibility and is not a promised v1.2.1
 image platform.
 
 | Command | Origin | Intended use |
@@ -45,7 +45,7 @@ Available release tags use this form:
 For example:
 
 ```text
-1.1.16-patch-v1.2.0
+1.1.16-patch-v1.2.1
 ```
 
 - Use an immutable release tag for normal production deployments.
@@ -57,7 +57,7 @@ For example:
 Pull the current documented release:
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1
 ```
 
 Public GHCR images can be pulled anonymously. Inspect the resolved digest and
@@ -65,11 +65,11 @@ platforms before rollout:
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1
 ```
 
 ## Recommended quick start
@@ -77,7 +77,8 @@ docker buildx imagetools inspect \
 The repository's [`examples/compose.yaml`](../../examples/compose.yaml) starts:
 
 - Starry HBBS from this image; and
-- the unmodified HBBR from the **same pinned Starry image tag**.
+- the HBBR with the upstream relay data path plus Starry's version handshake
+  header from the **same pinned Starry image tag**.
 
 On a Linux Docker host:
 
@@ -202,7 +203,7 @@ testing:
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
   hbbs --help
 ```
 
@@ -216,11 +217,11 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
-Start the bundled, unmodified HBBR from the same Starry image tag and with the
+Start the bundled HBBR from the same Starry image tag and with the
 same persistent directory on a single host:
 
 ```sh
@@ -229,7 +230,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
   hbbr -k _
 ```
 
@@ -271,7 +272,7 @@ WSS-to-WSS, and both mixed WSS/native directions as applicable. See
    real client session.
 6. Keep the previous images and backup until acceptance is complete.
 
-When rolling back from patch-v1.2.0 to patch-v1.1.0, restore a schema
+When rolling back from patch-v1.2.1 to patch-v1.1.0, restore a schema
 `version: 2` (or earlier) configuration before starting the old image.
 patch-v1.1.0 does not understand schema v3. For older rollback hops, restore
 the schema supported by that release instead of relying on validation fallback.

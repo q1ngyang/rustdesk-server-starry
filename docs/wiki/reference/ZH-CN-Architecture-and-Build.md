@@ -3,8 +3,8 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Architecture-and-Build) | **简体中文**
 
 Starry 是可重复的源码 overlay，不是永久维护完整 RustDesk Server 树的 fork。它明确
-固定官方服务端 revision，只修改 HBBS 相关源码路径，并继续使用未修改的上游 HBBR
-协议约定。
+固定官方服务端 revision，修改 HBBS，并仅为 HBBR 增加一个有界 WebSocket 版本响应头；
+除此之外继续使用上游 HBBR 协议约定和中继数据路径。
 
 ## 组件和流量边界
 
@@ -13,13 +13,13 @@ RustDesk 客户端
   |-- API HTTPS --------------------> 可选第三方 API
   |-- 原生 21116 或 WSS /ws/id ----> Starry HBBS
   |                                     | 选择一台 Relay
-  |-- P2P、原生 21117 或 /ws/relay --> 发布物中未经修改的 HBBR
+  |-- P2P、原生 21117 或 /ws/relay --> 发布物中的 HBBR（上游数据路径）
 ```
 
 | 组件 | Starry 是否修改 | 状态/职责 |
 | --- | --- | --- |
 | HBBS | 是 | Peer 注册、连接协调、Secure TCP 协商、持久 WSS 信令、Geo 判断和 Relay 分配。 |
-| HBBR | 否 | 承载中继远控数据。Release 可为方便而包含从同一固定官方 revision 构建的版本。 |
+| HBBR | 仅版本响应头 | 通过上游路径承载中继远控数据，并在 WebSocket 握手时声明精确 Starry 构建版本。 |
 | Control Agent | 独立 Starry binary | 面向一个本机 HBBS 的 Linux-only 最小权限管理 API；远程使用 mTLS/service JWT，本机使用有界 loopback 协议。 |
 | `rustdesk-utils` | 否 | 上游工具的便利构建产物。 |
 | API | 不包含 | 登录、地址簿、设备/管理数据；需要独立选择和加固。 |
@@ -121,7 +121,7 @@ Rust 工具链要求同样适用。Overlay 锚点失败表示需要审查上游�
 - 两次应用 overlay 的幂等性及依赖锁定检查；
 - Rust 格式、全部库测试和服务端二进制检查；
 - 真实进程 WSS 注册与跨传输信令测试；
-- 通过发布物中未经修改 HBBR 的 WebSocket/原生混合流量测试；
+- 通过发布物中保留上游中继数据路径 HBBR 的 WebSocket/原生混合流量测试；
 - Linux `amd64` 静态构建；
 - 在 digest 固定的 Debian 测试镜像中完成 amd64 Debian 包安装和命令级 runtime 检查；
 - `linux/amd64` 容器冒烟测试；
@@ -132,7 +132,7 @@ Rust 工具链要求同样适用。Overlay 锚点失败表示需要审查上游�
 candidate checksum 和 SBOM 签名并附上可移植 bundle，随后才推送带 OCI provenance/SBOM
 的 `linux/amd64` 镜像并创建或更新 GitHub Release。
 
-ARM 仅尽力保持源码兼容，Windows 构建是非阻断实验检查；两者都不进入 patch-v1.2.0 候选。
+ARM 仅尽力保持源码兼容，Windows 构建是非阻断实验检查；两者都不进入 patch-v1.2.1 候选。
 
 候选构建成功本身不会修改 Release、attestation store 或 GHCR package。部署验收仍由
 运维者负责。

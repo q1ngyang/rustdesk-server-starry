@@ -25,7 +25,7 @@ RustDesk 服务器，请先按[单机完整教程](https://github.com/q1ngyang/r
 公网
   ├─ 21115/TCP ───────────────> HBBS NAT 类型测试
   ├─ 21116/TCP+UDP ───────────> Starry HBBS
-  ├─ 21117/TCP ───────────────> 镜像内未经修改的 HBBR
+  ├─ 21117/TCP ───────────────> 镜像内 HBBR（上游中继数据路径）
   └─ 443/TCP ──> Nginx
                    ├─ /ws/id ─────> 127.0.0.1:21118（HBBS）
                    └─ /ws/relay ──> 127.0.0.1:21119（HBBR）
