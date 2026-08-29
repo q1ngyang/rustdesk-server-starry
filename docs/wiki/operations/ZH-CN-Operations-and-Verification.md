@@ -27,7 +27,7 @@ docker compose --env-file .env -f compose.yaml config --images
 docker compose --env-file .env -f compose.yaml config > rendered-compose.review.txt
 sha256sum .env compose.yaml data/starry/config.yaml > deployment-inputs.sha256
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
   --format '{{json .RepoDigests}}'
 ```
 

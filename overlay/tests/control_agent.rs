@@ -37,7 +37,7 @@ const WRONG_CLIENT_URI: &str = "spiffe://untrusted.example/control-agent-test";
 const ISSUER: &str = "https://kessoku.example.test";
 const REQUEST_ID: &str = "018f47d2-4ab0-7def-8b51-2a7d23b82910";
 const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-const ALL_SCOPES: &str = "starry.control.read starry.relay.read starry.relay.simulate starry.config.read starry.config.validate starry.config.plan starry.config.apply starry.config.rollback starry.runtime.reload";
+const ALL_SCOPES: &str = "starry.control.read starry.peer.verify starry.relay.read starry.relay.simulate starry.config.read starry.config.validate starry.config.plan starry.config.apply starry.config.rollback starry.runtime.reload";
 const CONFIG_A: &str = "version: 3\nrelay_servers:\n  - relay-a.example.test:21117\n";
 const CONFIG_B: &str = "version: 3\nrelay_servers:\n  - relay-b.example.test:21117\n";
 const CONFIG_REJECTED: &str = r#"version: 3
@@ -334,6 +334,59 @@ fn control_agent_enforces_dual_auth_and_atomic_config_transactions() {
             );
             assert_eq!(capabilities.body["instance"]["id"], instance_id);
             assert_eq!(capabilities.body["capabilities"]["config_transaction"], 1);
+            assert_eq!(capabilities.body["capabilities"]["peer_registry"], 1);
+
+            let unknown_peer = request_json(
+                agent_address,
+                allowed_client.clone(),
+                "POST",
+                "/control/v1/peers:verify",
+                Some(&valid_token),
+                &[],
+                Some(json!({
+                    "id": "301132036",
+                    "uuid": "MDEyMzQ1Njc4OWFiY2RlZg=="
+                })),
+            )
+            .await;
+            assert_eq!(unknown_peer.status, 200);
+            assert_eq!(unknown_peer.body["instance_id"], instance_id);
+            assert_eq!(unknown_peer.body["registered"], false);
+
+            let registry = tokio_rusqlite::Connection::open(root.join("db_v2.sqlite3"))
+                .await
+                .unwrap();
+            registry
+                .call(|connection| {
+                    connection.execute(
+                        "INSERT INTO peer(guid, id, uuid, pk, info) VALUES(?1, ?2, ?3, ?4, ?5)",
+                        tokio_rusqlite::rusqlite::params![
+                            vec![0x21_u8; 16],
+                            "301132036",
+                            b"0123456789abcdef".to_vec(),
+                            vec![0x42_u8; 32],
+                            "{}"
+                        ],
+                    )?;
+                    Ok::<_, tokio_rusqlite::rusqlite::Error>(())
+                })
+                .await
+                .unwrap();
+            let registered_peer = request_json(
+                agent_address,
+                allowed_client.clone(),
+                "POST",
+                "/control/v1/peers:verify",
+                Some(&valid_token),
+                &[],
+                Some(json!({
+                    "id": "301132036",
+                    "uuid": "MDEyMzQ1Njc4OWFiY2RlZg=="
+                })),
+            )
+            .await;
+            assert_eq!(registered_peer.status, 200);
+            assert_eq!(registered_peer.body["registered"], true);
 
             let initial = request_json(
                 agent_address,

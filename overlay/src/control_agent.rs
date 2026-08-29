@@ -45,7 +45,7 @@ const CONTROL_BODY_LIMIT: u64 = 1024 * 1024 + 4096;
 const MAX_CONNECTIONS: usize = 256;
 const CONNECTION_DEADLINE_SECONDS: u64 = 30;
 const REQUESTS_PER_MINUTE: u32 = 120;
-const STARRY_PATCH_VERSION: &str = "1.2.1";
+const STARRY_PATCH_VERSION: &str = "1.2.2";
 const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v3/config.schema.json");
 const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v3/config.ui-schema.json");
 
@@ -171,6 +171,13 @@ struct ConfigRollbackRequest {
 #[serde(deny_unknown_fields)]
 struct RuntimeReloadRequest {
     expected_source_digest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PeerVerifyRequest {
+    id: String,
+    uuid: String,
 }
 
 pub async fn run(config_path: impl AsRef<Path>) -> Result<(), String> {
@@ -305,6 +312,7 @@ async fn control_action(
     let request_id = request_id(&headers);
     let (scope, mutation) = match action.as_str() {
         "allocations:simulate" => ("starry.relay.simulate", false),
+        "peers:verify" => ("starry.peer.verify", false),
         "config:validate" => ("starry.config.validate", false),
         "config:plan" => ("starry.config.plan", true),
         "config:apply" => ("starry.config.apply", true),
@@ -384,6 +392,7 @@ async fn control_action(
     }
     match action.as_str() {
         "allocations:simulate" => decoded!(Value, simulate),
+        "peers:verify" => decoded!(PeerVerifyRequest, peer_verify),
         "config:validate" => decoded!(ConfigCandidate, config_validate),
         "config:plan" => decoded!(ConfigCandidate, config_plan),
         "config:apply" => decoded!(ConfigApplyRequest, config_apply),
@@ -452,7 +461,8 @@ async fn capabilities(
     let mut capabilities = json!({
         "relay_inventory": 1,
         "allocation_simulation": 1,
-        "connection_auth": 1
+        "connection_auth": 1,
+        "peer_registry": 1
     });
     if state.write_enabled {
         let object = capabilities
@@ -497,6 +507,67 @@ async fn relays(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiProblem> {
     proxy_empty(state, certificate, headers, "starry.relay.read", "relays").await
+}
+
+async fn peer_verify(
+    Extension(state): Extension<Arc<AgentState>>,
+    Extension(certificate): Extension<ClientCertificate>,
+    headers: HeaderMap,
+    ContentLengthLimit(Json(input)): ContentLengthLimit<
+        Json<PeerVerifyRequest>,
+        CONTROL_BODY_LIMIT,
+    >,
+) -> Result<Json<Value>, ApiProblem> {
+    let request_id = request_id(&headers);
+    authorize(
+        &state,
+        &certificate,
+        &headers,
+        "starry.peer.verify",
+        &request_id,
+    )?;
+    if input.id.is_empty()
+        || input.id.len() > 128
+        || input.uuid.is_empty()
+        || input.uuid.len() > 256
+        || input
+            .id
+            .chars()
+            .chain(input.uuid.chars())
+            .any(char::is_control)
+    {
+        return Err(ApiProblem::new(
+            400,
+            "REQUEST_INVALID",
+            "Peer identity fields are invalid.",
+            false,
+            request_id,
+        ));
+    }
+    let result = local_client::call(
+        state.local_address,
+        &request_id,
+        "peer.verify",
+        json!({"id": input.id, "uuid": input.uuid}),
+    )
+    .await
+    .map_err(|error| ApiProblem::from_agent(error, request_id.clone()))?;
+    let registered = result
+        .get("registered")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| {
+            ApiProblem::new(
+                502,
+                "LOCAL_CONTROL_PROTOCOL_ERROR",
+                "HBBS omitted the peer verification result.",
+                false,
+                request_id.clone(),
+            )
+        })?;
+    Ok(Json(json!({
+        "instance_id": state.instance_id,
+        "registered": registered
+    })))
 }
 
 async fn simulate(

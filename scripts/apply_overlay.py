@@ -1541,6 +1541,7 @@ struct RelayApplyAck {
                         "capabilities",
                         "status",
                         "relays",
+                        "peer.verify",
                         "allocation.simulate",
                         "config.runtime_state",
                         "runtime.reload"
@@ -1580,6 +1581,41 @@ struct RelayApplyAck {
                             "cannot serialize Relay runtime snapshot",
                             false,
                         ),
+                    }
+                }
+            }
+            "peer.verify" => {
+                let params = request.params.as_object();
+                let id = params.and_then(|value| value.get("id")).and_then(serde_json::Value::as_str);
+                let uuid = params.and_then(|value| value.get("uuid")).and_then(serde_json::Value::as_str);
+                if params.map(|value| value.len()) != Some(2)
+                    || id.is_none_or(|value| value.is_empty() || value.len() > 128 || value.chars().any(char::is_control))
+                    || uuid.is_none_or(|value| value.is_empty() || value.len() > 256 || value.chars().any(char::is_control))
+                {
+                    local_control::Response::error(
+                        request_id,
+                        "REQUEST_INVALID",
+                        "peer.verify requires bounded id and uuid strings",
+                        false,
+                    )
+                } else {
+                    match base64::decode(uuid.unwrap()) {
+                        Err(_) => local_control::Response::error(
+                            request_id,
+                            "REQUEST_INVALID",
+                            "peer.verify uuid is not valid base64",
+                            false,
+                        ),
+                        Ok(expected_uuid) => {
+                            let registered = match self.pm.get(id.unwrap()).await {
+                                Some(peer) => peer.read().await.uuid.as_ref() == expected_uuid.as_slice(),
+                                None => false,
+                            };
+                            local_control::Response::success(
+                                request_id,
+                                serde_json::json!({"registered": registered}),
+                            )
+                        }
                     }
                 }
             }

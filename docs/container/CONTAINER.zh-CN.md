@@ -15,9 +15,9 @@
 
 ## 镜像包含什么
 
-patch-v1.2.1 发布镜像以 `linux/amd64` 为正式构建和运行验收平台，由一个锁定的官方
+patch-v1.2.2 发布镜像以 `linux/amd64` 为正式构建和运行验收平台，由一个锁定的官方
 RustDesk Server 版本加 Starry HBBS 扩展层构建。ARM 仅尽力保持源码兼容，不属于
-v1.2.1 承诺的镜像平台。
+v1.2.2 承诺的镜像平台。
 
 | 命令 | 来源 | 用途 |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ API。可以另行部署兼容的第三方 API，推荐
 例如：
 
 ```text
-1.1.16-patch-v1.2.1
+1.1.16-patch-v1.2.2
 ```
 
 - 日常生产部署使用不可变版本标签。
@@ -53,18 +53,18 @@ API。可以另行部署兼容的第三方 API，推荐
 拉取当前文档对应版本：
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2
 ```
 
 公开 GHCR 镜像可匿名拉取。上线前检查实际镜像摘要和平台：
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2
 ```
 
 ## 推荐快速部署
@@ -181,7 +181,7 @@ docker restart rustdesk-starry-hbbs
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
   hbbs --help
 ```
 
@@ -195,7 +195,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
@@ -207,7 +207,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
   hbbr -k _
 ```
 
@@ -251,7 +251,7 @@ WSS↔WSS 和两个方向的 WSS↔原生测试。详见
 5. 重建服务、检查日志、执行管理命令并完成真实客户端会话。
 6. 验收完成前保留旧镜像和备份。
 
-从 patch-v1.2.1 回滚到 patch-v1.1.0 时，必须先恢复配置结构 `version: 2`（或更早）；
+从 patch-v1.2.2 回滚到 patch-v1.1.0 时，必须先恢复配置结构 `version: 2`（或更早）；
 patch-v1.1.0 不支持 `version: 3`。回滚到更早版本时也必须恢复该版本支持的配置结构，
 不能依赖校验失败后的兼容行为。
 

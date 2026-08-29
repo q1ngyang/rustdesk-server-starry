@@ -6,6 +6,16 @@ This file records Starry overlay changes. The full artifact version combines
 the official RustDesk Server version with the Starry patch version, for example
 `1.1.16-patch-v1.2.0`.
 
+## patch-v1.2.2 — 2026-08-29
+
+Release notes: [`RELEASE-NOTES-patch-v1.2.2.md`](RELEASE-NOTES-patch-v1.2.2.md)
+
+### Added
+
+- A private, read-only Control API endpoint that verifies an exact RustDesk
+  ID/machine-UUID pair against the HBBS registry without exposing peer data.
+- Scoped service-only authorization for Kessoku background device discovery.
+
 ## patch-v1.2.1 — 2026-08-28
 
 Release notes: [`RELEASE-NOTES-patch-v1.2.1.md`](RELEASE-NOTES-patch-v1.2.1.md)

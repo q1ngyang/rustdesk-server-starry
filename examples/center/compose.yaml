@@ -10,7 +10,7 @@ name: ${CENTER_COMPOSE_PROJECT_NAME:-rustdesk-center}
 
 services:
   hbbs:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.1}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.2}
     container_name: ${CENTER_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
     command:
       - hbbs
@@ -42,7 +42,7 @@ services:
         max-file: "5"
 
   hbbr:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.1}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.2}
     container_name: ${CENTER_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
     command:
       - hbbr

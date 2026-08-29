@@ -44,6 +44,8 @@ Starry 的通用 API 示例猜测 Kessoku 的内部端口、路径、令牌字�
 7. 如果需要管理代理，应先按只读模式接入，并只通过
    [管理代理文档](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)
    规定的私有 mTLS 管理通道访问。
+8. Kessoku v3.0.6 只有在中心 HBBS 与 Control Agent 均为 patch-v1.2.2 或更新版本时，
+   才能自动发现未登录账户 API 的客户端；Agent 仅核对精确 ID/UUID，不导出注册表。
 
 ## 反向代理和防火墙
 

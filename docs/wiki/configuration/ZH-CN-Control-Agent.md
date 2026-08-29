@@ -86,9 +86,12 @@ loopback，并默认只读。
    返回结构化数据；`/config` 包含精确 managed UTF-8 YAML 与 strong ETag，但绝不读取
    secret-file reference 指向的内容；每个 Relay 条目同时返回最近一次 WSS 握手观测到的
    HBBR Starry 精确版本，legacy 或尚未探测的 endpoint 返回 `null`；
-4. `POST /allocations:simulate` 返回 trace，重复调用不改变 rotation/health/generation 或
+4. 仅服务身份的 JWT 使用 `starry.peer.verify` 调用
+   `POST /control/v1/peers:verify` 时，只返回实例 ID 与 RustDesk ID/设备 UUID 是否精确
+   存在，不返回设备资料、密钥、地址或可枚举的注册表；
+5. `POST /allocations:simulate` 返回 trace，重复调用不改变 rotation/health/generation 或
    production counter；
-5. 公网无法访问 listener，HBBS `21115` 继续只在 loopback。
+6. 公网无法访问 listener，HBBS `21115` 继续只在 loopback。
 
 每个响应包含 `X-Request-ID`；有效 W3C `traceparent` 会进入 mutation 的持久 audit。不得把
 用户 raw connection token 发送给该 API。

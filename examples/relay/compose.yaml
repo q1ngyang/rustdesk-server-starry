@@ -6,7 +6,7 @@ name: ${RELAY_COMPOSE_PROJECT_NAME:-rustdesk-relay}
 
 services:
   hbbr:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.1}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.2}
     container_name: ${RELAY_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
     command:
       - hbbr

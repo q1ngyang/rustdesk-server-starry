@@ -50,15 +50,15 @@ Control API, and the HBBR data path are separate protocol layers. Starry does
 not turn a third-party API into a Relay, does not alter the HBBR relay data
 path, and does not replace the RustDesk client.
 
-Current release: **patch-v1.2.1**. See the
-[`patch-v1.2.1` release notes](docs/releases/RELEASE-NOTES-patch-v1.2.1.md) and
+Current release: **patch-v1.2.2**. See the
+[`patch-v1.2.2` release notes](docs/releases/RELEASE-NOTES-patch-v1.2.2.md) and
 [`changelog`](docs/releases/CHANGELOG.md). Docker images are published at
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry).
 
-The patch-v1.2.1 supported release matrix is Docker `linux/amd64` plus Linux
+The patch-v1.2.2 supported release matrix is Docker `linux/amd64` plus Linux
 x86_64 binaries and amd64 DEB packages. ARM is best-effort source
 compatibility; Windows is an experimental non-blocking build. Neither is a
-promised v1.2.1 artifact.
+promised v1.2.2 artifact.
 
 > This is an unofficial community project and is not affiliated with or
 > endorsed by RustDesk, MaxMind, any MMDB mirror provider, or any AI service

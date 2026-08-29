@@ -13,7 +13,7 @@ path for most Linux operators.
 | Debian/Ubuntu | `amd64` | Separate HBBS, HBBR, utilities, and Control Agent DEB packages. |
 | Linux | `amd64` | Static `hbbs`, `hbbr`, `rustdesk-utils`, and Control Agent binaries plus a tar archive. |
 
-ARM and Windows remain non-blocking compatibility targets. patch-v1.2.1 does
+ARM and Windows remain non-blocking compatibility targets. patch-v1.2.2 does
 not promise ARM or Windows release artifacts.
 
 The Starry release HBBR is built from the same pinned official source as HBBS.
@@ -115,7 +115,7 @@ operation.
 
 ## Windows binaries
 
-This section is retained for source-build compatibility only. The v1.2.1
+This section is retained for source-build compatibility only. The v1.2.2
 candidate does not include or support a Windows release artifact.
 
 Locally built Windows files can be run interactively for initial inspection:

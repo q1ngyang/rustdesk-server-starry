@@ -151,7 +151,7 @@ attaches the portable bundles, then pushes the `linux/amd64` image with
 OCI provenance and SBOM and creates or updates the GitHub Release.
 
 ARM remains best-effort source compatibility, and the Windows build is an
-experimental non-blocking check. Neither enters the patch-v1.2.1 candidate.
+experimental non-blocking check. Neither enters the patch-v1.2.2 candidate.
 
 A successful candidate build does not itself change a Release, attestation
 store, or GHCR package. Deployment acceptance remains the operator's

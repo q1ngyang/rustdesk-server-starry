@@ -132,7 +132,7 @@ Rust 工具链要求同样适用。Overlay 锚点失败表示需要审查上游�
 candidate checksum 和 SBOM 签名并附上可移植 bundle，随后才推送带 OCI provenance/SBOM
 的 `linux/amd64` 镜像并创建或更新 GitHub Release。
 
-ARM 仅尽力保持源码兼容，Windows 构建是非阻断实验检查；两者都不进入 patch-v1.2.1 候选。
+ARM 仅尽力保持源码兼容，Windows 构建是非阻断实验检查；两者都不进入 patch-v1.2.2 候选。
 
 候选构建成功本身不会修改 Release、attestation store 或 GHCR package。部署验收仍由
 运维者负责。

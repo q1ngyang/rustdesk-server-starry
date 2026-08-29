@@ -3,8 +3,8 @@
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Upgrade-and-Rollback)
 
 An upgrade changes two versions: the official RustDesk Server base and the
-Starry patch. A tag such as `1.1.16-patch-v1.2.1` means official server
-`1.1.16` plus Starry patch `1.2.1`. Pin that complete tag, and record the image
+Starry patch. A tag such as `1.1.16-patch-v1.2.2` means official server
+`1.1.16` plus Starry patch `1.2.2`. Pin that complete tag, and record the image
 digest used in production.
 
 ## Upgrade rules
@@ -21,11 +21,15 @@ digest used in production.
 
 ## Read the current patch notes
 
+- [patch-v1.2.2 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.2.md)
 - [patch-v1.2.1 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.1.md)
 - [patch-v1.2.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.0.md)
 - [Changelog](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.md)
 
-Patch v1.2.1 adds Relay version reporting without a configuration migration.
+Patch v1.2.2 adds private peer-registry verification for Kessoku device
+discovery without a configuration migration. Upgrade the center HBBS and its
+Control Agent together; relay-only nodes do not provide this endpoint. Patch
+v1.2.1 added Relay version reporting without a configuration migration.
 Patch v1.2.0 added schema v3 last-known-good activation, strict optional
 connection JWT audit/enforcement, immutable Relay snapshots, side-effect-free
 simulation, and an optional least-privilege Linux Control Agent. Schema v1/v2
@@ -82,7 +86,7 @@ yet, and do not add an authentication issuer merely to satisfy a rollout date.
 Set the new immutable version in `.env`:
 
 ```dotenv
-STARRY_VERSION=1.1.16-patch-v1.2.1
+STARRY_VERSION=1.1.16-patch-v1.2.2
 ```
 
 The supplied Compose files use that same Starry image version for HBBS and

@@ -1,6 +1,6 @@
-# Relay version reporting and its documentation were approved for publication
-# on 2026-08-28. Exact-commit CI remains fail-closed.
+# Private peer-registry verification and its documentation are approved for
+# publication on 2026-08-29. Exact-commit CI remains fail-closed.
 status: APPROVED
-patch_version: 1.2.1
+patch_version: 1.2.2
 
 # Publication may proceed only after every required workflow job succeeds.
