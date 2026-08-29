@@ -5,6 +5,16 @@
 本文记录 Starry overlay 的变化。完整产物版本由官方 RustDesk Server 版本与 Starry
 patch 版本组合，例如 `1.1.16-patch-v1.2.0`。
 
+## patch-v1.2.2 — 2026-08-29
+
+完整说明：[`RELEASE-NOTES-patch-v1.2.2.zh-CN.md`](RELEASE-NOTES-patch-v1.2.2.zh-CN.md)
+
+### 新增
+
+- 新增私有只读 Control API，按 RustDesk ID 与设备 UUID 精确核对 HBBS 注册表，不返回
+  设备资料。
+- 为 Kessoku 后台设备发现增加独立、最小权限的服务身份认证。
+
 ## patch-v1.2.1 — 2026-08-28
 
 完整说明：[`RELEASE-NOTES-patch-v1.2.1.zh-CN.md`](RELEASE-NOTES-patch-v1.2.1.zh-CN.md)

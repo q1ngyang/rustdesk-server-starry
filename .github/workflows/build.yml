@@ -923,7 +923,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-only
-            org.opencontainers.image.description=patch-v1.2.1 Starry HBBS with connection authentication, safe configuration activation, Relay simulation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles upstream-data-path HBBR with version reporting, while account/API services and MMDB data are not included
+            org.opencontainers.image.description=Starry HBBS with secure peer-registry verification, connection authentication, safe configuration activation, Relay simulation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles upstream-data-path HBBR with version reporting, while account/API services and MMDB data are not included
           annotations: |
             index:org.opencontainers.image.title=rustdesk-server-starry
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -932,7 +932,7 @@ jobs:
             index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             index:org.opencontainers.image.revision=${{ github.sha }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-            index:org.opencontainers.image.description=patch-v1.2.1 Starry HBBS with connection authentication, safe configuration activation, Relay simulation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles upstream-data-path HBBR with version reporting, while account/API services and MMDB data are not included
+            index:org.opencontainers.image.description=Starry HBBS with secure peer-registry verification, connection authentication, safe configuration activation, Relay simulation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles upstream-data-path HBBR with version reporting, while account/API services and MMDB data are not included
 
       - name: Publish GitHub release assets
         env:
@@ -947,25 +947,15 @@ jobs:
           test -f "$notes_file"
           test -f "$chinese_notes"
           cat > release-notes.md <<EOF
-          Based on official rustdesk/rustdesk-server ${UPSTREAM_REF}.
+          # rustdesk-server-starry ${RELEASE_TAG}
 
-          Container image: https://github.com/${GITHUB_REPOSITORY}/pkgs/container/rustdesk-server-starry
-
-          Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment
-
-          Container guide: https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/container/CONTAINER.md
-
-          Single-host Compose asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/compose.yaml
-
-          Control Agent sidecar example: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/examples/control-agent/compose.yaml
-
-          中文发布说明：https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/${chinese_notes}
-
-          Verify binaries, packages, documentation, and the deployment-example
-          archive against \`SHA256SUMS\` before use.
-
+          - Based on official rustdesk/rustdesk-server ${UPSTREAM_REF}.
+          - Adds private ID/UUID registry verification for Kessoku device discovery.
+          - Image: ghcr.io/${GITHUB_REPOSITORY}:${RELEASE_TAG} (linux/amd64).
+          - Verify release assets with \`SHA256SUMS\` and the attached attestations.
+          - [Read more](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/docs/releases/RELEASE-NOTES-patch-v${PATCH_VERSION}.md) · [中文说明](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/${chinese_notes}) · [Docker guide](https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment)
           EOF
-          cat "$notes_file" >> release-notes.md
+          test "$(wc -l < release-notes.md)" -le 12
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" candidate/release-assets/* --clobber
             gh release edit "$RELEASE_TAG" --notes-file release-notes.md --latest

@@ -80,7 +80,7 @@ curl -fsSLo data/starry/config.yaml \
 | 变量 | 要求 | 推荐值 |
 | --- | --- | --- |
 | `STARRY_IMAGE` | 必填 | `ghcr.io/q1ngyang/rustdesk-server-starry` |
-| `STARRY_VERSION` | 必填 | 固定发布版本，当前为 `1.1.16-patch-v1.2.1`；生产环境不要使用 `latest`。 |
+| `STARRY_VERSION` | 必填 | 固定发布版本，当前为 `1.1.16-patch-v1.2.2`；生产环境不要使用 `latest`。 |
 | `STARRY_DATA_DIR` | 必填 | 服务托管环境建议写成 `/opt/rustdesk-server-starry/data` 绝对路径。 |
 | `RUSTDESK_LOG_LEVEL` | 推荐 | 保持 `info`；只在排查问题时临时改成 `debug`。 |
 | 重启策略和容器名称 | 可选 | 没有本机冲突时保持示例值。 |
@@ -93,7 +93,7 @@ curl -fsSLo data/starry/config.yaml \
 4. 合法来源的 MMDB 文件尚未就绪前，保持 `geo.enabled: false`；
 5. 本教程不部署令牌签发服务，因此保持 `connection_auth.mode: off`。
 
-该文件使用配置结构版本 `3`，这是 patch-v1.2.1 完整功能所需版本。出现未知字段时，
+该文件使用配置结构版本 `3`，这是 patch-v1.2.2 完整功能所需版本。出现未知字段时，
 整份候选配置都会被拒绝，不要凭经验猜测配置项名称。
 
 ## 5. 配置防火墙

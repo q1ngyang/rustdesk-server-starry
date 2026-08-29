@@ -101,9 +101,13 @@ Verify in order:
    YAML and strong ETag but never dereferences secret-file references; each
    Relay entry reports the exact HBBR Starry version last observed through its
    WSS handshake, or `null` for a legacy or unprobed endpoint;
-4. `POST /allocations:simulate` returns a trace while repeated calls leave
+4. a service-only JWT with `starry.peer.verify` can call
+   `POST /control/v1/peers:verify`; it returns only the instance ID and whether
+   the exact RustDesk ID/machine-UUID pair exists, never peer metadata, keys,
+   addresses, or a registry listing;
+5. `POST /allocations:simulate` returns a trace while repeated calls leave
    rotation/health/generation and production counters unchanged; and
-5. the listener is unreachable from public networks and HBBS `21115` remains
+6. the listener is unreachable from public networks and HBBS `21115` remains
    loopback-only.
 
 Each response includes `X-Request-ID`; a valid W3C `traceparent` is retained in

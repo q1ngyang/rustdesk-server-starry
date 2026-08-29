@@ -39,13 +39,13 @@ Starry 为 **HBBS** 增加以下能力：
 账户 API 登录、HBBS 信令连接、可选的 Starry 管理接口与 HBBR 数据转发是相互独立的
 协议层。Starry 不会让第三方 API 代替中继服务器，不会改动 HBBR 中继数据路径，也不会替代 RustDesk 客户端。
 
-当前版本：**patch-v1.2.1**。参见
-[`patch-v1.2.1` 版本说明](../releases/RELEASE-NOTES-patch-v1.2.1.zh-CN.md)和
+当前版本：**patch-v1.2.2**。参见
+[`patch-v1.2.2` 版本说明](../releases/RELEASE-NOTES-patch-v1.2.2.zh-CN.md)和
 [`更新日志`](../releases/CHANGELOG.zh-CN.md)。Docker 镜像发布于
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)。
 
-patch-v1.2.1 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制文件和 amd64 DEB
-安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.2.1
+patch-v1.2.2 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制文件和 amd64 DEB
+安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.2.2
 正式发布文件。
 
 > 这是非官方社区项目，与 RustDesk、MaxMind、任何 MMDB 镜像提供方或任何 AI

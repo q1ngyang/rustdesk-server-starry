@@ -12,6 +12,7 @@ security:
     serviceJWT: []
 tags:
   - name: Control
+  - name: Peer
   - name: Relay
   - name: Configuration
   - name: Operations
@@ -61,6 +62,26 @@ paths:
                     type: array
                     items: {$ref: "#/components/schemas/Relay"}
                   warning: {type: string}
+        default: {$ref: "#/components/responses/Problem"}
+  /peers:verify:
+    post:
+      tags: [Peer]
+      operationId: verifyPeerIdentity
+      description: >-
+        Confirms that an exact RustDesk ID and machine UUID pair is registered
+        by this HBBS instance. No peer metadata, key material, or address is exposed.
+      x-required-scope: starry.peer.verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PeerIdentity"}
+      responses:
+        "200":
+          description: Exact-match result for this Starry instance.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PeerVerification"}
         default: {$ref: "#/components/responses/Problem"}
   /allocations:simulate:
     post:
@@ -306,6 +327,20 @@ components:
       minLength: 73
       maxLength: 73
       pattern: '^"sha256:[0-9a-f]{64}"$'
+    PeerIdentity:
+      type: object
+      additionalProperties: false
+      required: [id, uuid]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        uuid: {type: string, minLength: 1, maxLength: 256}
+    PeerVerification:
+      type: object
+      additionalProperties: false
+      required: [instance_id, registered]
+      properties:
+        instance_id: {$ref: "#/components/schemas/Uuid"}
+        registered: {type: boolean}
     Capabilities:
       type: object
       additionalProperties: false

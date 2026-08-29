@@ -24,7 +24,7 @@ Markdown 文档统一分类放在 `docs/`，其中 `docs/wiki/` 仅存放在线 
 | GHCR 镜像 | [独立容器使用指南](container/CONTAINER.zh-CN.md)、[Wiki 镜像说明](wiki/deployment/ZH-CN-Docker-Image-Usage.md) |
 | 功能与配置 | [配置参数详解](wiki/configuration/ZH-CN-Configuration-Reference.md)、[地理位置规则入门](wiki/configuration/ZH-CN-GEO-Rules-Basics.md)、[进阶规则](wiki/configuration/ZH-CN-GEO-Rules-Advanced.md)、[连接认证](wiki/configuration/ZH-CN-Connection-Authentication.md)、[管理代理](wiki/configuration/ZH-CN-Control-Agent.md) |
 | 运维 | [运维与完整验证](wiki/operations/ZH-CN-Operations-and-Verification.md)、[常见问题排查](wiki/operations/ZH-CN-Troubleshooting.md)、[升级与回滚](wiki/operations/ZH-CN-Upgrade-and-Rollback.md) |
-| 版本说明 | [更新日志](releases/CHANGELOG.zh-CN.md)、[patch-v1.2.1](releases/RELEASE-NOTES-patch-v1.2.1.zh-CN.md)、[patch-v1.2.0](releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)、[patch-v1.1.0](releases/RELEASE-NOTES-patch-v1.1.0.zh-CN.md) |
+| 版本说明 | [更新日志](releases/CHANGELOG.zh-CN.md)、[patch-v1.2.2](releases/RELEASE-NOTES-patch-v1.2.2.zh-CN.md)、[patch-v1.2.1](releases/RELEASE-NOTES-patch-v1.2.1.zh-CN.md)、[patch-v1.2.0](releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md) |
 | 技术参考 | [架构与构建](wiki/reference/ZH-CN-Architecture-and-Build.md)、[连接认证约定](reference/auth/v1/profile.zh-CN.md)、[客户端兼容性](reference/auth/v1/client-compatibility.zh-CN.md) |
 | 示例说明 | [管理代理 Compose 示例](examples/control-agent/README.zh-CN.md)；实际编排文件仍在根目录的 [examples](../examples) 中 |
 | 项目维护 | [发布流程与项目元数据](project/PROJECT-METADATA.zh-CN.md)、[中文项目介绍](project/README.zh-CN.md) |

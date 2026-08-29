@@ -3,7 +3,7 @@
   "instance": {
     "id": "0191f6a0-0000-7000-8000-000000000001",
     "role": "hbbs",
-    "starry_version": "1.1.16-patch-v1.2.1",
+    "starry_version": "1.1.16-patch-v1.2.2",
     "upstream_version": "1.1.16"
   },
   "capabilities": {
@@ -11,7 +11,8 @@
     "allocation_simulation": 1,
     "config_transaction": 1,
     "config_rollback": 1,
-    "connection_auth": 1
+    "connection_auth": 1,
+    "peer_registry": 1
   },
   "config": {
     "supported_schema_versions": [1, 2, 3],

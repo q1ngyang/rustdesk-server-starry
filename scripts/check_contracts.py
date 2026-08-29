@@ -46,11 +46,13 @@ def check_json_contracts() -> None:
 
 
 def check_openapi_surface() -> None:
+    patch_version = (ROOT / "PATCH_VERSION").read_text(encoding="utf-8").strip()
     text = (CONTRACTS / "control/v1/openapi.yaml").read_text(encoding="utf-8")
     required = {
         "/capabilities",
         "/status",
         "/relays",
+        "/peers:verify",
         "/allocations:simulate",
         "/config/schema",
         "/config",
@@ -85,6 +87,7 @@ def check_openapi_surface() -> None:
         "config.json",
         "history.json",
         "operation.json",
+        "peer-verification.json",
         "plan.json",
         "relays.json",
         "status.json",
@@ -109,6 +112,13 @@ def check_openapi_surface() -> None:
     assert capabilities["config"]["schema_digest"] == (
         "sha256:" + hashlib.sha256(schema_bytes).hexdigest()
     )
+    assert capabilities["capabilities"]["peer_registry"] == 1
+
+    peer_verification = read_json(examples / "peer-verification.json")
+    assert peer_verification == {
+        "instance_id": capabilities["instance"]["id"],
+        "registered": True,
+    }
 
     status = read_json(examples / "status.json")
     relays = read_json(examples / "relays.json")
@@ -119,7 +129,7 @@ def check_openapi_surface() -> None:
     history = read_json(examples / "history.json")
     assert isinstance(status, dict) and {"ready", "config", "auth"} <= status.keys()
     assert isinstance(relays, dict) and isinstance(relays.get("relays"), list)
-    assert relays["relays"][0]["version"].endswith("-patch-v1.2.1")
+    assert relays["relays"][0]["version"].endswith(f"-patch-v{patch_version}")
     assert isinstance(simulation, dict) and simulation["selection"]["non_binding"] is True
     assert isinstance(validation, dict) and isinstance(validation.get("diagnostics"), list)
     assert isinstance(plan, dict) and plan["instance_id"] == capabilities["instance"]["id"]

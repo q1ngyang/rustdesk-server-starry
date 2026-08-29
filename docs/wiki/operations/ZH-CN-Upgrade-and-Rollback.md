@@ -3,7 +3,7 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback) | **简体中文**
 
 升级同时涉及两个版本：官方 RustDesk Server 基线和 Starry patch。例如
-`1.1.16-patch-v1.2.1` 表示官方服务端 `1.1.16` 加 Starry patch `1.2.1`。生产环境
+`1.1.16-patch-v1.2.2` 表示官方服务端 `1.1.16` 加 Starry patch `1.2.2`。生产环境
 应锁定完整标签，并记录实际镜像摘要。
 
 ## 升级原则
@@ -18,11 +18,14 @@
 
 ## 当前 patch 说明
 
+- [patch-v1.2.2 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.2.zh-CN.md)
 - [patch-v1.2.1 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.1.zh-CN.md)
 - [patch-v1.2.0 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)
 - [中文更新日志](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.zh-CN.md)
 
-patch v1.2.1 新增 Relay 版本上报，无需迁移配置。patch v1.2.0 新增 schema v3
+patch v1.2.2 为 Kessoku 设备发现新增私有注册表校验，无需迁移配置；中心 HBBS 与其
+Control Agent 应一并升级，纯 Relay 节点不提供该接口。patch v1.2.1 新增 Relay 版本上报，
+同样无需迁移配置。patch v1.2.0 新增 schema v3
 last-known-good 激活、严格可选连接 JWT audit/enforce、
 不可变 Relay snapshot、无副作用 simulation 与可选最小权限 Linux Control Agent。
 schema v1/v2 继续有效，并保持连接认证关闭。
@@ -76,7 +79,7 @@ authentication issuer。
 在 `.env` 设置新的不可变版本：
 
 ```dotenv
-STARRY_VERSION=1.1.16-patch-v1.2.1
+STARRY_VERSION=1.1.16-patch-v1.2.2
 ```
 
 项目编排文件让 HBBS 与镜像内保留上游中继数据路径的 HBBR 使用同一个 Starry 版本，

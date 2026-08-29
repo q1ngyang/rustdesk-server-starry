@@ -56,6 +56,9 @@ generic API example.
 7. If the Control Agent is required, commission it read-only first and expose
    it only through the private mTLS management path described in the
    [Control Agent guide](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent).
+8. Kessoku v3.0.6 can discover clients that are not signed in to its account
+   API only when the center HBBS and Control Agent run patch-v1.2.2 or newer.
+   The Agent verifies exact ID/UUID pairs; it does not export the registry.
 
 ## Reverse proxy and firewall
 

@@ -12,7 +12,7 @@ Docker Compose。
 | Debian/Ubuntu | `amd64` | HBBS、HBBR、工具和 Control Agent 独立 DEB。 |
 | Linux | `amd64` | 静态 `hbbs`、`hbbr`、`rustdesk-utils`、Control Agent 和 tar 包。 |
 
-ARM 与 Windows 仅作为非阻断兼容目标；patch-v1.2.1 不承诺对应发布制品。
+ARM 与 Windows 仅作为非阻断兼容目标；patch-v1.2.2 不承诺对应发布制品。
 
 Starry Release 中的 HBBR 从相同锁定官方源码构建；其中继数据路径保持上游实现，Starry
 仅增加供 Relay 清单使用的有界 WebSocket 版本响应头。
@@ -105,7 +105,7 @@ sudo systemctl enable --now rustdesk-server-starry-hbbr
 
 ## Windows 二进制
 
-本节仅保留源码构建兼容说明；v1.2.1 候选不包含或正式支持 Windows 发布制品。
+本节仅保留源码构建兼容说明；v1.2.2 候选不包含或正式支持 Windows 发布制品。
 
 本地自行构建的 Windows 文件可用于交互检查：
 

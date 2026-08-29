@@ -212,9 +212,8 @@ def main() -> None:
         "org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md",
         "the same image bundles upstream-data-path HBBR with version reporting",
         "account/API services and MMDB data are not included",
-        "Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment",
-        "Single-host Compose asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/compose.yaml",
-        "Control Agent sidecar example: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/examples/control-agent/compose.yaml",
+        "[Read more](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/docs/releases/RELEASE-NOTES-patch-v${PATCH_VERSION}.md)",
+        "test \"$(wc -l < release-notes.md)\" -le 12",
     ):
         assert container_release_metadata in build, (
             f"release metadata is missing Docker guidance: {container_release_metadata}"
@@ -225,7 +224,6 @@ def main() -> None:
         "examples config docs/examples",
         'notes_file="candidate/release-assets/RELEASE-NOTES-patch-v${PATCH_VERSION}.md"',
         'chinese_notes="docs/releases/RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md"',
-        'cat "$notes_file" >> release-notes.md',
         "python3 -m unittest discover -s scripts -p 'test_docs.py'",
     ):
         assert documentation_control in build, (
