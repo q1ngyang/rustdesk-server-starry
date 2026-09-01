@@ -27,7 +27,7 @@ docker compose --env-file .env -f compose.yaml config --images
 docker compose --env-file .env -f compose.yaml config > rendered-compose.review.txt
 sha256sum .env compose.yaml data/starry/config.yaml > deployment-inputs.sha256
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
   --format '{{json .RepoDigests}}'
 ```
 
@@ -188,7 +188,50 @@ Relay 探测。
 
 只有 HTTP `101`、没有客户端 `RegisterPk` 和完整 HBBR 会话，不算通过。
 
-## 9. 故障切换与恢复
+## 9. Relay 质量与 FastCompat 验收
+
+先灰度 Relay 质量，再灰度 FastCompat。确认官方客户端继续使用普通 `relay_server`；再
+验证 Akari 收到的候选/样本不超过配置上限，在可用时上报双端结果，并在官方字段和质量
+决定中收到同一个最终 Relay。覆盖高 RTT、jitter、loss、load、缺一端报告、健康过期、
+网段缓存复用和 hysteresis，客户端提交的 load 不得被信任。
+
+只有鉴权与安全信令通过后才启用 `fast_mode.relay.fast_compat_enabled`。不把原始授权写入
+证据，验证：
+
+| 场景 | 预期授权 | 标准 Relay 结果 |
+| --- | --- | --- |
+| 有效令牌 + Secure TCP/WSS + 最终质量决定 | 一个有效 Ed25519 FastCompat 授权；两端字节完全相同；FastMedia 为 false。 | 使用同一个最终 `relay_server`。 |
+| 官方客户端或缺少质量 offer/report | 扩展为空。 | 正常继续。 |
+| audit 中 `would_deny`，或 enforce 拒绝 | 扩展为空。 | 遵循当前鉴权模式结果。 |
+| 明文原生 TCP、端点绑定改变、授权过期或响应 Relay 不匹配 | 扩展为空/被拒绝。 | 不新增极速权限；标准兼容信令继续。 |
+| 同 UUID/来源/目标在过期前重试 | 完全复用原签名字节和过期时间。 | 冻结的质量决定不变。 |
+
+检查 capabilities 中的 `fast_relay_authorization: 1`，并让 `/relays` 签发、复用、送达和
+fail-closed 计数与场景对应。日志和 Kessoku audit 不得包含 HBBS 私钥、连接令牌、会话
+UUID 或签名授权。
+
+### Profile activation 验收
+
+测试 pending Profile 时保持当前已提交 Profile 可用。先检查
+`profile_activation_lease: 1`；只有成功 Ready ACK 精确匹配 pending activation ID/epoch、
+携带 32 字节 lease 和非零 generation 后，才能观察本地 Profile commit。
+
+执行下列矩阵并核对 `/relays.profile_activation` 计数：
+
+| 场景 | 必须结果 |
+| --- | --- |
+| Native UDP 注册/心跳/注销和 TCP 注销 | 只有精确当前 lease/generation 能移除 route。 |
+| WSS 替换与旧 reader 退出 | `remove_if_current` 保持替换后的 route active。 |
+| A→B→A 后 A1/B 延迟心跳或注销 | A2 仍注册且可验证。 |
+| 官方旧注册 | 新字段为默认值且官方路径可用；不能覆盖 active 增强 lease。 |
+| ID/UUID/public-key 完全一致的快速重新注册 | 滚动 30 秒最多新签发 12 个 lease，IP/global blocker 仍生效。 |
+| 两个 HBBS 节点 | lease 按实例不同；错误节点注销失败，`/peers:verify` 只在签发节点成功。 |
+| 进程/reader 丢失 | 执行精确 disconnect cleanup；TTL 是 45 秒兜底而非日常切换路径。 |
+
+验收证据不得记录 activation ID、public key 或 route lease。发布和回滚顺序见
+[Profile Activation Lease v1](../../reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md)。
+
+## 10. 故障切换与恢复
 
 必须在维护窗口内，只停止已获准测试的 Relay。不要通过干扰无关生产节点测试切换。
 
@@ -206,7 +249,7 @@ Relay 探测。
 Relay 丢失时现有会话可能终止；除非自己的高可用设计承诺更多，本验收目标是新会话
 被正确重新分配。
 
-## 10. 连接认证门禁
+## 11. 连接认证门禁
 
 按[连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication)
 执行完整矩阵。从 schema v3 `mode: audit` 开始，在每个 native/Secure/WSS
@@ -217,7 +260,7 @@ Relay 丢失时现有会话可能终止；除非自己的高可用设计承诺�
 password-reset、key rotation、introspection failure/recovery 与 UDP no-allocation 前，不得把
 enforce 标为 ready。unit/synthetic transport test 是必要发布证据，但不能替代部署矩阵。
 
-## 11. Control Agent 与配置恢复
+## 12. Control Agent 与配置恢复
 
 以 `write_enabled: false` 接入 Agent。验证 mTLS CA/SAN 失败、service-JWT audience/azp/
 scope/expiry 失败、读取 endpoint 与重复无副作用 simulation。staging 开启写入后，测试 ETag
@@ -229,7 +272,7 @@ revision 的 rollback、apply 中 HBBS outage 与 Agent restart recovery。
 [Control Agent 恢复 runbook](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent)
 处理。
 
-## 12. 验收记录
+## 13. 验收记录
 
 每个版本或重大配置变更使用如下表格：
 
@@ -244,6 +287,9 @@ revision 的 rollback、apply 中 HBBS outage 与 Agent restart recovery。
 | WSS 到 WSS | 预期 HBBR | 未测试 | |
 | WSS 到原生 | 两个方向 | 未测试 | |
 | Geo 决策 | 测试矩阵每一行 | 未测试 | |
+| Relay 质量双端评分/fallback | 有界且确定 | 未测试 | |
+| FastCompat 授权/重试 | 已签名、来源绑定、两端相同、FastMedia false | 未测试 | |
+| 服务端启用极速模式时的官方客户端 | 传统路径兼容，不依赖扩展 | 未测试 | |
 | 原生故障切换/恢复 | 按顺序 | 未测试 | |
 | WSS/混合切换/恢复 | 按顺序 | 未测试 | |
 | 连接认证 audit 矩阵 | 每个预期 decision 均分类 | 未测试 | |

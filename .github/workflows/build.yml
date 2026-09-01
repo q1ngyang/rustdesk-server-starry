@@ -203,6 +203,7 @@ jobs:
           python3 scripts/apply_overlay.py _upstream
           first_digest="$({
             find _upstream/src _upstream/tests _upstream/contracts \
+              _upstream/libs/hbb_common/protos _upstream/PATCH_VERSION \
               _upstream/libs/hbb_common/src _upstream/Cargo.toml \
               _upstream/Cargo.lock _upstream/Cross.toml \
               _upstream/libs/hbb_common/Cargo.toml \
@@ -213,6 +214,7 @@ jobs:
           python3 scripts/apply_overlay.py _upstream
           second_digest="$({
             find _upstream/src _upstream/tests _upstream/contracts \
+              _upstream/libs/hbb_common/protos _upstream/PATCH_VERSION \
               _upstream/libs/hbb_common/src _upstream/Cargo.toml \
               _upstream/Cargo.lock _upstream/Cross.toml \
               _upstream/libs/hbb_common/Cargo.toml \
@@ -345,11 +347,14 @@ jobs:
             _upstream/src/control_agent/local_client.rs \
             _upstream/src/bin/starry-control-agent.rs \
             _upstream/src/database.rs \
+            _upstream/src/fast_relay.rs \
+            _upstream/src/profile_activation.rs \
             _upstream/src/secure_tcp.rs \
             _upstream/src/geo_relay.rs \
             _upstream/src/geo_relay/rules.rs \
             _upstream/src/local_control.rs \
             _upstream/src/relay_observer.rs \
+            _upstream/src/relay_quality.rs \
             _upstream/src/websocket_signal.rs \
             _upstream/src/websocket_signal/session.rs \
             _upstream/src/websocket_signal/routing.rs \
@@ -861,6 +866,148 @@ jobs:
         working-directory: candidate/release-assets
         run: sha256sum --check SHA256SUMS
 
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        with:
+          driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Create or verify immutable annotated release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          verify_tag() {
+            local tag_object_sha
+            test "$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+              --jq .object.type)" = tag
+            tag_object_sha="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+              --jq .object.sha)"
+            printf '%s' "$tag_object_sha" | grep -Eq '^[0-9a-f]{40}$'
+            test "$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object_sha}" \
+              --jq .tag)" = "$RELEASE_TAG"
+            test "$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object_sha}" \
+              --jq .object.type)" = commit
+            test "$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object_sha}" \
+              --jq .object.sha)" = "$GITHUB_SHA"
+          }
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            >/dev/null 2>&1; then
+            verify_tag
+            echo "exact annotated tag already exists: $RELEASE_TAG"
+            exit 0
+          fi
+          tag_object_sha="$(gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/tags" \
+            -f tag="$RELEASE_TAG" \
+            -f message="rustdesk-server-starry ${RELEASE_TAG}" \
+            -f object="$GITHUB_SHA" -f type=commit --jq .sha)"
+          printf '%s' "$tag_object_sha" | grep -Eq '^[0-9a-f]{40}$'
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${RELEASE_TAG}" -f sha="$tag_object_sha" \
+            --jq .ref | grep -Fx "refs/tags/${RELEASE_TAG}"
+          verify_tag
+
+      - name: Push the final linux/amd64 image
+        id: final-image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: candidate/docker
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ needs.resolve.outputs.release_tag }}
+            ${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.title=rustdesk-server-starry
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md
+            org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.description=patch-v1.3.0 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles HBBR with compatible Relay data forwarding plus active probes and load telemetry, while account/API services and MMDB data are not included
+          annotations: |
+            index:org.opencontainers.image.title=rustdesk-server-starry
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}
+            index:org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md
+            index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+            index:org.opencontainers.image.licenses=AGPL-3.0-only
+            index:org.opencontainers.image.description=patch-v1.3.0 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles HBBR with compatible Relay data forwarding plus active probes and load telemetry, while account/API services and MMDB data are not included
+
+      - name: Record image and OpenAPI/schema publication summary
+        env:
+          PUSHED_DIGEST: ${{ steps.final-image.outputs.digest }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$PUSHED_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          image_ref="${IMAGE_NAME}:${RELEASE_TAG}"
+          registry_digest="$(docker buildx imagetools inspect "$image_ref" \
+            | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+          test "$registry_digest" = "$PUSHED_DIGEST"
+          manifest_json="${RUNNER_TEMP}/starry-image-index.json"
+          docker buildx imagetools inspect "${IMAGE_NAME}@${PUSHED_DIGEST}" \
+            --raw > "$manifest_json"
+          linux_amd64_count="$(jq '[.manifests[] | select(
+            .platform.os == "linux" and .platform.architecture == "amd64"
+          )] | length' "$manifest_json")"
+          test "$linux_amd64_count" = 1
+          linux_amd64_digest="$(jq -r '.manifests[] | select(
+            .platform.os == "linux" and .platform.architecture == "amd64"
+          ) | .digest' "$manifest_json")"
+          printf '%s' "$linux_amd64_digest" \
+            | grep -Eq '^sha256:[0-9a-f]{64}$'
+          upstream_ref="$(sed -n 's/^upstream_ref=//p' \
+            candidate/release-assets/BUILD-INPUTS.txt)"
+          upstream_commit="$(sed -n 's/^upstream_commit=//p' \
+            candidate/release-assets/BUILD-INPUTS.txt)"
+          upstream_common_commit="$(sed -n \
+            's/^upstream_hbb_common_commit=//p' \
+            candidate/release-assets/BUILD-INPUTS.txt)"
+          python3 scripts/write_release_summary.py \
+            --output candidate/release-assets/STARRY-RELEASE-SUMMARY.json \
+            --release-tag "$RELEASE_TAG" \
+            --source-commit "$GITHUB_SHA" \
+            --upstream-ref "$upstream_ref" \
+            --upstream-commit "$upstream_commit" \
+            --upstream-hbb-common-commit "$upstream_common_commit" \
+            --image-reference "$image_ref" \
+            --image-index-digest "$PUSHED_DIGEST" \
+            --image-linux-amd64-digest "$linux_amd64_digest"
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --arg source "$GITHUB_SHA" \
+            --arg index "$PUSHED_DIGEST" \
+            --arg amd64 "$linux_amd64_digest" \
+            '.release.tag == $tag and .release.source_commit == $source
+             and .image.index_digest == $index
+             and .image.platforms["linux/amd64"] == $amd64' \
+            candidate/release-assets/STARRY-RELEASE-SUMMARY.json >/dev/null
+          (
+            cd candidate/release-assets
+            checksums="$(mktemp)"
+            find . -maxdepth 1 -type f ! -name SHA256SUMS \
+              -printf '%f\0' | LC_ALL=C sort -z | xargs -0 sha256sum -- \
+              > "$checksums"
+            mv "$checksums" SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
       - name: Sign build provenance for every candidate subject
         id: provenance
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
@@ -894,46 +1041,6 @@ jobs:
             sha256sum --check SHA256SUMS
           )
 
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
-        with:
-          driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
-
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Push the final linux/amd64 image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: candidate/docker
-          platforms: linux/amd64
-          push: true
-          provenance: mode=max
-          sbom: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ needs.resolve.outputs.release_tag }}
-            ${{ env.IMAGE_NAME }}:latest
-          labels: |
-            org.opencontainers.image.title=rustdesk-server-starry
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}
-            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md
-            org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.licenses=AGPL-3.0-only
-            org.opencontainers.image.description=Starry HBBS with secure peer-registry verification, connection authentication, safe configuration activation, Relay simulation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles upstream-data-path HBBR with version reporting, while account/API services and MMDB data are not included
-          annotations: |
-            index:org.opencontainers.image.title=rustdesk-server-starry
-            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            index:org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}
-            index:org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md
-            index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
-            index:org.opencontainers.image.revision=${{ github.sha }}
-            index:org.opencontainers.image.licenses=AGPL-3.0-only
-            index:org.opencontainers.image.description=Starry HBBS with secure peer-registry verification, connection authentication, safe configuration activation, Relay simulation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles upstream-data-path HBBR with version reporting, while account/API services and MMDB data are not included
-
       - name: Publish GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -947,21 +1054,30 @@ jobs:
           test -f "$notes_file"
           test -f "$chinese_notes"
           cat > release-notes.md <<EOF
-          # rustdesk-server-starry ${RELEASE_TAG}
+          Based on official rustdesk/rustdesk-server ${UPSTREAM_REF}.
 
-          - Based on official rustdesk/rustdesk-server ${UPSTREAM_REF}.
-          - Adds private ID/UUID registry verification for Kessoku device discovery.
-          - Image: ghcr.io/${GITHUB_REPOSITORY}:${RELEASE_TAG} (linux/amd64).
-          - Verify release assets with \`SHA256SUMS\` and the attached attestations.
-          - [Read more](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/docs/releases/RELEASE-NOTES-patch-v${PATCH_VERSION}.md) · [中文说明](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/${chinese_notes}) · [Docker guide](https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment)
+          Container image: https://github.com/${GITHUB_REPOSITORY}/pkgs/container/rustdesk-server-starry
+
+          Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment
+
+          Container guide: https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/container/CONTAINER.md
+
+          Single-host Compose asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/compose.yaml
+
+          Control Agent sidecar example: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/examples/control-agent/compose.yaml
+
+          中文发布说明：https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/${chinese_notes}
+
+          Verify binaries, packages, documentation, and the deployment-example
+          archive against \`SHA256SUMS\` before use.
+
           EOF
-          test "$(wc -l < release-notes.md)" -le 12
+          cat "$notes_file" >> release-notes.md
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" candidate/release-assets/* --clobber
             gh release edit "$RELEASE_TAG" --notes-file release-notes.md --latest
           else
             gh release create "$RELEASE_TAG" candidate/release-assets/* \
-              --target "$GITHUB_SHA" \
               --title "rustdesk-server-starry $RELEASE_TAG" \
               --notes-file release-notes.md \
               --latest
@@ -969,6 +1085,7 @@ jobs:
 
       - name: Write publication summary
         env:
+          PUSHED_DIGEST: ${{ steps.final-image.outputs.digest }}
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           {
@@ -976,5 +1093,7 @@ jobs:
             echo
             echo "- Release: \`$RELEASE_TAG\`"
             echo "- Image: \`${IMAGE_NAME}:$RELEASE_TAG\`"
+            echo "- Image index: \`$PUSHED_DIGEST\`"
             echo "- Rolling image: \`${IMAGE_NAME}:latest\`"
+            echo "- Contract digest summary: \`STARRY-RELEASE-SUMMARY.json\`"
           } >> "$GITHUB_STEP_SUMMARY"

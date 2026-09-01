@@ -110,7 +110,8 @@
       "required": ["relay", "url"],
       "properties": {
         "relay": {"type": "string", "minLength": 1},
-        "url": {"type": "string", "pattern": "^wss://[^/?#]+/ws/relay$"}
+        "url": {"type": "string", "pattern": "^wss://[^/?#]+/ws/(relay|telemetry)$"},
+        "telemetry_secret_file": {"type": "string", "pattern": "^/", "minLength": 2, "x-file-reference": true, "x-sensitive": true}
       }
     },
     "relayHealth": {
@@ -123,6 +124,7 @@
         "failure_threshold": {"type": "integer", "minimum": 1, "maximum": 100, "default": 2},
         "endpoints": {
           "type": "array",
+          "maxItems": 256,
           "items": {"$ref": "#/$defs/relayEndpoint"}
         }
       }

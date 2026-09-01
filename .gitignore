@@ -16,3 +16,4 @@ __pycache__/
 starry/config.yaml
 starry/config.example.yaml
 starry/mmdb/
+/deploy-test

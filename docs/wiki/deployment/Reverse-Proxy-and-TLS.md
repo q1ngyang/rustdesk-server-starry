@@ -82,6 +82,33 @@ location = /ws/relay {
 homepage, ICMP ping, or a certificate ignored by a browser warning is not an
 acceptable health endpoint.
 
+## Internal Relay `/ws/telemetry`
+
+Relay Quality uses a separate exact path. Keep it off the general public
+allow-list, permit only HBBS source networks, disable caching, and preserve the
+Starry authentication headers. For example:
+
+```nginx
+location = /ws/telemetry {
+    allow 10.20.0.0/16;
+    deny all;
+    proxy_pass http://127.0.0.1:21119;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_buffering off;
+    proxy_read_timeout 15s;
+    proxy_send_timeout 15s;
+}
+```
+
+Use a dedicated internal hostname and mTLS where possible. HBBR still requires
+the secret-file HMAC, so an accidentally reachable endpoint does not disclose
+load to an unauthenticated WSS client. Never put the secret in a query string,
+header literal, Nginx configuration, or access log. See
+[Relay Telemetry Security and Operations](../Relay-Telemetry-Operations.md).
+
 ## Certificates
 
 For each hostname:

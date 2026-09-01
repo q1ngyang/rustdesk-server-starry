@@ -4,7 +4,70 @@
 
 This file records Starry overlay changes. The full artifact version combines
 the official RustDesk Server version with the Starry patch version, for example
-`1.1.16-patch-v1.2.0`.
+`1.1.16-patch-v1.3.0`.
+
+## patch-v1.3.0 — development
+
+Release notes: [`RELEASE-NOTES-patch-v1.3.0.md`](RELEASE-NOTES-patch-v1.3.0.md)
+
+### Added
+
+- Private additive protobuf v1 fields for Akari Relay-quality capability
+  negotiation, candidate offers, dual-end reports, scores, and decisions. All
+  quality additions use tags 100+; the ordinary `relay_server` remains
+  authoritative for official clients.
+- Bounded TCP/WSS HBBR active-probe responses with echoed nonces, exact Starry
+  version, active sessions, capacity, current bandwidth, and load basis points.
+- Explicit HBBR `relay_probe_protocol=1` / `relay_load_protocol=1` capability
+  negotiation, freshness-bounded telemetry, bounded-concurrent HBBS health
+  probes, and legacy fallback nodes that never consume quality-candidate slots.
+- HBBS selection using effective dual-end RTT, jitter, loss, trusted Relay
+  load, missing-report penalties, symmetric network-prefix cache, and
+  configurable hysteresis.
+- Schema v4 `relay_quality` settings and Control API v1 inventory telemetry for
+  Kessoku, without creating a client-to-Control-Agent path.
+- A server-enforced allocation report deadline independent of cleanup TTL,
+  feasibility validation for ordered samples, stable decision reason codes,
+  and aggregate accepted/late/invalid/binding-mismatch counters.
+- Default-off schema v4 `fast_mode` policy and additive tag 64 authorization
+  bytes in `RequestRelay`/`RelayResponse`. HBBS signs `FastCompat` only after
+  exact auth allow and final quality selection, binds/cache-limits the grant,
+  and sends identical bytes to both Akari endpoints.
+- Control capability `fast_relay_authorization: 1` and bounded `/relays`
+  issuance, reuse, delivery, and fail-closed counters. patch-v1.3.0 always
+  signs `allow_fast_media_v1 = false` and adds no Relay UDP media path.
+- Profile Activation Lease v1 for Akari: 16-byte client activation IDs,
+  matching Ready ACKs, 32-byte node-local route leases, and one shared route
+  generation authority across Native UDP/TCP and WSS.
+- Exact-current `DeactivatePeer`, generation-safe disconnect cleanup, a
+  45-second crash-fallback TTL, and a 12-per-30-second verified rapid
+  re-registration burst keyed by peer ID, network identity UUID, and public
+  key. HBBR data messages remain unchanged.
+- Control capability `profile_activation_lease: 1`, aggregate `/relays`
+  lifecycle/rejection counters, and exact current-lease `/peers:verify` support
+  for per-instance Kessoku reconciliation.
+
+### Compatibility
+
+- Schema v1-v3 remain accepted. Relay quality is disabled unless a schema v4
+  configuration enables it and the initiating client opts into protocol v1.
+- Official clients continue to receive one legacy `relay_server`; official
+  Relay forwarding semantics and ports are unchanged. Unknown tag 64 is
+  ignored, while HBBS clears any client-supplied authorization bytes.
+- Official/legacy HBBR can be named in `legacy_fallback_relays` for ordinary
+  fallback, but missing explicit capability or fresh load always excludes them
+  from quality offers. Fewer than two compatible candidates disables the offer
+  and preserves the full traditional Geo/failover path.
+- Akari force-Relay mode performs the same quality-capable PunchHole preflight
+  before `RequestRelay`; a direct RequestRelay without an offer retains the
+  legacy selection path.
+- FastCompat remains disabled unless schema v4 explicitly enables it together
+  with Relay quality, connection authentication, and secure signalling. Any
+  missing prerequisite falls back to the standard Relay flow without a grant.
+- Official registration messages omit Profile activation fields and retain
+  their current path. Akari commits a Profile only after a successful ACK
+  echoes its exact activation ID/epoch and supplies a valid lease/generation;
+  older servers therefore fail closed to the previous committed Profile.
 
 ## patch-v1.2.2 — 2026-08-29
 

@@ -23,9 +23,9 @@ Markdown 文档统一分类放在 `docs/`，其中 `docs/wiki/` 仅存放在线 
 | 部署 | [Docker 部署](wiki/deployment/ZH-CN-Docker-Deployment.md)、[原生部署](wiki/deployment/ZH-CN-Native-Deployment.md)、[多节点部署](wiki/deployment/ZH-CN-Multi-Node-Deployment.md)、[反向代理与 TLS](wiki/deployment/ZH-CN-Reverse-Proxy-and-TLS.md)、[账户与 API 服务接入](wiki/deployment/ZH-CN-API-Integration.md) |
 | GHCR 镜像 | [独立容器使用指南](container/CONTAINER.zh-CN.md)、[Wiki 镜像说明](wiki/deployment/ZH-CN-Docker-Image-Usage.md) |
 | 功能与配置 | [配置参数详解](wiki/configuration/ZH-CN-Configuration-Reference.md)、[地理位置规则入门](wiki/configuration/ZH-CN-GEO-Rules-Basics.md)、[进阶规则](wiki/configuration/ZH-CN-GEO-Rules-Advanced.md)、[连接认证](wiki/configuration/ZH-CN-Connection-Authentication.md)、[管理代理](wiki/configuration/ZH-CN-Control-Agent.md) |
-| 运维 | [运维与完整验证](wiki/operations/ZH-CN-Operations-and-Verification.md)、[常见问题排查](wiki/operations/ZH-CN-Troubleshooting.md)、[升级与回滚](wiki/operations/ZH-CN-Upgrade-and-Rollback.md) |
-| 版本说明 | [更新日志](releases/CHANGELOG.zh-CN.md)、[patch-v1.2.2](releases/RELEASE-NOTES-patch-v1.2.2.zh-CN.md)、[patch-v1.2.1](releases/RELEASE-NOTES-patch-v1.2.1.zh-CN.md)、[patch-v1.2.0](releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md) |
-| 技术参考 | [架构与构建](wiki/reference/ZH-CN-Architecture-and-Build.md)、[连接认证约定](reference/auth/v1/profile.zh-CN.md)、[客户端兼容性](reference/auth/v1/client-compatibility.zh-CN.md) |
+| 运维 | [运维与完整验证](wiki/operations/ZH-CN-Operations-and-Verification.md)、[Relay 遥测安全与运维](wiki/ZH-CN-Relay-Telemetry-Operations.md)、[常见问题排查](wiki/operations/ZH-CN-Troubleshooting.md)、[升级与回滚](wiki/operations/ZH-CN-Upgrade-and-Rollback.md) |
+| 版本说明 | [更新日志](releases/CHANGELOG.zh-CN.md)、[patch-v1.3.0](releases/RELEASE-NOTES-patch-v1.3.0.zh-CN.md)、[patch-v1.2.0](releases/RELEASE-NOTES-patch-v1.2.0.zh-CN.md)、[patch-v1.1.0](releases/RELEASE-NOTES-patch-v1.1.0.zh-CN.md) |
+| 技术参考 | [架构与构建](wiki/reference/ZH-CN-Architecture-and-Build.md)、[Relay 质量协议 v1](reference/RELAY-QUALITY-PROTOCOL-v1.zh-CN.md)、[Relay Telemetry v1](reference/RELAY-TELEMETRY-v1.zh-CN.md)、[极速 Relay 授权协议 v1](reference/FAST-RELAY-AUTHORIZATION-v1.zh-CN.md)、[Profile Activation Lease v1](reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md)、[连接认证约定](reference/auth/v1/profile.zh-CN.md)、[客户端兼容性](reference/auth/v1/client-compatibility.zh-CN.md) |
 | 示例说明 | [管理代理 Compose 示例](examples/control-agent/README.zh-CN.md)；实际编排文件仍在根目录的 [examples](../examples) 中 |
 | 项目维护 | [发布流程与项目元数据](project/PROJECT-METADATA.zh-CN.md)、[中文项目介绍](project/README.zh-CN.md) |
 | 历史归档 | [WebSocket 开发方案](archive/PATCH-V1.1.0-WEBSOCKET-DEVELOPMENT-PLAN.md)（保留原始中文记录，不作为当前部署指南） |
@@ -44,7 +44,7 @@ docs/
 │   └── reference/              # 架构与构建
 ├── container/                  # 独立 GHCR 镜像指南
 ├── releases/                   # 更新日志和各版本发布说明
-├── reference/auth/v1/          # 连接认证与兼容性参考
+├── reference/                  # Relay 质量、极速 Relay、Profile activation、连接认证与兼容性参考
 ├── examples/control-agent/    # 示例操作说明，不存放编排文件
 ├── project/                    # 中文项目入口和发布维护说明
 └── archive/                    # 历史开发记录

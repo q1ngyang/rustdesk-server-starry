@@ -16,15 +16,15 @@ Deployment links:
 
 ## What the image contains
 
-The patch-v1.2.2 release image is built and runtime-tested for `linux/amd64`
+The patch-v1.3.0 candidate image is built and runtime-tested for `linux/amd64`
 from one pinned official RustDesk Server revision plus the Starry HBBS overlay.
-ARM remains best-effort source compatibility and is not a promised v1.2.2
+ARM remains best-effort source compatibility and is not a promised v1.3.0
 image platform.
 
 | Command | Origin | Intended use |
 | --- | --- | --- |
 | `hbbs` | Official HBBS plus the Starry overlay | ID, rendezvous, signalling, Secure TCP, Geo Relay selection, and optional WebSocket Signal. |
-| `hbbr` | Unmodified upstream HBBR | Built from the same pinned upstream revision as HBBS. All supplied examples use this copy from the same Starry image tag to prevent version drift. |
+| `hbbr` | Upstream data path plus public probe/authenticated telemetry | Built from the same pinned upstream revision as HBBS. It answers Akari quality probes without load details and exposes bounded load/version telemetry only to authenticated HBBS pulls; all supplied examples use the same image tag. |
 | `rustdesk-utils` | Unmodified upstream utility | Key and database maintenance utilities. |
 | `starry-control-agent` | Starry optional Linux management component | Fixed Control API for one local HBBS. It requires mTLS and scoped service JWTs and starts with configuration writes disabled. |
 
@@ -45,7 +45,7 @@ Available release tags use this form:
 For example:
 
 ```text
-1.1.16-patch-v1.2.2
+1.1.16-patch-v1.3.0
 ```
 
 - Use an immutable release tag for normal production deployments.
@@ -57,7 +57,7 @@ For example:
 Pull the current documented release:
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0
 ```
 
 Public GHCR images can be pulled anonymously. Inspect the resolved digest and
@@ -65,11 +65,11 @@ platforms before rollout:
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0
 ```
 
 ## Recommended quick start
@@ -77,8 +77,8 @@ docker buildx imagetools inspect \
 The repository's [`examples/compose.yaml`](../../examples/compose.yaml) starts:
 
 - Starry HBBS from this image; and
-- the HBBR with the upstream relay data path plus Starry's version handshake
-  header from the **same pinned Starry image tag**.
+- the HBBR with the upstream Relay byte-forwarding path plus Starry quality
+  public probe and authenticated load telemetry from the **same pinned Starry image tag**.
 
 On a Linux Docker host:
 
@@ -196,6 +196,11 @@ The optional Control Agent has a separate
 Commission it read-only. Do not publish its listener or HBBS local control on
 the public RustDesk ports.
 
+Set `RELAY_MAX_SESSIONS` (passed to HBBR as
+`STARRY_RELAY_MAX_SESSIONS`) to a realistic concurrent-session capacity before
+enabling Relay quality. HBBR combines that ratio with its current aggregate
+bandwidth ratio; `TOTAL_BANDWIDTH` remains expressed in Mbit/s.
+
 ## Run a single command without Compose
 
 Compose is recommended for long-lived services. For inspection or temporary
@@ -203,7 +208,7 @@ testing:
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
   hbbs --help
 ```
 
@@ -217,7 +222,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
@@ -230,7 +235,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
   hbbr -k _
 ```
 
@@ -272,10 +277,13 @@ WSS-to-WSS, and both mixed WSS/native directions as applicable. See
    real client session.
 6. Keep the previous images and backup until acceptance is complete.
 
-When rolling back from patch-v1.2.2 to patch-v1.1.0, restore a schema
-`version: 2` (or earlier) configuration before starting the old image.
-patch-v1.1.0 does not understand schema v3. For older rollback hops, restore
-the schema supported by that release instead of relying on validation fallback.
+When rolling back from patch-v1.3.0 to patch-v1.2.0, first restore a schema
+`version: 3` (or earlier) configuration without `fast_mode` or
+`relay_quality`. Disable FastCompat and wait past its authorization TTL before
+the binary rollback. For a later patch-v1.2.0 to patch-v1.1.0 rollback, restore
+schema `version: 2` (or earlier). patch-v1.1.0 does not understand schema v3.
+For older rollback hops, restore the schema supported by that release instead
+of relying on validation fallback.
 
 Do not republish or overwrite an immutable version tag as an upgrade method.
 

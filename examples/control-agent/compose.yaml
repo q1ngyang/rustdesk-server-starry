@@ -81,13 +81,18 @@ services:
       - no-new-privileges:true
 
   hbbr:
-    # The Starry image includes the unmodified upstream HBBR built from the
+    # The Starry image includes the compatible probe/load HBBR built from the
     # same pinned RustDesk Server revision. Using the same image tag for both
     # services prevents independent HBBS/HBBR version drift.
     image: ${STARRY_IMAGE}:${STARRY_VERSION}
     command: [hbbr, -k, _]
     environment:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+      STARRY_RELAY_MAX_SESSIONS: ${RELAY_MAX_SESSIONS:-10000}
+      STARRY_RELAY_PROBE_PER_IP_PER_MINUTE: ${RELAY_PROBE_PER_IP_PER_MINUTE:-120}
+      STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE: ${RELAY_PROBE_GLOBAL_PER_MINUTE:-10000}
+      STARRY_RELAY_TELEMETRY_SECRET_FILE: ${RELAY_TELEMETRY_SECRET_FILE:-}
+      STARRY_RELAY_DRAINING_FILE: ${RELAY_DRAINING_FILE:-/root/starry/hbbr.draining}
     volumes:
       - type: bind
         source: ${STARRY_PERSIST_ROOT:-./persist}/hbbs

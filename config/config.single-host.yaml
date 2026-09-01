@@ -1,7 +1,7 @@
 # Single-host Docker template for Starry HBBS and its bundled HBBR.
 # Replace rustdesk.example.com before use. Start with WebSocket and Geo disabled,
 # complete the native test, then enable each section by following the Wiki.
-version: 3
+version: 4
 
 relay_servers:
   - rustdesk.example.com:21117
@@ -42,6 +42,14 @@ websocket_signal:
 # before changing this value.
 connection_auth:
   mode: off
+
+# Requires authenticated Secure TCP/WSS signalling and Relay quality. The
+# default keeps every client on the ordinary Relay data path.
+fast_mode:
+  relay:
+    fast_compat_enabled: false
+    authorization_ttl_seconds: 90
+    max_bitrate_kbps: 50000
 
 # Supply licensed MMDB files manually under data/mmdb, or add lawful HTTPS
 # direct-download URLs below. Empty URLs disable automatic downloads.

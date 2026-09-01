@@ -145,6 +145,17 @@ def main() -> None:
     assert 'repo_root / "overlay/Cargo.lock"' in overlay, (
         "the reviewed Cargo lockfile must be copied into patched source"
     )
+    for quality_source_control in (
+        "_upstream/libs/hbb_common/protos _upstream/PATCH_VERSION",
+        "_upstream/src/relay_quality.rs",
+        "_upstream/src/fast_relay.rs",
+        "_upstream/src/profile_activation.rs",
+        "--test mixed_relay",
+        "--test protocol_contract",
+    ):
+        assert quality_source_control in build, (
+            f"build workflow is missing Relay quality verification: {quality_source_control}"
+        )
     lockfile = ROOT / "overlay/Cargo.lock"
     assert lockfile.is_file(), "the reviewed Cargo lockfile is missing"
     assert hashlib.sha256(lockfile.read_bytes()).hexdigest() == (
@@ -173,6 +184,19 @@ def main() -> None:
         "hbbs_sustains_one_thousand_registered_idle_websockets",
     ):
         assert test_control in build, f"build workflow is missing test control: {test_control}"
+    websocket_gate = (ROOT / "overlay/tests/websocket_signal.rs").read_text(
+        encoding="utf-8"
+    )
+    for websocket_load_control in (
+        "ensure_websocket_load_nofile_limit();",
+        "libc::getrlimit(libc::RLIMIT_NOFILE",
+        "libc::setrlimit(libc::RLIMIT_NOFILE",
+        "const REQUIRED: libc::rlim_t = 8_192;",
+    ):
+        assert websocket_load_control in websocket_gate, (
+            "the 1,000-WebSocket gate must establish its own bounded file-descriptor "
+            f"precondition: {websocket_load_control}"
+        )
     release_gate = {}
     for line in (ROOT / "RELEASE_STATUS").read_text(encoding="utf-8").splitlines():
         key, separator, value = line.partition(":")
@@ -195,6 +219,12 @@ def main() -> None:
         "release-candidate:",
         "starry-release-candidate-${{ needs.resolve.outputs.release_tag }}",
         "sha256sum --check SHA256SUMS",
+        "Create or verify immutable annotated release tag",
+        '--jq .object.sha)" = "$GITHUB_SHA"',
+        "id: final-image",
+        "scripts/write_release_summary.py",
+        "STARRY-RELEASE-SUMMARY.json",
+        "--image-linux-amd64-digest",
         "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f",
         "actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34",
         "attestations: write",
@@ -207,13 +237,23 @@ def main() -> None:
     assert build.index("\n  release-candidate:") < build.index("\n  publish:"), (
         "publication must consume an already assembled candidate"
     )
+    assert build.index("Create or verify immutable annotated release tag") < build.index(
+        "name: Push the final linux/amd64 image"
+    ), "the exact immutable source tag must exist before image publication"
+    assert build.index("name: Record image and OpenAPI/schema publication summary") < build.index(
+        "name: Sign build provenance for every candidate subject"
+    ), "the published digest summary must be covered by release attestations"
+    assert '--target "$GITHUB_SHA"' not in build, (
+        "GitHub Release creation must consume the pre-verified annotated tag"
+    )
     for container_release_metadata in (
         "org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}",
         "org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md",
-        "the same image bundles upstream-data-path HBBR with version reporting",
+        "the same image bundles HBBR with compatible Relay data forwarding plus active probes and load telemetry",
         "account/API services and MMDB data are not included",
-        "[Read more](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/docs/releases/RELEASE-NOTES-patch-v${PATCH_VERSION}.md)",
-        "test \"$(wc -l < release-notes.md)\" -le 12",
+        "Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment",
+        "Single-host Compose asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/compose.yaml",
+        "Control Agent sidecar example: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/examples/control-agent/compose.yaml",
     ):
         assert container_release_metadata in build, (
             f"release metadata is missing Docker guidance: {container_release_metadata}"
@@ -224,6 +264,7 @@ def main() -> None:
         "examples config docs/examples",
         'notes_file="candidate/release-assets/RELEASE-NOTES-patch-v${PATCH_VERSION}.md"',
         'chinese_notes="docs/releases/RELEASE-NOTES-patch-v${PATCH_VERSION}.zh-CN.md"',
+        'cat "$notes_file" >> release-notes.md',
         "python3 -m unittest discover -s scripts -p 'test_docs.py'",
     ):
         assert documentation_control in build, (

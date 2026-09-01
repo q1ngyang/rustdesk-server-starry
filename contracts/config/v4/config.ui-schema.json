@@ -1,0 +1,41 @@
+{
+  "ui:order": ["version", "relay_servers", "secure_tcp", "mmdb", "geo", "websocket_signal", "connection_auth", "relay_quality", "fast_mode"],
+  "version": {"ui:widget": "select"},
+  "connection_auth": {
+    "mode": {"ui:widget": "radio", "ui:help": "A deployment-level MUST_LOGIN enforce floor cannot be lowered here."},
+    "jwks": {
+      "file": {"ui:widget": "text", "ui:help": "Read-only last-known-good path; key material is never returned."},
+      "ca_file": {"ui:widget": "text", "ui:readonly": true},
+      "cert_file": {"ui:widget": "text", "ui:readonly": true},
+      "key_file": {"ui:widget": "password", "ui:readonly": true},
+      "url": {"ui:placeholder": "https://api.example.com/api/internal/v1/auth/jwks"}
+    },
+    "introspection": {
+      "ca_file": {"ui:widget": "text", "ui:readonly": true},
+      "cert_file": {"ui:widget": "text", "ui:readonly": true},
+      "key_file": {"ui:widget": "password", "ui:readonly": true},
+      "url": {"ui:placeholder": "https://api.example.com/api/internal/v1/auth/introspect"}
+    }
+  },
+  "relay_quality": {
+    "enabled": {"ui:widget": "radio"},
+    "legacy_fallback_relays": {
+      "ui:help": "Explicit Relay servers reserved for ordinary fallback; they never consume quality-candidate slots."
+    },
+    "probe_timeout_ms": {"ui:widget": "updown"},
+    "max_telemetry_age_seconds": {"ui:widget": "updown"},
+    "weights": {
+      "ui:help": "RTT, jitter, loss, and load weights are basis points and must sum to 10000."
+    }
+  },
+  "fast_mode": {
+    "relay": {
+      "fast_compat_enabled": {
+        "ui:widget": "radio",
+        "ui:help": "Issues short-lived FastCompat grants only after authenticated secure signalling and final Relay quality selection."
+      },
+      "authorization_ttl_seconds": {"ui:widget": "updown"},
+      "max_bitrate_kbps": {"ui:widget": "updown"}
+    }
+  }
+}

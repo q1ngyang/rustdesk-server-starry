@@ -16,11 +16,11 @@ Supported platforms:
 
 - `linux/amd64`
 
-ARM remains a best-effort source-compatibility target. patch-v1.2.2 does not
+ARM remains a best-effort source-compatibility target. patch-v1.3.0 does not
 promise or publish a `linux/arm64` image.
 
-The image contains patched `hbbs`, unmodified upstream `hbbr`, and unmodified
-`rustdesk-utils`. Starry functionality exists only in HBBS. The supplied
+The image contains patched `hbbs`, an upstream-forwarding `hbbr` with an additive
+public probe and authenticated telemetry channel, and unmodified `rustdesk-utils`. The supplied
 deployments run both services from the same pinned Starry image tag so that
 HBBS and HBBR cannot drift to independently updated upstream versions.
 
@@ -29,10 +29,10 @@ No API server or MMDB data is embedded.
 ## Tags and digests
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0
 ```
 
 Use a version tag for deliberate upgrades and a digest for immutable

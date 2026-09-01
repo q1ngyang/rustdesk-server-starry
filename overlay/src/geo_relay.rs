@@ -157,6 +157,7 @@ pub(crate) fn validate_config(config: &GeoConfig) -> Result<(), String> {
 #[derive(Clone, Debug)]
 pub(crate) struct GeoRelaySelection {
     pub(crate) relay: String,
+    pub(crate) candidates: Vec<String>,
     pub(crate) rule_name: String,
     pub(crate) rule_index: usize,
     pub(crate) direction: &'static str,
@@ -264,6 +265,7 @@ pub(crate) fn select_relay_explained_from(
     );
     Some(GeoRelaySelection {
         relay: selection.relay,
+        candidates: selection.candidates,
         rule_name: selection.rule_name,
         rule_index: selection.rule_index,
         direction: selection.direction,

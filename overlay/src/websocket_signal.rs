@@ -25,6 +25,7 @@ static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct PreparedWebSocketSignal {
     config: WebSocketSignalConfig,
+    health_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,8 +53,16 @@ pub(crate) fn config() -> WebSocketSignalConfig {
 }
 
 pub(crate) fn reconfigure() -> String {
-    let config = config();
-    match prepare(&config).and_then(activate_prepared) {
+    let active = starry_config::snapshot();
+    let config = active
+        .as_ref()
+        .map(|config| config.websocket_signal.clone())
+        .unwrap_or_default();
+    let quality_enabled = active
+        .as_ref()
+        .map(|config| config.relay_quality.enabled)
+        .unwrap_or(false);
+    match prepare(&config, quality_enabled).and_then(activate_prepared) {
         Ok(ack) => ack.detail,
         Err(err) => {
             format!("WebSocket Signal reload rejected; retained last-known-good state: {err}")
@@ -61,22 +70,30 @@ pub(crate) fn reconfigure() -> String {
     }
 }
 
-pub(crate) fn prepare(config: &WebSocketSignalConfig) -> Result<PreparedWebSocketSignal, String> {
+pub(crate) fn prepare(
+    config: &WebSocketSignalConfig,
+    quality_enabled: bool,
+) -> Result<PreparedWebSocketSignal, String> {
     Ok(PreparedWebSocketSignal {
         config: config.clone(),
+        health_enabled: config.enabled
+            || (quality_enabled && !config.relay_health.endpoints.is_empty()),
     })
 }
 
 pub(crate) fn activate_prepared(
     prepared: PreparedWebSocketSignal,
 ) -> Result<starry_config::SubsystemAck, String> {
-    let config = prepared.config;
+    let PreparedWebSocketSignal {
+        config,
+        health_enabled,
+    } = prepared;
     let drained = if config.enabled {
         (0, 0)
     } else {
         routing::drain_all_now()?
     };
-    let health = relay_health::reconfigure(config.enabled, &config.relay_health)?;
+    let health = relay_health::reconfigure(health_enabled, &config.relay_health)?;
     if drained.0 > 0 || drained.1 > 0 {
         log::info!(
             "Drained {} WebSocket signal sessions and {} admitted connections before configuration disable acknowledgement",
@@ -249,6 +266,7 @@ pub(crate) async fn bind(
     writer: WsWriteTransport,
     effective_ip: IpAddr,
     route_addr: SocketAddr,
+    route_generation: Option<u64>,
     config: &WebSocketSignalConfig,
 ) -> Result<SessionToken, String> {
     routing::bind(
@@ -256,6 +274,7 @@ pub(crate) async fn bind(
         writer,
         effective_ip,
         route_addr,
+        route_generation,
         config.max_sessions,
         config.max_sessions_per_effective_ip,
     )
@@ -274,7 +293,30 @@ pub(crate) async fn send_to_peer(peer_id: &str, message: &RendezvousMessage) -> 
 }
 
 pub(crate) async fn remove_session(token: &SessionToken, reason: &str) -> bool {
-    routing::remove_if_current(&token.peer_id, token.generation, reason).await
+    routing::remove_if_current(
+        &token.peer_id,
+        token.generation,
+        token.connection_id,
+        reason,
+    )
+    .await
+}
+
+pub(crate) async fn remove_profile_route(
+    peer_id: &str,
+    generation: u64,
+    connection_id: u64,
+) -> bool {
+    routing::remove_profile_if_current(peer_id, generation, connection_id).await
+}
+
+pub(crate) async fn detach_profile_route(
+    peer_id: &str,
+    generation: u64,
+    connection_id: u64,
+) -> bool {
+    routing::detach_profile_if_current(peer_id, generation, connection_id, "profile deactivated")
+        .await
 }
 
 pub(crate) async fn native_registration(peer_id: &str) -> bool {
@@ -308,10 +350,15 @@ pub(crate) async fn status(native_online: &[String]) -> String {
         };
         let _ = writeln!(
             output,
-            "relay {} native={} websocket={} last_success_age_s={:?} last_failure_age_s={:?} last_error={}",
+            "relay {} native={} websocket={} relay_probe_protocol={:?} relay_load_protocol={:?} telemetry_observed_at={:?} telemetry_age_s={:?} telemetry_stale={} last_success_age_s={:?} last_failure_age_s={:?} last_error={}",
             endpoint.relay,
             native_status,
             endpoint.status,
+            endpoint.relay_probe_protocol,
+            endpoint.relay_load_protocol,
+            endpoint.observed_at,
+            endpoint.age_seconds,
+            endpoint.stale,
             endpoint.last_success_age_seconds,
             endpoint.last_failure_age_seconds,
             endpoint.last_error.as_deref().unwrap_or("none")
@@ -323,6 +370,7 @@ pub(crate) async fn status(native_online: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::starry_config::RelayEndpointConfig;
 
     fn config() -> WebSocketSignalConfig {
         WebSocketSignalConfig::default()
@@ -396,5 +444,18 @@ mod tests {
         let uri: http::Uri = "/ws/relay".parse().unwrap();
         let direct: SocketAddr = "127.0.0.1:32100".parse().unwrap();
         assert!(inspect_upgrade(&uri, &http::HeaderMap::new(), direct, &config()).is_err());
+    }
+
+    #[test]
+    fn quality_can_run_relay_health_without_enabling_signal_sessions() {
+        let mut config = config();
+        config.relay_health.endpoints.push(RelayEndpointConfig {
+            relay: "relay.example.test:21117".to_owned(),
+            url: "wss://relay.example.test/ws/relay".to_owned(),
+            telemetry_secret_file: None,
+        });
+        assert!(!config.enabled);
+        assert!(!prepare(&config, false).unwrap().health_enabled);
+        assert!(prepare(&config, true).unwrap().health_enabled);
     }
 }

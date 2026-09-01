@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starry.invalid/contracts/config/v4/config.schema.json",
+  "title": "rustdesk-server-starry configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {"type": "integer", "enum": [1, 2, 3, 4]},
+    "relay_servers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "secure_tcp": {"$ref": "#/$defs/secureTcp"},
+    "mmdb": {"$ref": "#/$defs/mmdb"},
+    "geo": {"$ref": "#/$defs/geo"},
+    "websocket_signal": {"$ref": "#/$defs/websocketSignal"},
+    "connection_auth": {"$ref": "#/$defs/connectionAuth"},
+    "relay_quality": {"$ref": "#/$defs/relayQuality"},
+    "fast_mode": {"$ref": "#/$defs/fastMode"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"version": {"const": 1}}, "required": ["version"]},
+      "then": {
+        "properties": {
+          "websocket_signal": false,
+          "connection_auth": false,
+          "relay_quality": false,
+          "fast_mode": false
+        }
+      }
+    },
+    {
+      "if": {"properties": {"version": {"const": 2}}, "required": ["version"]},
+      "then": {"properties": {"connection_auth": false, "relay_quality": false, "fast_mode": false}}
+    },
+    {
+      "if": {"properties": {"version": {"const": 3}}, "required": ["version"]},
+      "then": {"properties": {"relay_quality": false, "fast_mode": false}}
+    },
+    {
+      "if": {
+        "properties": {
+          "relay_quality": {
+            "properties": {"enabled": {"const": true}},
+            "required": ["enabled"]
+          }
+        },
+        "required": ["relay_quality"]
+      },
+      "then": {
+        "required": ["relay_servers"],
+        "properties": {"relay_servers": {"minItems": 2}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fast_mode": {
+            "properties": {
+              "relay": {
+                "properties": {"fast_compat_enabled": {"const": true}},
+                "required": ["fast_compat_enabled"]
+              }
+            },
+            "required": ["relay"]
+          }
+        },
+        "required": ["fast_mode"]
+      },
+      "then": {
+        "required": ["relay_quality", "connection_auth"],
+        "properties": {
+          "relay_quality": {
+            "properties": {"enabled": {"const": true}},
+            "required": ["enabled"]
+          },
+          "connection_auth": {
+            "properties": {"mode": {"enum": ["audit", "enforce"]}},
+            "required": ["mode"]
+          }
+        },
+        "anyOf": [
+          {
+            "required": ["secure_tcp"],
+            "properties": {
+              "secure_tcp": {
+                "properties": {"mode": {"const": "auto"}},
+                "required": ["mode"]
+              }
+            }
+          },
+          {
+            "required": ["websocket_signal"],
+            "properties": {
+              "websocket_signal": {
+                "properties": {"enabled": {"const": true}},
+                "required": ["enabled"]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "secureTcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["off", "auto"], "default": "off"},
+        "handshake_timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 120000, "default": 18000},
+        "idle_timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 600000, "default": 30000},
+        "max_frame_bytes": {"type": "integer", "minimum": 4096, "maximum": 16777216, "default": 65536}
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "pattern": "^mmdb/[A-Za-z0-9._/-]+\\.mmdb$"},
+        "url": {"type": "string", "pattern": "^(https://|$)"}
+      }
+    },
+    "mmdb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "update_interval_hours": {"type": "integer", "minimum": 0, "maximum": 8760, "default": 168},
+        "update_on_start": {"type": "boolean", "default": true},
+        "force_update": {"type": "boolean", "default": false},
+        "download_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600, "default": 600},
+        "minimum_bytes": {"type": "integer", "minimum": 1024, "maximum": 1073741824, "default": 65536},
+        "country": {"$ref": "#/$defs/database"},
+        "city": {"$ref": "#/$defs/database"},
+        "asn": {"$ref": "#/$defs/database"}
+      }
+    },
+    "geoMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "client_a": {"type": "string", "default": "*"},
+        "client_b": {"type": "string", "default": "*"}
+      }
+    },
+    "geoRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "match", "relays"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "symmetric": {"type": "boolean", "default": true},
+        "match": {"$ref": "#/$defs/geoMatch"},
+        "relays": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "geo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "rules": {"type": "array", "items": {"$ref": "#/$defs/geoRule"}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]},
+          "then": {"required": ["rules"], "properties": {"rules": {"minItems": 1}}}
+        }
+      ]
+    },
+    "relayEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relay", "url"],
+      "properties": {
+        "relay": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "pattern": "^wss://[^/?#]+/ws/(relay|telemetry)$"},
+        "telemetry_secret_file": {"type": "string", "pattern": "^/", "minLength": 2, "x-file-reference": true, "x-sensitive": true}
+      }
+    },
+    "relayHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "interval_seconds": {"type": "integer", "minimum": 5, "maximum": 3600, "default": 60},
+        "timeout_ms": {"type": "integer", "minimum": 500, "maximum": 120000, "default": 5000},
+        "success_threshold": {"type": "integer", "minimum": 1, "maximum": 100, "default": 1},
+        "failure_threshold": {"type": "integer", "minimum": 1, "maximum": 100, "default": 2},
+        "endpoints": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/relayEndpoint"}
+        }
+      }
+    },
+    "websocketSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "registration_timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 120000, "default": 10000},
+        "keepalive_interval_ms": {"type": "integer", "minimum": 1000, "maximum": 300000, "default": 12000},
+        "idle_timeout_ms": {"type": "integer", "minimum": 2000, "maximum": 600000, "default": 45000},
+        "max_frame_bytes": {"type": "integer", "minimum": 4096, "maximum": 16777216, "default": 65536},
+        "outbound_queue_capacity": {"type": "integer", "minimum": 1, "maximum": 4096, "default": 64},
+        "max_sessions": {"type": "integer", "minimum": 1, "maximum": 1000000, "default": 10000},
+        "max_sessions_per_effective_ip": {"type": "integer", "minimum": 1, "maximum": 1000000, "default": 512},
+        "registration_rate_per_minute": {"type": "integer", "minimum": 1, "maximum": 100000, "default": 300},
+        "trusted_proxies": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "allowed_origins": {"type": "array", "uniqueItems": true, "items": {"type": "string", "format": "uri"}},
+        "relay_health": {"$ref": "#/$defs/relayHealth"}
+      }
+    },
+    "jwks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": "string", "x-file-reference": true},
+        "url": {"type": "string", "pattern": "^https://", "minLength": 1},
+        "refresh_interval_seconds": {"type": "integer", "minimum": 30, "maximum": 86400, "default": 300},
+        "max_stale_seconds": {"type": "integer", "minimum": 30, "maximum": 604800, "default": 3600},
+        "ca_file": {"type": "string", "x-file-reference": true, "x-sensitive": true},
+        "cert_file": {"type": "string", "x-file-reference": true, "x-sensitive": true},
+        "key_file": {"type": "string", "x-file-reference": true, "x-sensitive": true},
+        "server_name": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"url": {"minLength": 1}}, "required": ["url"]},
+          "then": {"required": ["ca_file", "cert_file", "key_file", "server_name"]}
+        }
+      ]
+    },
+    "introspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {"type": "boolean", "default": false},
+        "url": {"type": "string", "pattern": "^https://", "minLength": 1},
+        "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 10000, "default": 1000},
+        "positive_cache_seconds": {"type": "integer", "minimum": 1, "maximum": 60, "default": 10},
+        "negative_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 1, "default": 1},
+        "max_cache_entries": {"type": "integer", "minimum": 1, "maximum": 1000000, "default": 100000},
+        "ca_file": {"type": "string", "x-file-reference": true, "x-sensitive": true},
+        "cert_file": {"type": "string", "x-file-reference": true, "x-sensitive": true},
+        "key_file": {"type": "string", "x-file-reference": true, "x-sensitive": true},
+        "server_name": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"required": {"const": true}}, "required": ["required"]},
+          "then": {"required": ["url"]}
+        },
+        {
+          "if": {"properties": {"url": {"minLength": 1}}, "required": ["url"]},
+          "then": {"required": ["ca_file", "cert_file", "key_file", "server_name"]}
+        }
+      ]
+    },
+    "connectionAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["off", "audit", "enforce"], "default": "off"},
+        "issuer": {"type": "string", "pattern": "^https://"},
+        "audience": {"type": "string", "minLength": 1},
+        "token_use": {"type": "string", "minLength": 1, "default": "access"},
+        "required_scope": {"type": "string", "minLength": 1, "default": "connect:initiate"},
+        "max_token_bytes": {"type": "integer", "minimum": 128, "maximum": 8192, "default": 8192},
+        "clock_skew_seconds": {"type": "integer", "minimum": 0, "maximum": 300, "default": 30},
+        "jwks": {"$ref": "#/$defs/jwks"},
+        "introspection": {"$ref": "#/$defs/introspection"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mode": {"enum": ["audit", "enforce"]}}, "required": ["mode"]},
+          "then": {"required": ["issuer", "audience", "jwks"]}
+        },
+        {
+          "if": {"properties": {"mode": {"const": "enforce"}}, "required": ["mode"]},
+          "then": {
+            "properties": {"jwks": {"required": ["file"], "properties": {"file": {"minLength": 1}}}}
+          }
+        }
+      ]
+    },
+    "relayQualityWeights": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rtt": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 4000},
+        "jitter": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 2000},
+        "loss": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 2500},
+        "load": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 1500}
+      }
+    },
+    "relayQuality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "strategy": {"type": "string", "enum": ["adaptive", "eager"], "default": "adaptive"},
+        "legacy_fallback_relays": {"type": "array", "uniqueItems": true, "default": [], "items": {"type": "string", "minLength": 1}},
+        "max_candidates": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
+        "primary_probe_samples": {"type": "integer", "minimum": 1, "maximum": 20, "default": 3},
+        "primary_accept_score": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 8000},
+        "primary_max_loss_basis_points": {"type": "integer", "minimum": 0, "maximum": 10000, "default": 500},
+        "p2p_probe_grace_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 300},
+        "probe_samples": {"type": "integer", "minimum": 3, "maximum": 20, "default": 5},
+        "probe_interval_ms": {"type": "integer", "minimum": 20, "maximum": 2000, "default": 50},
+        "probe_timeout_ms": {"type": "integer", "minimum": 100, "maximum": 5000, "default": 1000},
+        "report_timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 60000, "default": 15000},
+        "max_telemetry_age_seconds": {"type": "integer", "minimum": 5, "maximum": 3600, "default": 180},
+        "allocation_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 300, "default": 30},
+        "cache_ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 86400, "default": 300},
+        "max_allocations": {"type": "integer", "minimum": 100, "maximum": 1000000, "default": 10000},
+        "hysteresis_basis_points": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 500},
+        "missing_report_penalty_basis_points": {"type": "integer", "minimum": 0, "maximum": 10000, "default": 1000},
+        "rtt_bad_ms": {"type": "integer", "minimum": 10, "maximum": 10000, "default": 300},
+        "jitter_bad_ms": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 100},
+        "weights": {"$ref": "#/$defs/relayQualityWeights"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]},
+          "then": {"properties": {"max_candidates": {"minimum": 2}}}
+        }
+      ]
+    },
+    "fastRelay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fast_compat_enabled": {"type": "boolean", "default": false},
+        "authorization_ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 300, "default": 90},
+        "max_bitrate_kbps": {"type": "integer", "minimum": 1000, "maximum": 200000, "default": 50000}
+      }
+    },
+    "fastMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "relay": {"$ref": "#/$defs/fastRelay"}
+      }
+    }
+  }
+}

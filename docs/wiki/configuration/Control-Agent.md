@@ -34,7 +34,7 @@ the public RustDesk or reverse-proxy listener.
 
 The Linux archive/container and `rustdesk-server-starry-control-agent` DEB
 contain the Agent. The DEB installs but does not automatically enable its
-systemd service. No Windows Agent artifact is published in v1.2.0 because the
+systemd service. No Windows Agent artifact is published in v1.3.0 because the
 atomic transaction implementation is release-supported only on Unix filesystems.
 
 Start from [`config/control-agent.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/control-agent.example.yaml):
@@ -101,18 +101,45 @@ Verify in order:
    YAML and strong ETag but never dereferences secret-file references; each
    Relay entry reports the exact HBBR Starry version last observed through its
    WSS handshake, or `null` for a legacy or unprobed endpoint;
-4. a service-only JWT with `starry.peer.verify` can call
-   `POST /control/v1/peers:verify`; it returns only the instance ID and whether
-   the exact RustDesk ID/machine-UUID pair exists, never peer metadata, keys,
-   addresses, or a registry listing;
+4. `POST /peers:verify`, with scope `starry.peer.verify`, accepts only an exact
+   peer ID, UUID, activation epoch/ID, and one or more current route leases. It
+   returns `registered: true` only while that HBBS profile activation is live;
 5. `POST /allocations:simulate` returns a trace while repeated calls leave
    rotation/health/generation and production counters unchanged; and
 6. the listener is unreachable from public networks and HBBS `21115` remains
    loopback-only.
 
+For patch-v1.3.0, capability discovery includes `relay_quality: 1`,
+`relay_active_probe: 1`, `relay_probe_protocol: 1`,
+`relay_load_protocol: 1`, `fast_relay_authorization: 1`,
+`profile_activation_lease: 1`, and `peer_registry: 2`.
+The `/relays` response includes `quality`, `fast_relay`, and
+`profile_activation` aggregate runtime objects. Each Relay reports explicit
+probe/load capability versions, telemetry observation time/age/stale state,
+and whether it is currently a quality candidate. Quality counters aggregate
+the current `adaptive`/`eager` strategy, primary probes/accepts, expansions,
+P2P cancellations, estimated attempts saved, expanded decisions/timeouts,
+hysteresis/cache hits, and accepted, duplicate, stage-mismatched, late,
+invalid, and binding-mismatched reports without exposing full client IPs,
+allocation/session UUIDs, stage tokens, nonces, or raw reports. Fast
+Relay counters identify issuance, exact retry reuse, delivery, and fail-closed
+reasons; they never include a token, session UUID, or signed authorization.
+Profile activation counters identify lease/ACK/renewal/deactivation/cleanup,
+stale, rate, TTL, and bounded-capacity outcomes; they never include a peer ID,
+UUID, public key, activation ID, or route lease.
+Kessoku should gate its FastCompat controls on the capability and the schema v4
+digest, then use the same validate/plan/apply/audit transaction as every other
+configuration change.
+
+Kessoku should separately gate Profile switching on
+`profile_activation_lease: 1`. It must retain leases by HBBS `instance.id` and
+use `/peers:verify` against each issuing instance; a lease is never
+cluster-wide. See the
+[Profile Activation Lease v1 contract](../../reference/PROFILE-ACTIVATION-LEASE-v1.md).
+
 Each response includes `X-Request-ID`; a valid W3C `traceparent` is retained in
 durable audit records for mutations. Do not send a raw user connection token
-to this API.
+or a Fast Relay signed grant to this API.
 
 ## Enabling configuration writes
 
@@ -127,6 +154,11 @@ have passed on the target filesystem. A normal change uses:
    and a unique 16–128 byte `Idempotency-Key`; and
 5. poll `GET /operations/{id}` until `succeeded`, then compare its activation
    acknowledgement to `GET /config` and `/status`.
+
+Every JSON Pointer at `/relay_quality` or below it is classified as at least
+`medium`, including enabling/disabling the feature, changing strategy or
+thresholds, and replacing/removing the whole object. Authentication mode and
+other higher-risk changes retain their existing `high`/`critical` precedence.
 
 The Agent rejects concurrent/stale plans and external disk drift. An
 idempotency key can replay only the exact same mutation. A successful apply is

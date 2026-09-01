@@ -19,12 +19,14 @@ ignore logs or activation acknowledgements.
 
 | Field | Required | Accepted values | Meaning |
 | --- | --- | --- | --- |
-| `version` | Yes | `1`, `2`, `3` | Configuration schema. Use `3` for new deployments. |
+| `version` | Yes | `1`, `2`, `3`, `4` | Configuration schema. Use `4` for new deployments. |
 
 Schema `1` supports Relay, Secure TCP, MMDB, and Geo settings and rejects
 `websocket_signal` and `connection_auth`. Schema `2` adds optional WebSocket
 Signal and rejects `connection_auth`. Schema `3` adds connection
-authentication. Unknown top-level and nested keys are rejected so that
+authentication and rejects `relay_quality`. Schema `4` adds opt-in Akari Relay
+quality selection and FastCompat Relay authorization.
+Unknown top-level and nested keys are rejected so that
 misspellings cannot silently change a deployment.
 
 ## `relay_servers`
@@ -146,7 +148,7 @@ and [GEO Rules: Advanced](https://github.com/q1ngyang/rustdesk-server-starry/wik
 
 ## `websocket_signal`
 
-This section requires `version: 2` or `3` and is opt-in.
+This section requires `version: 2`, `3`, or `4` and is opt-in.
 
 ```yaml
 websocket_signal:
@@ -170,7 +172,8 @@ websocket_signal:
     failure_threshold: 2
     endpoints:
       - relay: relay-asia-1.example.com:21117
-        url: wss://relay-asia-1.example.com/ws/relay
+        url: wss://relay-asia-1.example.com/ws/telemetry
+        telemetry_secret_file: /run/secrets/starry-relay-telemetry
 ```
 
 ### Session and resource limits
@@ -212,7 +215,8 @@ item exactly; an empty list rejects every Origin-bearing request.
 | `success_threshold` | `1` | `1..100` consecutive successes |
 | `failure_threshold` | `2` | `1..100` consecutive failures |
 | `endpoints[].relay` | None | Required, unique, and equal to one `relay_servers` item. |
-| `endpoints[].url` | None | Required unique URL: `wss://` plus a DNS hostname and the exact `/ws/relay` path; no credentials, query, or fragment. |
+| `endpoints[].url` | None | Required unique URL: `wss://` plus a DNS hostname and exact `/ws/relay` (legacy health only) or `/ws/telemetry` path; no credentials, query, or fragment. |
+| `endpoints[].telemetry_secret_file` | None | Absolute secret-file path; required only for `/ws/telemetry` and forbidden for `/ws/relay`. The file value is never serialized. |
 
 When `enabled: true`, endpoint Relay names must cover `relay_servers` exactly.
 The health probe verifies the WSS/TLS path used for allocation; it does not
@@ -221,7 +225,7 @@ replace a two-client remote-control test. See
 
 ## `connection_auth`
 
-This section requires `version: 3`. It gates controller-side
+This section requires `version: 3` or `4`. It gates controller-side
 `PunchHoleRequest` and direct `RequestRelay` on native TCP, Secure TCP, and WSS.
 UDP initiation remains unsupported and does not allocate.
 
@@ -282,6 +286,119 @@ Private/symmetric/duplicate key material is rejected. Raw tokens are not used
 as cache keys or status labels. See
 [Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication)
 before enabling audit or enforce.
+
+## `relay_quality`
+
+This Akari-only extension requires `version: 4` and is disabled by default.
+Official clients never opt in and keep the ordinary single-Relay allocation.
+
+```yaml
+relay_quality:
+  enabled: true
+  strategy: adaptive
+  legacy_fallback_relays: []
+  max_candidates: 3
+  primary_probe_samples: 3
+  primary_accept_score: 8000
+  primary_max_loss_basis_points: 500
+  p2p_probe_grace_ms: 300
+  probe_samples: 5
+  probe_interval_ms: 50
+  probe_timeout_ms: 1000
+  report_timeout_ms: 15000
+  max_telemetry_age_seconds: 180
+  allocation_ttl_seconds: 30
+  cache_ttl_seconds: 300
+  max_allocations: 10000
+  hysteresis_basis_points: 500
+  missing_report_penalty_basis_points: 1000
+  rtt_bad_ms: 300
+  jitter_bad_ms: 100
+  weights: {rtt: 4000, jitter: 2000, loss: 2500, load: 1500}
+```
+
+| Field | Default | Valid range or rule |
+| --- | ---: | --- |
+| `enabled` | `false` | Enabling requires at least two non-legacy quality Relays, complete health endpoint coverage, and `max_candidates >= 2`. |
+| `strategy` | `adaptive` | `adaptive` probes the GEO primary first and expands only when needed; `eager` probes every candidate immediately. |
+| `legacy_fallback_relays` | `[]` | Unique subset of `relay_servers`; explicit ordinary fallback only, never a quality candidate. |
+| `max_candidates` | `3` | `1..5` while disabled, `2..5` while enabled. |
+| `primary_probe_samples` | `3` | `1..20` and no greater than `probe_samples`; sequential samples for the GEO primary. |
+| `primary_accept_score` | `8000` | `1..10000`; interpreted only by HBBS. |
+| `primary_max_loss_basis_points` | `500` | `0..10000`; either available endpoint exceeding it triggers expansion. |
+| `p2p_probe_grace_ms` | `300` | `0..5000`; lets a successful P2P path cancel before active probing. |
+| `probe_samples` | `5` | `3..20` attempts per Relay and endpoint. |
+| `probe_interval_ms` | `50` | `20..2000`. |
+| `probe_timeout_ms` | `1000` | `100..5000`; hard timeout for one sample. Candidates run concurrently; samples within one candidate run in order. |
+| `report_timeout_ms` | `15000` | `1000..60000`; server-enforced total deadline. Adaptive must fit two primary windows, one concurrent expansion window, and 1000 ms signalling margin; eager must fit two full windows. |
+| `max_telemetry_age_seconds` | `180` | `5..3600` and at least health interval plus timeout; older load excludes the quality candidate. |
+| `allocation_ttl_seconds` | `30` | `5..300` and greater than `report_timeout_ms`; cleanup only, never report validity. |
+| `cache_ttl_seconds` | `300` | `30..86400` for symmetric `/24` or `/56` network-pair choices. |
+| `max_allocations` | `10000` | `100..1000000`; hard cap for each pending-allocation, decision, and prefix-cache map; oldest entries are evicted first. |
+| `hysteresis_basis_points` | `500` | `0..5000`; keep the cached Relay unless the new score improves by more than this margin. |
+| `missing_report_penalty_basis_points` | `1000` | `0..10000` per missing endpoint measurement. |
+| `rtt_bad_ms` | `300` | `10..10000`; RTT normalization ceiling. |
+| `jitter_bad_ms` | `100` | `1..5000`; jitter normalization ceiling. |
+| `weights` | `4000/2000/2500/1500` | RTT/jitter/loss/load values must each be positive and sum to `10000`. |
+
+Every non-legacy quality Relay must have one unique, authenticated
+`/ws/telemetry` endpoint and an absolute `telemetry_secret_file`; URLs must
+also be unique. `/ws/relay` is accepted only for explicit legacy health/fallback.
+When
+WebSocket Signal is enabled its existing exact all-Relay coverage rule still
+applies. Candidate probes and reports remain inside HBBS signalling. Kessoku may manage
+the configuration and read Control API counters, but neither Akari nor HBBR
+connects to the Control Agent. Set `STARRY_RELAY_MAX_SESSIONS` on every HBBR;
+it is an enforced admission limit. `TOTAL_BANDWIDTH` remains its capacity in
+Mbit/s. HBBR receives the same secret through
+`STARRY_RELAY_TELEMETRY_SECRET_FILE`; internal mTLS is preferred, while the
+secret-file HMAC protects deployments whose reverse proxy terminates TLS. HBBS
+trusts only the signed telemetry it fetched itself for load scoring. Those
+certificate-verified probes run while
+Relay quality is enabled even when `websocket_signal.enabled` is false. HBBR
+must explicitly advertise probe/load protocol v1; a version string is never
+treated as capability. Missing, incomplete, or stale telemetry excludes the
+Relay from quality offers but leaves it available for explicitly configured
+ordinary fallback.
+
+The public `/ws/relay` handshake and `RelayProbeResponse` never contain detailed
+load. HBBR probe limits default to 120 per transport-source IP and 10,000 global
+per minute, configurable with `STARRY_RELAY_PROBE_PER_IP_PER_MINUTE` and
+`STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE`. `STARRY_RELAY_DRAINING=true` or an
+existing `STARRY_RELAY_DRAINING_FILE` refuses new pairs while existing sessions
+continue. See [Relay Telemetry v1](../../reference/RELAY-TELEMETRY-v1.md).
+
+## `fast_mode.relay`
+
+This Akari-only schema v4 policy authorizes P2P fast mode's `FastCompat` path
+over the existing reliable HBBR stream. It is disabled by default and does not
+enable a new Relay transport.
+
+```yaml
+fast_mode:
+  relay:
+    fast_compat_enabled: false
+    authorization_ttl_seconds: 90
+    max_bitrate_kbps: 50000
+```
+
+| Field | Default | Valid range or rule |
+| --- | ---: | --- |
+| `fast_compat_enabled` | `false` | `true` requires `relay_quality.enabled`, connection authentication in `audit` or `enforce`, and either `secure_tcp.mode: auto` or enabled WebSocket signalling. |
+| `authorization_ttl_seconds` | `90` | `30..300`; checked even while the feature is disabled. Retries do not extend expiry. |
+| `max_bitrate_kbps` | `50000` | `1000..200000`; a signed ceiling for Akari, not an HBBR bandwidth reservation. |
+
+HBBS signs only after authentication returns the exact `allow` verdict and a
+final source-bound Relay-quality decision exists. It overwrites untrusted
+client-provided authorization bytes and sends the same signed grant to both
+endpoints. Any missing prerequisite produces no grant and preserves the
+ordinary Relay flow. Official clients ignore the additive field.
+
+patch-v1.3.0 authorizes only `FastCompat`: every grant sets
+`allow_fast_media_v1` to false. If WSS terminates at a reverse proxy, deny
+direct public access to HBBS's plaintext WebSocket listener. See the
+[Fast Relay Authorization v1 contract](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/FAST-RELAY-AUTHORIZATION-v1.md)
+for wire, replay, retry, and privacy requirements.
 
 ## Reload behaviour
 

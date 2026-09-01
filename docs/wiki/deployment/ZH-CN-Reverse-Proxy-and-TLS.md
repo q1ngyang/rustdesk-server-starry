@@ -76,6 +76,31 @@ location = /ws/relay {
 `relay_health.endpoints[].url` 必须使用该域名和精确路径。HTTPS 首页、ICMP Ping 或
 浏览器警告后手工忽略的证书都不是合格健康端点。
 
+## 内部 Relay `/ws/telemetry`
+
+Relay Quality 使用独立精确路径。不要把它加入通用公网 allow-list；只允许 HBBS 源网段、
+禁用缓存，并保留 Starry 认证请求头。例如：
+
+```nginx
+location = /ws/telemetry {
+    allow 10.20.0.0/16;
+    deny all;
+    proxy_pass http://127.0.0.1:21119;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_buffering off;
+    proxy_read_timeout 15s;
+    proxy_send_timeout 15s;
+}
+```
+
+尽可能使用专用内部域名和 mTLS。HBBR 仍强制 secret-file HMAC，因此即使该路径被误
+开放，未认证 WSS 客户端也无法取得 load。不得把 secret 放进 query、固定请求头、Nginx
+配置或访问日志。详见
+[Relay 遥测安全与运维](../ZH-CN-Relay-Telemetry-Operations.md)。
+
 ## 证书
 
 每个域名：

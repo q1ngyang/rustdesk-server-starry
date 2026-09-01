@@ -1,0 +1,41 @@
+// Starry / Akari additive rendezvous extension.
+//
+// This fragment intentionally has no package declaration. The overlay injects
+// the fields and messages into the official package hbb rendezvous.proto.
+// Existing field numbers and HBBR data messages are not changed.
+
+// Add to message RegisterPeer:
+//   uint64 route_generation = 60;
+//   uint64 activation_epoch = 61;
+//   bytes route_lease = 62;
+//   bytes activation_id = 63;
+
+// Add to message RegisterPk:
+//   uint64 activation_epoch = 61;
+//   bytes activation_id = 63;
+
+// RegisterPkResponse is the Profile Activation Ready ACK. Add:
+//   uint64 route_generation = 60;
+//   uint64 activation_epoch = 61;
+//   bytes route_lease = 62;
+//   bytes activation_id = 63;
+
+message DeactivatePeer {
+  string id = 1;
+  bytes network_identity_uuid = 2;
+  uint64 activation_epoch = 3;
+  bytes activation_id = 4;
+  bytes route_lease = 5;
+  uint64 route_generation = 6;
+}
+
+message DeactivatePeerResponse {
+  uint64 activation_epoch = 1;
+  bytes activation_id = 2;
+  bool deactivated = 3;
+  uint64 route_generation = 4;
+}
+
+// Add to RendezvousMessage.union:
+//   DeactivatePeer deactivate_peer = 62;
+//   DeactivatePeerResponse deactivate_peer_response = 63;

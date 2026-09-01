@@ -193,6 +193,45 @@ Mixed 要求**同一个 Relay 名称**既原生在线，又 WSS 健康。检查�
 地理距离更近不保证延迟更低，应按真实测量调整有序规则。只重启或重载确实发生状态
 变化的组件，再重复同一受控传输。
 
+## 已启用 FastCompat 但没有授权
+
+tag 64 为空是安全 fallback，不代表 Relay 失败。读取
+`/control/v1/relays.fast_relay`，确认哪项计数增加：
+
+- `disabled` 或 `invalid_configuration`：检查当前 schema v4 策略；
+- `insecure_requests`：必须取得鉴权严格 `allow`，并使用 Secure TCP 或受保护 WSS 信令；
+- `quality_selection_failures`：`RequestRelay` 前先完成支持质量协议的 PunchHole 预检与最终
+  来源绑定选择；
+- `missing_signing_keys` 或 `signing_failures`：检查保留的 HBBS 身份/密钥和系统时钟，但不
+  输出私密材料；
+- `rate_limited`：停止重连/签名风暴；
+- `response_misses`：检查目标 IP 绑定、UUID、最终 Relay、有效期和配置 generation。
+
+不要把签名授权复制到 Issue，也不要让 Kessoku 代理它。客户端必须使用现有 HBBS 公钥
+验签，并拒绝过期、UUID 错误或畸形载荷。本版出现 `allow_fast_media_v1: false` 是预期。
+
+## Profile 切换不提交或删除了错误 route
+
+除非成功 Ready ACK 精确回显 pending activation ID/epoch，并携带 32 字节 lease 与非零
+generation，否则 Akari 必须保持原 Profile 已提交。全默认值 ACK 通常表示目标服务端是
+legacy，不能放宽客户端检查。
+
+把 `/control/v1/relays.profile_activation` 作为聚合证据：
+
+- `invalid_requests`：检查精确长度和必须非零字段；
+- `stale_rejections`：检查 epoch 复用、错误节点 lease、延迟 A/B 心跳/注销或旧 WSS
+  reader；
+- `rate_limited`：停止切换循环；精确 identity 在 30 秒内最多新签发 12 个 lease，普通
+  IP/global 防护仍启用；
+- `capacity_rejections`：停止发布，排查无界不同 peer/identity churn；
+- `disconnect_cleanups`：精确 reader/socket 关闭后增长属于预期；
+- `ttl_expirations`：只能偶发用于崩溃兜底；持续增长说明 disconnect/deactivation 送达失败。
+
+多 HBBS 节点必须按 `instance.id` 对比 capability/计数，并使用该节点 lease 调用
+`/peers:verify`。不得把 lease 复制到另一节点，也不得在诊断中输出 activation ID、public
+key 或 lease。回滚前遵循
+[Profile Activation Lease v1](../../reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md)。
+
 ## 连接认证意外拒绝或放行
 
 从 Control Agent status 读取 `configured_mode`、`effective_mode`、`verifier_state`、key

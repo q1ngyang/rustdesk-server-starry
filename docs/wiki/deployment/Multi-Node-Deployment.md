@@ -3,8 +3,8 @@
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Multi-Node-Deployment)
 
 Use this topology when one Starry HBBS centre must allocate several HBBR
-nodes. Each HBBS and HBBR uses the same pinned Starry image tag. HBBR remains
-unmodified upstream code, but this version lock avoids compatibility problems
+nodes. Each HBBS and HBBR uses the same pinned Starry image tag. HBBR preserves
+upstream forwarding and adds a public probe plus authenticated telemetry; version locking avoids problems
 caused by independent image updates. An account/API service is optional and
 remains independent.
 
@@ -128,13 +128,17 @@ docker compose --env-file .env -f compose.yaml up -d
 docker compose --env-file .env -f compose.yaml logs --tail 100 hbbr
 ```
 
-The optional Relay tuning values belong to the upstream HBBR data path in the
-pinned Starry image, not to the Starry HBBS overlay or version response header:
+The Relay tuning values belong to HBBR in the pinned Starry image. Capacity
+values also feed the authenticated load snapshot pulled by HBBS for quality scoring:
 
 | Environment variable | Example | Unit and effect |
 | --- | ---: | --- |
 | `RELAY_SINGLE_BANDWIDTH` | `128` | Mb/s cap for one Relay session |
 | `RELAY_TOTAL_BANDWIDTH` | `1024` | Mb/s aggregate cap for the HBBR process |
+| `RELAY_MAX_SESSIONS` | `10000` | Enforced paired-session admission limit; existing sessions survive capacity/drain changes |
+| `RELAY_PROBE_PER_IP_PER_MINUTE` | `120` | Public probe budget per transport source IP |
+| `RELAY_PROBE_GLOBAL_PER_MINUTE` | `10000` | Process-wide public probe budget |
+| `RELAY_DRAINING_FILE` | `/root/starry/hbbr.draining` | Existing file closes admission without ending active sessions |
 | `RELAY_LIMIT_SPEED` | `32` | Mb/s cap after a session is downgraded |
 | `RELAY_DOWNGRADE_START_CHECK` | `1800` | Seconds before downgrade eligibility |
 | `RELAY_DOWNGRADE_THRESHOLD` | `0.66` | Average-use fraction of the single-session cap that triggers downgrade eligibility |
@@ -144,6 +148,17 @@ effective values in HBBR startup logs.
 
 Open `21117/TCP`. When WebSocket is required, install a certificate-valid
 Nginx `/ws/relay` and expose `443/TCP`; keep backend `21119/TCP` private.
+
+Before enabling Relay Quality, create the same random 32-byte-or-longer secret
+file in the HBBS and HBBR containers (for the examples, a convenient path is
+`/root/starry/relay-telemetry.secret`, backed by each node's private data
+directory). Set only that container path in `RELAY_TELEMETRY_SECRET_FILE` and
+in HBBS `telemetry_secret_file`; never place the value in `.env` or YAML.
+Change each quality endpoint to the internal
+`wss://relay-N.../ws/telemetry` path. Restrict that path to HBBS source networks
+and prefer mTLS at the proxy. The public `/ws/relay` path remains unchanged and
+never exposes detailed load. See
+[Relay Telemetry Security and Operations](../Relay-Telemetry-Operations.md).
 
 ## Stage 4: switch the centre to the full stack
 
@@ -197,3 +212,9 @@ before enabling WebSocket Signal.
 
 An HBBS-to-HBBR reachability result is not client-to-Relay latency or packet
 loss. Do not market centre ping as endpoint path quality.
+
+If the deployment has more than one HBBS centre, Profile Activation Leases are
+strictly node-local. Akari registers with each centre and stores the returned
+lease/generation by server instance; Kessoku verifies and deactivates against
+the issuing instance only. Never copy a lease between centres. See
+[Profile Activation Lease v1](../../reference/PROFILE-ACTIVATION-LEASE-v1.md).

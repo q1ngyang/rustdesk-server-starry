@@ -1,7 +1,7 @@
 # Recommended single-host deployment for rustdesk-server-starry.
 #
-# Starry modifies HBBS only, but the release image also contains the unmodified
-# HBBR built from the same pinned upstream source. Both services use one exact
+# Starry extends HBBS and adds compatible quality probes/load telemetry to HBBR.
+# Both services are built from the same pinned upstream source and use one exact
 # Starry image tag so an unrelated official-image update cannot split versions.
 #
 # Repository checkout:
@@ -24,7 +24,7 @@ name: ${STARRY_COMPOSE_PROJECT_NAME:-rustdesk-server-starry}
 
 services:
   hbbs:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.2}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.3.0}
     container_name: ${STARRY_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
     command:
       - hbbs
@@ -56,7 +56,7 @@ services:
         max-file: "5"
 
   hbbr:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.2}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.3.0}
     container_name: ${STARRY_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
     command:
       - hbbr
@@ -64,6 +64,11 @@ services:
       - _
     environment:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+      STARRY_RELAY_MAX_SESSIONS: ${RELAY_MAX_SESSIONS:-10000}
+      STARRY_RELAY_PROBE_PER_IP_PER_MINUTE: ${RELAY_PROBE_PER_IP_PER_MINUTE:-120}
+      STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE: ${RELAY_PROBE_GLOBAL_PER_MINUTE:-10000}
+      STARRY_RELAY_TELEMETRY_SECRET_FILE: ${RELAY_TELEMETRY_SECRET_FILE:-}
+      STARRY_RELAY_DRAINING_FILE: ${RELAY_DRAINING_FILE:-/root/starry/hbbr.draining}
     volumes:
       - type: bind
         source: ${STARRY_DATA_DIR:-./data}

@@ -3,7 +3,7 @@
   "instance": {
     "id": "0191f6a0-0000-7000-8000-000000000001",
     "role": "hbbs",
-    "starry_version": "1.1.16-patch-v1.2.2",
+    "starry_version": "1.1.16-patch-v1.3.0",
     "upstream_version": "1.1.16"
   },
   "capabilities": {
@@ -12,12 +12,19 @@
     "config_transaction": 1,
     "config_rollback": 1,
     "connection_auth": 1,
-    "peer_registry": 1
+    "relay_quality": 1,
+    "relay_active_probe": 1,
+    "relay_probe_protocol": 1,
+    "relay_load_protocol": 1,
+    "relay_telemetry_schema": 1,
+    "fast_relay_authorization": 1,
+    "profile_activation_lease": 1,
+    "peer_registry": 2
   },
   "config": {
-    "supported_schema_versions": [1, 2, 3],
-    "active_schema_version": 3,
-    "schema_digest": "sha256:425c1bafe956a256caff5ad761731583d31b9eee067bad9341cc53211ea19df3"
+    "supported_schema_versions": [1, 2, 3, 4],
+    "active_schema_version": 4,
+    "schema_digest": "sha256:ef14cfde96ac514af9076fdd6e251acde63c7ea75f7275ea50720b55a83d1ec9"
   },
   "limits": {
     "max_config_bytes": 1048576,
