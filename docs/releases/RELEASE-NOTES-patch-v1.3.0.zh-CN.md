@@ -4,8 +4,9 @@
 
 patch-v1.3.0 为 Akari 增加三个重点功能，同时保留官方 RustDesk 客户端原有 wire path：
 候选 Relay 主动探测与质量评分、面向 Akari P2P 极速模式的签名 `FastCompat` Relay 授权，
-以及带有界快速重新注册的 generation-safe Profile Activation Lease。在精确 commit CI 与
-发布审核通过前，本候选版本保持禁止发布。
+以及带有界快速重新注册的 generation-safe Profile Activation Lease。经审核的发布准备变更
+已记录批准；只有将要获得不可变 tag 的精确 commit 再次通过源码、安全、协议、包、镜像和
+发布候选全部门禁后，工作流才允许发布。
 
 ## 主要变化
 

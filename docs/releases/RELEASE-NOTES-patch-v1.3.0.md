@@ -5,9 +5,10 @@
 patch-v1.3.0 adds three Akari-focused features while preserving the official
 RustDesk client wire path: active candidate-Relay quality scoring, signed
 `FastCompat` Relay authorization for Akari's P2P fast mode, and generation-safe
-Profile Activation Leases with bounded rapid re-registration. This candidate
-remains blocked from publication until exact-commit CI and release review
-approve it.
+Profile Activation Leases with bounded rapid re-registration. The reviewed
+release-preparation change records approval; publication still fails closed
+unless every source, security, protocol, package, image, and release-candidate
+job succeeds for the exact commit receiving the immutable tag.
 
 ## What changed
 
