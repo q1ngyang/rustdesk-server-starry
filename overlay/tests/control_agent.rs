@@ -38,8 +38,8 @@ const ISSUER: &str = "https://kessoku.example.test";
 const REQUEST_ID: &str = "018f47d2-4ab0-7def-8b51-2a7d23b82910";
 const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 const ALL_SCOPES: &str = "starry.control.read starry.peer.verify starry.relay.read starry.relay.simulate starry.config.read starry.config.validate starry.config.plan starry.config.apply starry.config.rollback starry.runtime.reload";
-const CONFIG_A: &str = "version: 3\nrelay_servers:\n  - relay-a.example.test:21117\n";
-const CONFIG_B: &str = "version: 3\nrelay_servers:\n  - relay-b.example.test:21117\n";
+const CONFIG_A: &str = "version: 3\nrelay_servers:\n  - 192.0.2.10:21117\n";
+const CONFIG_B: &str = "version: 3\nrelay_servers:\n  - 192.0.2.20:21117\n";
 const CONFIG_REJECTED: &str = r#"version: 3
 relay_servers:
   - relay-rejected.example.test:21117
@@ -334,7 +334,119 @@ fn control_agent_enforces_dual_auth_and_atomic_config_transactions() {
             );
             assert_eq!(capabilities.body["instance"]["id"], instance_id);
             assert_eq!(capabilities.body["capabilities"]["config_transaction"], 1);
-            assert_eq!(capabilities.body["capabilities"]["peer_registry"], 1);
+            assert_eq!(capabilities.body["capabilities"]["peer_registry"], 2);
+            assert_eq!(capabilities.body["capabilities"]["relay_probe_protocol"], 1);
+            assert_eq!(capabilities.body["capabilities"]["relay_load_protocol"], 1);
+            assert_eq!(
+                capabilities.body["capabilities"]["profile_activation_lease"],
+                1
+            );
+
+            let relay_read_only = service_token(
+                &service_secret,
+                &instance_id,
+                CLIENT_URI,
+                "starry.relay.read",
+                TokenTime::Active,
+                None,
+            );
+            let relays = request_json(
+                agent_address,
+                allowed_client.clone(),
+                "GET",
+                "/control/v1/relays",
+                Some(&relay_read_only),
+                &[],
+                None,
+            )
+            .await;
+            assert_eq!(relays.status, 200);
+            assert_eq!(relays.body["profile_activation"]["protocol_version"], 1);
+            assert!(relays.body["relays"][0]["capabilities"]["relay_probe_protocol"].is_null());
+            for legacy_null in [
+                "telemetry_schema",
+                "process_instance_id",
+                "telemetry_sequence",
+                "uptime_seconds",
+                "active_sessions",
+                "pending_pairs",
+                "bandwidth_bps",
+                "capacity_sessions",
+                "draining",
+                "admission_open",
+            ] {
+                assert!(
+                    relays.body["relays"][0]["websocket"][legacy_null].is_null(),
+                    "legacy field {legacy_null} must be null: {}",
+                    relays.body
+                );
+            }
+            assert!(relays.body["quality"]["offer_skip_reasons"].is_object());
+            assert!(relays.body["quality"]["fallback_reasons"].is_object());
+            assert!(relays.body["quality"]["relay_selections"].is_object());
+            assert_eq!(relays.body["quality"]["protocol_version"], 1);
+            assert_eq!(relays.body["quality"]["strategy"], "adaptive");
+            for counter in [
+                "primary_probes",
+                "primary_accepted",
+                "expansions_triggered",
+                "p2p_cancellations",
+                "estimated_probe_attempts_saved",
+                "expanded_decisions",
+                "stage_timeouts",
+            ] {
+                assert!(
+                    relays.body["quality"][counter].is_number(),
+                    "quality counter {counter} missing: {}",
+                    relays.body
+                );
+            }
+            assert_eq!(
+                relays.body["relays"][0]["websocket"]["stale"].as_bool(),
+                Some(true),
+                "relay inventory: {}",
+                relays.body
+            );
+            let serialized_inventory = serde_json::to_string(&relays.body).unwrap();
+            for forbidden in [
+                "allocation_id",
+                "session_uuid",
+                "nonce",
+                "stage_token",
+                "raw_report",
+                "client_ip",
+                "target_ip",
+            ] {
+                assert!(!serialized_inventory.contains(forbidden));
+            }
+            let wrong_scope_relays = request_json(
+                agent_address,
+                allowed_client.clone(),
+                "GET",
+                "/control/v1/relays",
+                Some(&insufficient),
+                &[],
+                None,
+            )
+            .await;
+            assert_problem(&wrong_scope_relays, 403, "SCOPE_DENIED");
+            let relay_scope_cannot_read_config = request_json(
+                agent_address,
+                allowed_client.clone(),
+                "GET",
+                "/control/v1/config",
+                Some(&relay_read_only),
+                &[],
+                None,
+            )
+            .await;
+            assert_problem(&relay_scope_cannot_read_config, 403, "SCOPE_DENIED");
+            assert_eq!(relays.body["profile_activation"]["lease_ttl_seconds"], 45);
+            assert_eq!(relays.body["profile_activation"]["burst_limit"], 12);
+            assert_eq!(
+                relays.body["profile_activation"]["burst_window_seconds"],
+                30
+            );
 
             let unknown_peer = request_json(
                 agent_address,
@@ -345,48 +457,16 @@ fn control_agent_enforces_dual_auth_and_atomic_config_transactions() {
                 &[],
                 Some(json!({
                     "id": "301132036",
-                    "uuid": "MDEyMzQ1Njc4OWFiY2RlZg=="
+                    "uuid": base64::encode([1_u8; 16]),
+                    "activation_epoch": 1,
+                    "activation_id": base64::encode([2_u8; 16]),
+                    "route_leases": [base64::encode([3_u8; 32])]
                 })),
             )
             .await;
             assert_eq!(unknown_peer.status, 200);
             assert_eq!(unknown_peer.body["instance_id"], instance_id);
             assert_eq!(unknown_peer.body["registered"], false);
-
-            let registry = tokio_rusqlite::Connection::open(root.join("db_v2.sqlite3"))
-                .await
-                .unwrap();
-            registry
-                .call(|connection| {
-                    connection.execute(
-                        "INSERT INTO peer(guid, id, uuid, pk, info) VALUES(?1, ?2, ?3, ?4, ?5)",
-                        tokio_rusqlite::rusqlite::params![
-                            vec![0x21_u8; 16],
-                            "301132036",
-                            b"0123456789abcdef".to_vec(),
-                            vec![0x42_u8; 32],
-                            "{}"
-                        ],
-                    )?;
-                    Ok::<_, tokio_rusqlite::rusqlite::Error>(())
-                })
-                .await
-                .unwrap();
-            let registered_peer = request_json(
-                agent_address,
-                allowed_client.clone(),
-                "POST",
-                "/control/v1/peers:verify",
-                Some(&valid_token),
-                &[],
-                Some(json!({
-                    "id": "301132036",
-                    "uuid": "MDEyMzQ1Njc4OWFiY2RlZg=="
-                })),
-            )
-            .await;
-            assert_eq!(registered_peer.status, 200);
-            assert_eq!(registered_peer.body["registered"], true);
 
             let initial = request_json(
                 agent_address,

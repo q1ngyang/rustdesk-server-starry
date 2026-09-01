@@ -30,7 +30,7 @@ docker compose --env-file .env -f compose.yaml config --images
 docker compose --env-file .env -f compose.yaml config > rendered-compose.review.txt
 sha256sum .env compose.yaml data/starry/config.yaml > deployment-inputs.sha256
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.2.2 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
   --format '{{json .RepoDigests}}'
 ```
 
@@ -203,7 +203,55 @@ For each row, capture:
 An HTTP `101` without client `RegisterPk` and a complete HBBR session is not a
 pass.
 
-## 9. Failover and recovery
+## 9. Relay quality and FastCompat acceptance
+
+Canary Relay quality before FastCompat. Confirm official clients still use the
+ordinary `relay_server`, then verify Akari receives no more than the configured
+candidate/sample bounds, reports both endpoints when available, and receives
+the same final Relay in the official field and quality decision. Exercise high
+RTT, jitter, loss, load, a missing report, stale health, prefix-cache reuse,
+and hysteresis without trusting client-supplied load.
+
+Enable `fast_mode.relay.fast_compat_enabled` only after auth and secure
+signalling pass. Verify these cases without writing raw grants to evidence:
+
+| Case | Expected authorization | Standard Relay outcome |
+| --- | --- | --- |
+| Valid token + Secure TCP/WSS + final quality decision | One valid Ed25519 FastCompat grant; identical bytes reach both endpoints; FastMedia is false. | Uses the same final `relay_server`. |
+| Official client or missing quality offer/report | Empty extension. | Continues normally. |
+| Audit request with `would_deny`, or enforce denial | Empty extension. | Follows the configured auth-mode result. |
+| Plain native TCP, changed endpoint binding, expired grant, or wrong response Relay | Empty/rejected extension. | No new fast permission; standard compatible signalling remains. |
+| Same UUID/source/target retry before expiry | Exact original signed bytes and expiry. | Frozen quality decision is unchanged. |
+
+Check `fast_relay_authorization: 1` in capabilities and reconcile `/relays`
+issuance/reuse/delivery/fail-closed counters with the cases. Logs and Kessoku
+audit must contain no HBBS secret, connection token, session UUID, or signed
+grant.
+
+### Profile activation acceptance
+
+Keep the currently committed Profile available while testing the pending one.
+Check `profile_activation_lease: 1`, then require a successful Ready ACK with
+the exact pending activation ID/epoch, a 32-byte lease, and a non-zero
+generation before observing a local Profile commit.
+
+Run the following matrix and reconcile `/relays.profile_activation` counters:
+
+| Case | Required result |
+| --- | --- |
+| Native UDP registration/heartbeat/deactivation and TCP deactivation | Only the exact current lease/generation removes the route. |
+| WSS replacement and old reader exit | `remove_if_current` keeps the replacement route active. |
+| A→B→A with delayed A1/B heartbeat or deactivation | A2 remains registered and verifiable. |
+| Legacy official registration | New fields remain defaults and the official path works; it cannot overwrite an active enhanced lease. |
+| Exact ID/UUID/public-key rapid re-registration | No more than 12 new leases per rolling 30 seconds; IP/global blocking still applies. |
+| Two HBBS nodes | Leases differ by instance; wrong-node deactivation fails and `/peers:verify` succeeds only on the issuing node. |
+| Process/reader loss | Exact disconnect cleanup runs; TTL is a 45-second fallback rather than the routine switch path. |
+
+Do not capture activation IDs, public keys, or route leases in evidence. Follow
+the release and rollback order in the
+[Profile Activation Lease v1 contract](../../reference/PROFILE-ACTIVATION-LEASE-v1.md).
+
+## 10. Failover and recovery
 
 Use a maintenance window and stop only a Relay that is authorised for testing.
 Do not test failover by disrupting an unrelated production node.
@@ -223,7 +271,7 @@ Existing sessions may terminate during Relay loss; the acceptance target is a
 correctly allocated new session unless your own availability design promises
 more.
 
-## 10. Connection-authentication gate
+## 11. Connection-authentication gate
 
 Follow the full matrix in
 [Connection Authentication](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Connection-Authentication).
@@ -239,7 +287,7 @@ rotation, introspection failure/recovery, and UDP no-allocation. A clean unit
 or synthetic transport test is necessary release evidence but not a substitute
 for this deployment matrix.
 
-## 11. Control Agent and configuration recovery
+## 12. Control Agent and configuration recovery
 
 Commission the Agent with `write_enabled: false`. Verify mTLS CA/SAN failures,
 service-JWT audience/azp/scope/expiry failures, read endpoints, and repeated
@@ -253,7 +301,7 @@ or apply response without matching generation/digests is a hard stop. Use the
 [Control Agent recovery runbook](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Control-Agent)
 before accepting more writes.
 
-## 12. Acceptance record
+## 13. Acceptance record
 
 Use a table like this for each release or material configuration change:
 
@@ -268,6 +316,9 @@ Use a table like this for each release or material configuration change:
 | WSS-to-WSS | Expected HBBR | Not tested | |
 | WSS-to-native | Both directions | Not tested | |
 | Geo decisions | Every matrix row | Not tested | |
+| Relay-quality dual-end scoring/fallback | Bounded and deterministic | Not tested | |
+| FastCompat authorization/retry | Signed, source-bound, identical, FastMedia false | Not tested | |
+| Official client with fast mode enabled server-side | Legacy-compatible, no required extension | Not tested | |
 | Native failover/recovery | Ordered result | Not tested | |
 | WSS/mixed failover/recovery | Ordered result | Not tested | |
 | Connection auth audit matrix | Every expected decision classified | Not tested | |

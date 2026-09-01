@@ -18,8 +18,8 @@ storage, networking, configuration, and change procedure.
 | Control Agent | `examples/control-agent/compose.yaml`, `examples/control-agent/.env.example` | HBBS, HBBR, and the optional private management sidecar |
 
 Every supplied HBBR service uses the **same pinned Starry image tag** as HBBS.
-Its relay data path comes from the release's pinned RustDesk Server revision;
-Starry adds only the bounded version response header. Do not substitute a
+Its byte-forwarding path comes from the pinned RustDesk Server revision;
+Starry adds bounded quality probes and load/version telemetry. Do not substitute a
 separately updated official image in these examples.
 
 ## Single-host service layout

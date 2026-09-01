@@ -3,7 +3,58 @@
 [English](CHANGELOG.md) | **简体中文**
 
 本文记录 Starry overlay 的变化。完整产物版本由官方 RustDesk Server 版本与 Starry
-patch 版本组合，例如 `1.1.16-patch-v1.2.0`。
+patch 版本组合，例如 `1.1.16-patch-v1.3.0`。
+
+## patch-v1.3.0 — 开发中
+
+完整说明：[`RELEASE-NOTES-patch-v1.3.0.zh-CN.md`](RELEASE-NOTES-patch-v1.3.0.zh-CN.md)
+
+### 新增
+
+- 为 Akari 增加私有且只追加的 protobuf v1 字段，用于 Relay 质量能力协商、候选集、双端
+  报告、评分和决定；质量扩展全部使用 100 以上 tag，官方客户端仍以普通
+  `relay_server` 为准。
+- HBBR 在 TCP/WSS 上响应有界主动探测，回显 nonce，并返回精确 Starry 版本、活动会话、
+  容量、当前带宽和 load basis points。
+- HBBR 显式协商 `relay_probe_protocol=1` / `relay_load_protocol=1`，HBBS 对 telemetry
+  实施新鲜度上限及有界并发 health 探测，legacy fallback 不占用质量候选名额。
+- HBBS 综合双端有效 RTT、jitter、loss、可信 Relay load、缺失报告惩罚、对称网段缓存和
+  可配置迟滞选出最终 Relay。
+- schema v4 `relay_quality` 配置和供 Kessoku 使用的 Control API v1 Relay 质量运行态；
+  客户端不会连接 Control Agent。
+- allocation 使用独立于清理 TTL 的服务端 report deadline；配置校验证明有序样本可在
+  deadline 内完成，并提供稳定 decision reason 与 accepted/late/invalid/binding-mismatch
+  聚合计数。
+- 默认关闭的 schema v4 `fast_mode` 策略，以及 `RequestRelay`/`RelayResponse` 中只追加的
+  tag 64 授权字节。HBBS 仅在鉴权严格允许且最终质量选择完成后签发 `FastCompat`，对授权
+  进行来源绑定、有界缓存，并向两端 Akari 发送完全相同的字节。
+- Control capability `fast_relay_authorization: 1` 和有界的 `/relays` 签发、复用、送达及
+  fail-closed 计数。patch-v1.3.0 始终签发 `allow_fast_media_v1 = false`，不新增 Relay
+  UDP 媒体路径。
+- 面向 Akari 的 Profile Activation Lease v1：16 字节客户端 activation ID、匹配 Ready
+  ACK、32 字节节点本地 route lease，以及 Native UDP/TCP 与 WSS 共用的 route
+  generation authority。
+- 只允许精确当前 route 的 `DeactivatePeer`、generation-safe 断线清理、45 秒崩溃兜底
+  TTL，以及按 peer ID、network identity UUID 和 public key 绑定的每 30 秒最多 12 次
+  已验证快速重新注册 burst；HBBR 数据消息保持不变。
+- Control capability `profile_activation_lease: 1`、聚合 `/relays` 生命周期/拒绝计数和供
+  Kessoku 按实例核对的精确当前 lease `/peers:verify`。
+
+### 兼容性
+
+- schema v1-v3 继续有效；只有 schema v4 显式启用且发起端声明协议 v1 时才进入质量选择。
+- 官方客户端继续只接收一个传统 `relay_server`；官方 HBBR 字节转发语义与端口不变。
+  官方客户端会忽略未知 tag 64，HBBS 则会清空客户端自行提供的授权字节。
+- 官方/legacy HBBR 可列入 `legacy_fallback_relays` 作普通 fallback，但缺少显式能力或新鲜
+  load 时绝不进入质量 offer；兼容候选少于两个时不下发 offer，完整保留传统
+  Geo/failover。
+- Akari 强制 Relay 模式应先执行同一质量能力 PunchHole 预检，再发送 `RequestRelay`；
+  未取得 offer 的直接 `RequestRelay` 继续使用传统选择路径。
+- 只有 schema v4 同时显式启用极速模式、Relay 质量、连接鉴权和安全信令时才可能签发；
+  任一前置条件缺失都不产生授权，并继续标准 Relay 流程。
+- 官方注册消息不携带 Profile activation 字段，继续走现有路径。Akari 只有在成功 ACK
+  精确回显 activation ID/epoch 且返回合法 lease/generation 后才提交 Profile；因此旧
+  服务端会 fail closed 到上一个已提交 Profile。
 
 ## patch-v1.2.2 — 2026-08-29
 

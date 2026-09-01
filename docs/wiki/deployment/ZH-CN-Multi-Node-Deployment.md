@@ -3,7 +3,7 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Multi-Node-Deployment) | **简体中文**
 
 当一个 Starry HBBS 中心需要分配多台 HBBR 时使用此结构。所有 HBBS 与 HBBR 都使用
-同一个固定版本的 Starry 镜像。HBBR 本身仍是未经修改的上游代码，但统一镜像版本可
+同一个固定版本的 Starry 镜像。HBBR 保留上游转发，并增加公开探测与认证遥测；统一镜像版本可
 避免两个服务分别更新造成兼容问题。账户/API 服务为可选独立组件。
 
 ## 架构
@@ -120,13 +120,17 @@ docker compose --env-file .env -f compose.yaml up -d
 docker compose --env-file .env -f compose.yaml logs --tail 100 hbbr
 ```
 
-这些可选带宽设置属于固定版本 Starry 镜像内的上游 HBBR 数据路径，不属于 Starry 的
-HBBS 扩展层或版本响应头：
+这些设置属于固定版本 Starry 镜像内的 HBBR；容量值也进入 HBBS 认证拉取并用于质量评分的
+load 快照：
 
 | 环境变量 | 示例值 | 单位与作用 |
 | --- | ---: | --- |
 | `RELAY_SINGLE_BANDWIDTH` | `128` | 单个中继会话上限，单位 Mb/s |
 | `RELAY_TOTAL_BANDWIDTH` | `1024` | HBBR 进程总带宽上限，单位 Mb/s |
+| `RELAY_MAX_SESSIONS` | `10000` | 已配对会话的真实 admission 上限；容量/排水变更不中断已有会话 |
+| `RELAY_PROBE_PER_IP_PER_MINUTE` | `120` | 每个传输源 IP 的公开 probe 预算 |
+| `RELAY_PROBE_GLOBAL_PER_MINUTE` | `10000` | 进程级公开 probe 预算 |
+| `RELAY_DRAINING_FILE` | `/root/starry/hbbr.draining` | 文件存在时关闭 admission，不结束活动会话 |
 | `RELAY_LIMIT_SPEED` | `32` | 会话被降速后的上限，单位 Mb/s |
 | `RELAY_DOWNGRADE_START_CHECK` | `1800` | 会话进入降速判定前的秒数 |
 | `RELAY_DOWNGRADE_THRESHOLD` | `0.66` | 以单会话上限为基准、触发降速资格的平均用量比例 |
@@ -135,6 +139,14 @@ HBBS 扩展层或版本响应头：
 
 对公网开放 `21117/TCP`。需要 WebSocket 时配置证书有效的 Nginx `/ws/relay` 并开放
 `443/TCP`，后端 `21119/TCP` 保持私有。
+
+启用 Relay Quality 前，在 HBBS 与 HBBR 容器中部署相同的至少 32 字节随机 secret
+file（对本仓库示例，可使用由各节点私有数据目录持久化的
+`/root/starry/relay-telemetry.secret`）。`RELAY_TELEMETRY_SECRET_FILE` 与 HBBS
+`telemetry_secret_file` 只填容器内路径，不得把密钥值写入 `.env` 或 YAML。把每个质量
+endpoint 改为内部 `wss://relay-N.../ws/telemetry`，限制为 HBBS 源网段并优先在代理启用
+mTLS。公开 `/ws/relay` 保持不变，不暴露详细 load。详见
+[Relay 遥测安全与运维](../ZH-CN-Relay-Telemetry-Operations.md)。
 
 ## 阶段 4：中心切换到完整栈
 
@@ -180,3 +192,8 @@ Kessoku + Starry 联合部署专页仍在编写中，完成后会从
 7. 单独测试 API 登录，再在登录状态重复安全 TCP 和远程控制。
 
 HBBS 到 HBBR 可达不等于客户端到 Relay 的延迟或丢包。不要把中心 ping 宣称为客户端线路质量。
+
+部署包含多个 HBBS 中心时，Profile Activation Lease 严格属于单个节点。Akari 向各中心
+注册并按服务实例保存返回的 lease/generation；Kessoku 只在签发实例验证和注销。绝不在
+中心之间复制 lease。详见
+[Profile Activation Lease v1](../../reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md)。

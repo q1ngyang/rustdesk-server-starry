@@ -1,5 +1,5 @@
 # Complete Starry data-plane reference centre:
-#   Starry HBBS + the upstream-data-path HBBR bundled in the same Starry image tag.
+#   Starry HBBS + compatible probe/load HBBR in the same Starry image tag.
 #
 # Account and management APIs are a separate trust boundary. Deploy the
 # recommended Kessoku release from its own immutable Docker input and follow
@@ -10,7 +10,7 @@ name: ${CENTER_COMPOSE_PROJECT_NAME:-rustdesk-center}
 
 services:
   hbbs:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.2}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.3.0}
     container_name: ${CENTER_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
     command:
       - hbbs
@@ -42,7 +42,7 @@ services:
         max-file: "5"
 
   hbbr:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.2.2}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.3.0}
     container_name: ${CENTER_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
     command:
       - hbbr
@@ -50,6 +50,11 @@ services:
       - _
     environment:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+      STARRY_RELAY_MAX_SESSIONS: ${RELAY_MAX_SESSIONS:-10000}
+      STARRY_RELAY_PROBE_PER_IP_PER_MINUTE: ${RELAY_PROBE_PER_IP_PER_MINUTE:-120}
+      STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE: ${RELAY_PROBE_GLOBAL_PER_MINUTE:-10000}
+      STARRY_RELAY_TELEMETRY_SECRET_FILE: ${RELAY_TELEMETRY_SECRET_FILE:-}
+      STARRY_RELAY_DRAINING_FILE: ${RELAY_DRAINING_FILE:-/root/starry/hbbr.draining}
     volumes:
       - type: bind
         source: ${CENTER_SERVER_DATA_DIR:-./data/server}

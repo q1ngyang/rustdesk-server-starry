@@ -13,12 +13,12 @@ path for most Linux operators.
 | Debian/Ubuntu | `amd64` | Separate HBBS, HBBR, utilities, and Control Agent DEB packages. |
 | Linux | `amd64` | Static `hbbs`, `hbbr`, `rustdesk-utils`, and Control Agent binaries plus a tar archive. |
 
-ARM and Windows remain non-blocking compatibility targets. patch-v1.2.2 does
+ARM and Windows remain non-blocking compatibility targets. patch-v1.3.0 does
 not promise ARM or Windows release artifacts.
 
 The Starry release HBBR is built from the same pinned official source as HBBS.
-Its relay data path remains upstream; Starry adds only the bounded WebSocket
-version response header used by Relay inventory.
+Its byte-forwarding path remains upstream; Starry adds bounded active probes
+and load/version telemetry used by Akari and Relay inventory.
 
 Download only from the repository Release page and verify files against the
 attached `SHA256SUMS` before installation.
@@ -115,7 +115,7 @@ operation.
 
 ## Windows binaries
 
-This section is retained for source-build compatibility only. The v1.2.2
+This section is retained for source-build compatibility only. The v1.3.0
 candidate does not include or support a Windows release artifact.
 
 Locally built Windows files can be run interactively for initial inspection:
@@ -161,7 +161,7 @@ through a remote proxy.
 The backend ports and paths do not change by installation method:
 
 - HBBS `/ws/id` backend: `21118/TCP`
-- unmodified bundled HBBR `/ws/relay` backend: `21119/TCP`
+- bundled HBBR `/ws/relay` backend with compatible probe/load metadata: `21119/TCP`
 - optional community API: its independently configured HTTP port
 
 Use [Reverse Proxy and TLS](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Reverse-Proxy-and-TLS)

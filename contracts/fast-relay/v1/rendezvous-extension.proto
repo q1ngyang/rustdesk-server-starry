@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+// This file is the machine-readable Starry/Akari FastCompat Relay v1
+// extension contract. Its package-less definition is injected by
+// apply_overlay.py into the official package hbb rendezvous.proto together
+// with the two bytes fields, without renumbering any upstream field.
+message FastRelayAuthorization {
+  uint32 version = 1;
+  string session_uuid = 2;
+  uint64 expires_at = 3;
+  bool allow_fast_compat = 4;
+  bool allow_fast_media_v1 = 5;
+  uint32 max_bitrate_kbps = 6;
+}
+
+// Official message bindings added by the overlay:
+// RequestRelay.bytes fast_relay_authorization = 64
+// RelayResponse.bytes fast_relay_authorization = 64

@@ -2,7 +2,7 @@
 # Copy the required sections to config.yaml. An empty or invalid config.yaml
 # keeps the exact upstream rustdesk-server behavior on first start. A rejected
 # reload retains the last-known-good active generation.
-version: 3
+version: 4
 
 # The complete HBBS relay pool. Keep one relay server on each line.
 relay_servers:
@@ -44,7 +44,8 @@ websocket_signal:
   allowed_origins: []
 
   # Every relay_servers entry must have exactly one certificate-verified WSS
-  # endpoint. The path must be exactly /ws/relay.
+  # endpoint. Authenticated telemetry uses /ws/telemetry plus a secret-file
+  # reference; the secret value never appears in YAML, URLs, logs, or APIs.
   relay_health:
     interval_seconds: 60
     timeout_ms: 5000
@@ -52,13 +53,16 @@ websocket_signal:
     failure_threshold: 2
     endpoints:
       - relay: jp-relay-1.example.com:21117
-        url: wss://jp-relay-1.example.com/ws/relay
+        url: wss://jp-relay-1.example.com/ws/telemetry
+        telemetry_secret_file: /run/secrets/starry-relay-telemetry
       - relay: jp-relay-2.example.com:21117
-        url: wss://jp-relay-2.example.com/ws/relay
+        url: wss://jp-relay-2.example.com/ws/telemetry
+        telemetry_secret_file: /run/secrets/starry-relay-telemetry
       - relay: us-relay-1.example.com:21117
-        url: wss://us-relay-1.example.com/ws/relay
+        url: wss://us-relay-1.example.com/ws/telemetry
+        telemetry_secret_file: /run/secrets/starry-relay-telemetry
 
-# Connection authentication is schema v3 only and defaults to off. Move to
+# Connection authentication requires schema v3 or newer and defaults to off. Move to
 # audit before enforce, and do not enable either mode until Kessoku (or another
 # compatible issuer) supplies Ed25519 JWKS and client connection JWTs.
 connection_auth:
@@ -91,6 +95,44 @@ connection_auth:
   #   cert_file: /run/secrets/starry-auth/hbbs-client.pem
   #   key_file: /run/secrets/starry-auth/hbbs-client-key.pem
   #   server_name: kessoku.example
+
+# Akari-only candidate Relay probing. Official RustDesk clients do not send
+# the protocol opt-in and continue to receive one ordinary relay_server.
+relay_quality:
+  enabled: false
+  strategy: adaptive
+  legacy_fallback_relays: []
+  max_candidates: 3
+  primary_probe_samples: 3
+  primary_accept_score: 8000
+  primary_max_loss_basis_points: 500
+  p2p_probe_grace_ms: 300
+  probe_samples: 5
+  probe_interval_ms: 50
+  probe_timeout_ms: 1000
+  report_timeout_ms: 15000
+  max_telemetry_age_seconds: 180
+  allocation_ttl_seconds: 30
+  cache_ttl_seconds: 300
+  max_allocations: 10000
+  hysteresis_basis_points: 500
+  missing_report_penalty_basis_points: 1000
+  rtt_bad_ms: 300
+  jitter_bad_ms: 100
+  weights:
+    rtt: 4000
+    jitter: 2000
+    loss: 2500
+    load: 1500
+
+# FastCompat authorization for Akari over the existing reliable HBBR stream.
+# Keep this disabled until connection authentication and Relay quality are both
+# enabled and verified. FastMediaV1 Relay UDP is deliberately not advertised.
+fast_mode:
+  relay:
+    fast_compat_enabled: false
+    authorization_ttl_seconds: 90
+    max_bitrate_kbps: 50000
 
 mmdb:
   update_interval_hours: 168

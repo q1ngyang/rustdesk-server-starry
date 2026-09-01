@@ -2043,12 +2043,18 @@ fn classify_risk(changes: &[Value], before: Option<&Value>, after: &Value) -> St
         .to_owned();
     }
     if pointers.iter().any(|pointer| {
-        pointer.starts_with("/websocket_signal") || pointer.starts_with("/secure_tcp")
+        is_relay_quality_pointer(pointer)
+            || pointer.starts_with("/websocket_signal")
+            || pointer.starts_with("/secure_tcp")
     }) {
         "medium".to_owned()
     } else {
         "low".to_owned()
     }
+}
+
+fn is_relay_quality_pointer(pointer: &str) -> bool {
+    pointer == "/relay_quality" || pointer.starts_with("/relay_quality/")
 }
 
 fn validate_comment(comment: Option<&str>) -> Result<(), TransactionError> {
@@ -2866,6 +2872,64 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn every_relay_quality_change_is_at_least_medium_risk() {
+        let relay_quality = json!({
+            "enabled": false,
+            "strategy": "adaptive",
+            "weights": {"rtt": 4000, "jitter": 2000, "loss": 2500, "load": 1500}
+        });
+        let cases = [
+            (
+                json!({}),
+                json!({"relay_quality": relay_quality.clone()}),
+                "/relay_quality",
+                "add",
+            ),
+            (
+                json!({"relay_quality": relay_quality.clone()}),
+                json!({}),
+                "/relay_quality",
+                "remove",
+            ),
+            (
+                json!({"relay_quality": relay_quality.clone()}),
+                json!({"relay_quality": {
+                    "enabled": true,
+                    "strategy": "adaptive",
+                    "weights": {"rtt": 4000, "jitter": 2000, "loss": 2500, "load": 1500}
+                }}),
+                "/relay_quality/enabled",
+                "replace",
+            ),
+            (
+                json!({"relay_quality": relay_quality}),
+                json!({"relay_quality": {
+                    "enabled": false,
+                    "strategy": "adaptive",
+                    "weights": {"rtt": 3500, "jitter": 2500, "loss": 2500, "load": 1500}
+                }}),
+                "/relay_quality/weights/rtt",
+                "replace",
+            ),
+        ];
+
+        for (before, after, expected_pointer, expected_kind) in cases {
+            let mut changes = Vec::new();
+            collect_changes("", Some(&before), Some(&after), &mut changes);
+            assert!(changes.iter().any(|change| {
+                change["pointer"] == expected_pointer && change["kind"] == expected_kind
+            }));
+            assert_eq!(classify_risk(&changes, Some(&before), &after), "medium");
+        }
+
+        let unrelated = vec![json!({
+            "pointer": "/relay_quality_backup/enabled",
+            "kind": "replace"
+        })];
+        assert_eq!(classify_risk(&unrelated, None, &json!({})), "low");
     }
 
     #[test]

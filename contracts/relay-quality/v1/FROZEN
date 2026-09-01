@@ -1,0 +1,13 @@
+status: FROZEN
+protocol_version: 1
+frozen_at: 2026-09-01
+canonical_file: contracts/relay-quality/v1/rendezvous-extension.proto
+canonical_sha256: 19380d18aebf91a6856e43009291c79cf002d7c843b9fd7fa92c570916b2734c
+official_server_tag: 1.1.16
+official_server_commit: 73523b31cfd25d77dee862e6fc9f5e1fb5e485ef
+official_hbb_common_commit: 83419b6549636ee39dacef7776c473f5802e08d6
+starry_overlay_base_commit: bfa3ef8577bf922882f075a6165034399e9c1495
+
+# The Starry overlay is intentionally still a blocked patch-v1.3.0 candidate.
+# A release commit may move without changing this wire contract. Akari must
+# reject a canonical protobuf whose SHA-256 differs from the value above.

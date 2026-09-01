@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+// Starry private extension messages. scripts/apply_overlay.py injects these
+// package-less definitions into hbb_common/protos/rendezvous.proto so Akari
+// and Starry share the exact rust-protobuf wire types.
+message StarryRelayLoad {
+  uint32 load_basis_points = 1;
+  uint32 active_sessions = 2;
+  uint32 capacity_sessions = 3;
+  uint64 bandwidth_bps = 4;
+  uint64 capacity_bandwidth_bps = 5;
+}
+
+message RelayProbeRequest {
+  uint32 protocol_version = 1;
+  bytes nonce = 2;
+}
+
+message RelayProbeResponse {
+  uint32 protocol_version = 1;
+  bytes nonce = 2;
+  // Retained only for wire compatibility with pre-release v1 implementations.
+  // HBBR MUST leave this unset; detailed load is authenticated telemetry only.
+  StarryRelayLoad load = 3;
+  string starry_version = 4;
+  // Explicit machine-readable capabilities. Never infer these from
+  // starry_version; zero means unsupported/legacy.
+  uint32 relay_probe_protocol = 5;
+  uint32 relay_load_protocol = 6;
+}
+
+message RelayQualityWeights {
+  uint32 rtt = 1;
+  uint32 jitter = 2;
+  uint32 loss = 3;
+  uint32 load = 4;
+}
+
+message RelayQualityCandidate {
+  string relay_server = 1;
+  string probe_url = 2;
+  StarryRelayLoad load = 3;
+  uint32 server_rtt_ms = 4;
+  uint64 observed_at_unix_ms = 5;
+}
+
+message RelayQualityOffer {
+  uint32 protocol_version = 1;
+  bytes allocation_id = 2;
+  string fallback_relay = 3;
+  repeated RelayQualityCandidate candidates = 4;
+  RelayQualityWeights weights = 5;
+  uint32 probe_samples = 6;
+  uint32 probe_interval_ms = 7;
+  uint32 report_timeout_ms = 8;
+  uint32 probe_timeout_ms = 9;
+  // Stable numeric values: 1=adaptive, 2=eager.
+  uint32 strategy = 10;
+  // Stable numeric values: 1=primary, 2=expanded, 3=eager.
+  uint32 stage = 11;
+  // Fresh 16-byte server token. Reports MUST echo the token for this stage.
+  bytes stage_token = 12;
+  uint64 stage_deadline_unix_ms = 13;
+  uint64 total_deadline_unix_ms = 14;
+  string primary_relay = 15;
+  // Applied only to the primary stage. Eager offers set this to zero.
+  uint32 p2p_probe_grace_ms = 16;
+}
+
+message RelayProbeResult {
+  string relay_server = 1;
+  uint32 attempted = 2;
+  uint32 succeeded = 3;
+  uint32 rtt_ms = 4;
+  uint32 jitter_ms = 5;
+}
+
+message RelayProbeReport {
+  uint32 protocol_version = 1;
+  bytes allocation_id = 2;
+  repeated RelayProbeResult results = 3;
+  // Must match the issued offer. Values are defined above.
+  uint32 stage = 4;
+  bytes stage_token = 5;
+  // Stable numeric values: 1=controller, 2=target.
+  uint32 endpoint_role = 6;
+}
+
+message RelayQualityScore {
+  string relay_server = 1;
+  uint32 score = 2;
+  uint32 rtt_penalty = 3;
+  uint32 jitter_penalty = 4;
+  uint32 loss_penalty = 5;
+  uint32 load_penalty = 6;
+  uint32 missing_reports = 7;
+}
+
+message RelayQualityDecision {
+  uint32 protocol_version = 1;
+  bytes allocation_id = 2;
+  string relay_server = 3;
+  repeated RelayQualityScore scores = 4;
+  // Pre-freeze placeholder retained at its original tag. Frozen v1 senders
+  // MUST leave it empty and clients MUST NOT display it.
+  string reason = 5 [deprecated = true];
+  bool fallback = 6;
+  // Stable numeric values: 1=primary_accepted, 2=expanded_best_score,
+  // 3=partial, 4=hysteresis, 5=legacy_fallback, 6=probe_failure,
+  // 7=manual_override.
+  uint32 reason_code = 7;
+  // The terminal measurement stage: 1=primary, 2=expanded, 3=eager.
+  uint32 stage = 8;
+  bool partial = 9;
+}
+
+message RelayQualityCancel {
+  uint32 protocol_version = 1;
+  bytes allocation_id = 2;
+  uint32 stage = 3;
+  bytes stage_token = 4;
+  // Stable numeric values: 1=p2p_succeeded, 2=client_abort.
+  uint32 reason_code = 5;
+  // Stable numeric values: 1=controller, 2=target.
+  uint32 endpoint_role = 6;
+}

@@ -83,7 +83,7 @@ recommended values:
 | Variable | Requirement | Recommended value |
 | --- | --- | --- |
 | `STARRY_IMAGE` | Required | `ghcr.io/q1ngyang/rustdesk-server-starry` |
-| `STARRY_VERSION` | Required | Exact release, currently `1.1.16-patch-v1.2.2`; do not use `latest` in production. |
+| `STARRY_VERSION` | Required | Exact candidate, currently `1.1.16-patch-v1.3.0`; do not use `latest` in production. |
 | `STARRY_DATA_DIR` | Required | `/opt/rustdesk-server-starry/data` is clearer than a relative path under service managers. |
 | `RUSTDESK_LOG_LEVEL` | Recommended | `info`; use `debug` only temporarily during diagnosis. |
 | Restart policy and container names | Optional | Keep the example values unless they conflict locally. |
@@ -97,8 +97,9 @@ Next edit `data/starry/config.yaml`:
 5. keep `connection_auth.mode: off` because this walkthrough has no API/token
    issuer.
 
-The file uses configuration structure version `3`, which is required for the
-current patch-v1.2.2 feature set. Unknown fields reject the whole candidate;
+The file uses configuration structure version `4`, which is required for the
+current patch-v1.3.0 feature set. Relay quality remains off until explicitly
+enabled. Unknown fields reject the whole candidate;
 never guess a key name.
 
 ## 5. Configure the firewall

@@ -45,9 +45,9 @@ const CONTROL_BODY_LIMIT: u64 = 1024 * 1024 + 4096;
 const MAX_CONNECTIONS: usize = 256;
 const CONNECTION_DEADLINE_SECONDS: u64 = 30;
 const REQUESTS_PER_MINUTE: u32 = 120;
-const STARRY_PATCH_VERSION: &str = "1.2.2";
-const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v3/config.schema.json");
-const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v3/config.ui-schema.json");
+const STARRY_PATCH_VERSION: &str = "1.3.0";
+const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v4/config.schema.json");
+const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v4/config.ui-schema.json");
 
 fn starry_version() -> String {
     format!(
@@ -173,11 +173,17 @@ struct RuntimeReloadRequest {
     expected_source_digest: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct PeerVerifyRequest {
     id: String,
     uuid: String,
+    #[serde(default)]
+    activation_epoch: u64,
+    #[serde(default)]
+    activation_id: String,
+    #[serde(default)]
+    route_leases: Vec<String>,
 }
 
 pub async fn run(config_path: impl AsRef<Path>) -> Result<(), String> {
@@ -311,8 +317,8 @@ async fn control_action(
 ) -> Response {
     let request_id = request_id(&headers);
     let (scope, mutation) = match action.as_str() {
-        "allocations:simulate" => ("starry.relay.simulate", false),
         "peers:verify" => ("starry.peer.verify", false),
+        "allocations:simulate" => ("starry.relay.simulate", false),
         "config:validate" => ("starry.config.validate", false),
         "config:plan" => ("starry.config.plan", true),
         "config:apply" => ("starry.config.apply", true),
@@ -391,8 +397,8 @@ async fn control_action(
         };
     }
     match action.as_str() {
-        "allocations:simulate" => decoded!(Value, simulate),
         "peers:verify" => decoded!(PeerVerifyRequest, peer_verify),
+        "allocations:simulate" => decoded!(Value, simulate),
         "config:validate" => decoded!(ConfigCandidate, config_validate),
         "config:plan" => decoded!(ConfigCandidate, config_plan),
         "config:apply" => decoded!(ConfigApplyRequest, config_apply),
@@ -457,12 +463,19 @@ async fn capabilities(
     let active_schema = runtime
         .get("schema_version")
         .and_then(Value::as_u64)
-        .unwrap_or(3);
+        .unwrap_or(4);
     let mut capabilities = json!({
         "relay_inventory": 1,
         "allocation_simulation": 1,
         "connection_auth": 1,
-        "peer_registry": 1
+        "relay_quality": 1,
+        "relay_active_probe": 1,
+        "relay_probe_protocol": 1,
+        "relay_load_protocol": 1,
+        "relay_telemetry_schema": 1,
+        "fast_relay_authorization": 1,
+        "profile_activation_lease": 1,
+        "peer_registry": 2
     });
     if state.write_enabled {
         let object = capabilities
@@ -481,7 +494,7 @@ async fn capabilities(
         },
         "capabilities": capabilities,
         "config": {
-            "supported_schema_versions": [1, 2, 3],
+            "supported_schema_versions": [1, 2, 3, 4],
             "active_schema_version": active_schema,
             "schema_digest": digest(CONTROL_SCHEMA.as_bytes())
         },
@@ -509,67 +522,6 @@ async fn relays(
     proxy_empty(state, certificate, headers, "starry.relay.read", "relays").await
 }
 
-async fn peer_verify(
-    Extension(state): Extension<Arc<AgentState>>,
-    Extension(certificate): Extension<ClientCertificate>,
-    headers: HeaderMap,
-    ContentLengthLimit(Json(input)): ContentLengthLimit<
-        Json<PeerVerifyRequest>,
-        CONTROL_BODY_LIMIT,
-    >,
-) -> Result<Json<Value>, ApiProblem> {
-    let request_id = request_id(&headers);
-    authorize(
-        &state,
-        &certificate,
-        &headers,
-        "starry.peer.verify",
-        &request_id,
-    )?;
-    if input.id.is_empty()
-        || input.id.len() > 128
-        || input.uuid.is_empty()
-        || input.uuid.len() > 256
-        || input
-            .id
-            .chars()
-            .chain(input.uuid.chars())
-            .any(char::is_control)
-    {
-        return Err(ApiProblem::new(
-            400,
-            "REQUEST_INVALID",
-            "Peer identity fields are invalid.",
-            false,
-            request_id,
-        ));
-    }
-    let result = local_client::call(
-        state.local_address,
-        &request_id,
-        "peer.verify",
-        json!({"id": input.id, "uuid": input.uuid}),
-    )
-    .await
-    .map_err(|error| ApiProblem::from_agent(error, request_id.clone()))?;
-    let registered = result
-        .get("registered")
-        .and_then(Value::as_bool)
-        .ok_or_else(|| {
-            ApiProblem::new(
-                502,
-                "LOCAL_CONTROL_PROTOCOL_ERROR",
-                "HBBS omitted the peer verification result.",
-                false,
-                request_id.clone(),
-            )
-        })?;
-    Ok(Json(json!({
-        "instance_id": state.instance_id,
-        "registered": registered
-    })))
-}
-
 async fn simulate(
     Extension(state): Extension<Arc<AgentState>>,
     Extension(certificate): Extension<ClientCertificate>,
@@ -592,6 +544,41 @@ async fn simulate(
     )
     .await
     .map_err(|error| ApiProblem::from_agent(error, request_id))?;
+    Ok(Json(result))
+}
+
+async fn peer_verify(
+    Extension(state): Extension<Arc<AgentState>>,
+    Extension(certificate): Extension<ClientCertificate>,
+    headers: HeaderMap,
+    ContentLengthLimit(Json(params)): ContentLengthLimit<
+        Json<PeerVerifyRequest>,
+        CONTROL_BODY_LIMIT,
+    >,
+) -> Result<Json<Value>, ApiProblem> {
+    let request_id = request_id(&headers);
+    authorize(
+        &state,
+        &certificate,
+        &headers,
+        "starry.peer.verify",
+        &request_id,
+    )?;
+    let mut result = local_client::call(
+        state.local_address,
+        &request_id,
+        "peer.verify",
+        serde_json::to_value(params).map_err(|_| ApiProblem::internal(request_id.clone()))?,
+    )
+    .await
+    .map_err(|error| ApiProblem::from_agent(error, request_id.clone()))?;
+    let object = result
+        .as_object_mut()
+        .ok_or_else(|| ApiProblem::internal(request_id.clone()))?;
+    object.insert(
+        "instance_id".to_owned(),
+        Value::String(state.instance_id.clone()),
+    );
     Ok(Json(result))
 }
 

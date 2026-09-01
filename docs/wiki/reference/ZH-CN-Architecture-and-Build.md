@@ -3,8 +3,8 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Architecture-and-Build) | **简体中文**
 
 Starry 是可重复的源码 overlay，不是永久维护完整 RustDesk Server 树的 fork。它明确
-固定官方服务端 revision，修改 HBBS，并仅为 HBBR 增加一个有界 WebSocket 版本响应头；
-除此之外继续使用上游 HBBR 协议约定和中继数据路径。
+固定官方服务端 revision，修改 HBBS，并为 HBBR 增加只追加的公开探测与认证遥测；官方客户端
+兼容性与上游 HBBR 字节转发路径保持不变。
 
 ## 组件和流量边界
 
@@ -19,7 +19,7 @@ RustDesk 客户端
 | 组件 | Starry 是否修改 | 状态/职责 |
 | --- | --- | --- |
 | HBBS | 是 | Peer 注册、连接协调、Secure TCP 协商、持久 WSS 信令、Geo 判断和 Relay 分配。 |
-| HBBR | 仅版本响应头 | 通过上游路径承载中继远控数据，并在 WebSocket 握手时声明精确 Starry 构建版本。 |
+| HBBR | 公开探测与认证遥测 | 通过上游路径转发字节，响应不含负载明细的 Akari probe v1；有界 load 与精确 Starry 构建版本仅供 HBBS 认证拉取。 |
 | Control Agent | 独立 Starry binary | 面向一个本机 HBBS 的 Linux-only 最小权限管理 API；远程使用 mTLS/service JWT，本机使用有界 loopback 协议。 |
 | `rustdesk-utils` | 否 | 上游工具的便利构建产物。 |
 | API | 不包含 | 登录、地址簿、设备/管理数据；需要独立选择和加固。 |
@@ -39,6 +39,9 @@ HBBR 健康不能证明两台客户端的桌面会话。
 | `overlay/src/websocket_signal.rs` 与 `websocket_signal/` | `/ws/id` 接入、持久注册/session 路由、资源限制、有效客户端 IP 和 Relay 健康。 |
 | `overlay/src/connection_auth.rs` | Ed25519 JWT/JWKS/introspection 验证及有界 metric/cache state。 |
 | `overlay/src/relay_observer.rs` 与 `allocation_explain.rs` | 不可变 runtime snapshot 与共享纯 allocation decision core。 |
+| `overlay/src/relay_quality.rs` | 候选 offer、有界报告校验、RTT/jitter/loss/load 评分、网段缓存和迟滞。 |
+| `overlay/src/fast_relay.rs` | 最终选择后的 FastCompat 策略门禁、Ed25519 授权签名、来源绑定有界缓存、重试复用和运行计数。 |
+| `overlay/src/profile_activation.rs` | 节点本地 route lease、Native/WSS 共用 generation authority、精确当前注销、断线/TTL 清理、verified burst 限流和聚合计数。 |
 | `overlay/src/local_control.rs` | 有界 loopback `STARRYCTL/1` framing 与旧本地命令兼容。 |
 | `overlay/src/control_agent.rs` 与 `control_agent/` | mTLS/RBAC Control API、本地 client、持久配置事务、audit、history、rollback 与 recovery。 |
 | `overlay/tests/` | 真实进程 WebSocket/mixed、连接认证、local-control 与 Control Agent/fault 集成测试。 |
@@ -60,6 +63,39 @@ CI 会应用 overlay 两次；第二次必须幂等，且 patched tree 通过 `g
 
 原生 Relay 条件继续来自官方在线机制。WSS 条件来自正常 DNS/TCP/TLS、证书主机名/
 证书链和精确 `/ws/relay` WebSocket Upgrade。
+
+## FastCompat 授权流水线
+
+1. Akari 声明 Relay 质量能力，双端报告先经过普通 Relay 决策流水线；
+2. HBBS 连接鉴权必须返回严格 `allow`，且信令必须使用 Secure TCP 或已配置的
+   WebSocket 路径；
+3. HBBS 先冻结最终 `relay_server` 和 Relay 质量决定，再考虑签发；
+4. `fast_relay` 把会话 UUID 与双端 IP、allocation、最终 Relay 和当前策略 generation
+   绑定，然后执行缓存与来源签名限流；
+5. HBBS 使用现有 Ed25519 密钥签发短期 protobuf 载荷，允许 FastCompat、明确拒绝
+   FastMediaV1，并携带码率上限；
+6. 目标端请求和控制端响应收到完全相同的签名字节。任一门禁失败都不产生授权，继续普通
+   可靠 HBBR 路径。
+
+Control Agent 只暴露 capability、策略和聚合计数。签名密钥、令牌、会话 UUID 与签名
+授权只存在于 HBBS/客户端信令，绝不进入 Kessoku 管理记录。
+
+## Profile activation 流水线
+
+1. Akari 创建非零 epoch 和新的 16 字节 activation ID，注册 pending Profile，但不替换
+   本地已提交 Profile；
+2. HBBS 按 peer ID 串行执行 mutation，检查已存 ID/UUID/public-key tuple，创建 32 字节
+   节点本地 lease 和 Native/WSS 共用 generation，再提交 route；
+3. 成功 Ready ACK 回显 epoch/activation ID 并携带 lease/generation。Akari 只提交完全
+   匹配的 ACK；legacy/default 响应保留原 Profile；
+4. 心跳和清理只操作精确当前 route；Native 续期还匹配 socket 地址，WSS 清理额外匹配
+   内部 connection ID，所以同 activation 重试以及 A→B→A 后的旧 route、延迟包均无害；
+5. 可用时立即执行断线清理；45 秒 route TTL 只做崩溃兜底，有界 record 保留足够历史以
+   拒绝 stale epoch。
+
+每个 HBBS 有独立 lease registry。Kessoku 通过 `/peers:verify` 按实例核对，绝不把 lease
+视为集群级凭证或转发给 HBBR。规范见
+[Profile Activation Lease v1](../../reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md)。
 
 ## 配置安全模型
 
@@ -128,11 +164,15 @@ Rust 工具链要求同样适用。Overlay 锚点失败表示需要审查上游�
 - 拼装精确的可下载候选包，其中包括 source/final-tree SPDX SBOM、确定性 archive、
   build inputs 和已验证 checksum。
 
-只有另行批准的发布 job 具有写权限。它使用 GitHub/Sigstore artifact attestation 对
-candidate checksum 和 SBOM 签名并附上可移植 bundle，随后才推送带 OCI provenance/SBOM
-的 `linux/amd64` 镜像并创建或更新 GitHub Release。
+只有另行批准的发布 job 具有写权限。所有候选门禁通过后，它先创建或核验绑定精确源码
+提交的 annotated release tag；已有 tag 只有在解析到同一提交时才可继续，工作流绝不移动
+或替换它。随后推送带 OCI provenance/SBOM 的 `linux/amd64` 镜像，并把 image index、
+平台 manifest、OpenAPI、配置 schema/UI schema、冻结的 Relay Quality 协议及 Relay
+遥测 schema 摘要写入 `STARRY-RELEASE-SUMMARY.json`。该摘要进入带 checksum 的 GitHub
+Release；最终下载对象与 SBOM 再由 GitHub/Sigstore artifact attestation 和可移植 bundle
+覆盖。
 
-ARM 仅尽力保持源码兼容，Windows 构建是非阻断实验检查；两者都不进入 patch-v1.2.2 候选。
+ARM 仅尽力保持源码兼容，Windows 构建是非阻断实验检查；两者都不进入 patch-v1.3.0 候选。
 
 候选构建成功本身不会修改 Release、attestation store 或 GHCR package。部署验收仍由
 运维者负责。
@@ -146,12 +186,13 @@ hbbs --starry-config=/root/starry/config.yaml
 ```
 
 推荐编排文件让 HBBS 与 HBBR 使用同一个固定版本的 Starry 镜像，防止两个镜像分别
-更新。命令仍清楚区分修改范围：`hbbs` 包含 Starry 扩展，镜像内的 `hbbr` 保持上游
-代码不变。
+更新。命令仍清楚区分修改范围：`hbbs` 包含选择扩展，镜像内的 `hbbr` 保留上游转发，
+只增加公开质量探测与认证遥测控制面。
 
 Release checksum 覆盖可下载文件。可移植 Sigstore bundle 与 GitHub artifact
 attestation 将下载对象绑定到 build/SBOM assertion；镜像摘要、OCI provenance 和 OCI
-SBOM 描述容器供应链。请按自己的信任策略验证。
+SBOM 描述容器供应链。`STARRY-RELEASE-SUMMARY.json` 是镜像摘要与 Kessoku 所固定的
+精确 OpenAPI/schema 输入之间的机器可读桥梁；固定前必须先通过 `SHA256SUMS` 验证。
 
 ## 版本维护检查表
 

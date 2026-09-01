@@ -34,11 +34,13 @@ Starry 从 HBBS 数据目录下的 `starry/config.yaml` 读取配置。容器中
 
 | 字段 | 必填 | 可用值 | 含义 |
 | --- | --- | --- | --- |
-| `version` | 是 | `1`、`2`、`3` | 配置结构版本。新部署使用 `3`。 |
+| `version` | 是 | `1`、`2`、`3`、`4` | 配置结构版本。新部署使用 `4`。 |
 
 结构版本 `1` 支持 Relay、Secure TCP、MMDB 和 Geo，并拒绝 `websocket_signal` 与
 `connection_auth`；版本 `2` 增加可选 WebSocket Signal，但仍拒绝 `connection_auth`；
-版本 `3` 新增连接认证。顶层和嵌套未知字段均会被拒绝，避免拼写错误悄悄改变部署结果。
+版本 `3` 新增连接认证并拒绝 `relay_quality`；版本 `4` 新增可选的 Akari Relay
+质量选择与 FastCompat Relay 授权。顶层和嵌套未知字段均会被拒绝，避免拼写错误悄悄
+改变部署结果。
 
 ## 中继服务器列表：`relay_servers`
 
@@ -156,7 +158,7 @@ geo:
 
 ## WebSocket 信令：`websocket_signal`
 
-此部分要求 `version: 2` 或 `3`，并且必须显式启用。
+此部分要求 `version: 2`、`3` 或 `4`，并且必须显式启用。
 
 ```yaml
 websocket_signal:
@@ -180,7 +182,8 @@ websocket_signal:
     failure_threshold: 2
     endpoints:
       - relay: relay-asia-1.example.com:21117
-        url: wss://relay-asia-1.example.com/ws/relay
+        url: wss://relay-asia-1.example.com/ws/telemetry
+        telemetry_secret_file: /run/secrets/starry-relay-telemetry
 ```
 
 ### 会话和资源限制
@@ -219,7 +222,8 @@ HBBS 实际看到的源地址后，才能加入 Docker 网桥或外部代理网�
 | `success_threshold` | `1` | `1..100` 次连续成功 |
 | `failure_threshold` | `2` | `1..100` 次连续失败 |
 | `endpoints[].relay` | 无 | 必填、唯一，并等于某个 `relay_servers` 条目。 |
-| `endpoints[].url` | 无 | 必填且唯一；必须是 `wss://`、DNS 主机名和精确 `/ws/relay` 路径，不得有凭据、查询或片段。 |
+| `endpoints[].url` | 无 | 必填且唯一；必须是 `wss://`、DNS 主机名和精确 `/ws/relay`（仅 legacy health）或 `/ws/telemetry` 路径，不得有凭据、查询或片段。 |
+| `endpoints[].telemetry_secret_file` | 无 | 绝对 secret-file 路径；`/ws/telemetry` 必填，`/ws/relay` 禁止；文件内容不会序列化。 |
 
 当 `enabled: true` 时，端点的 Relay 名称必须恰好覆盖 `relay_servers`。健康探测验证
 分配所需的 WSS/TLS 路径，但不能替代两台客户端的实际远控测试。参见
@@ -227,7 +231,7 @@ HBBS 实际看到的源地址后，才能加入 Docker 网桥或外部代理网�
 
 ## 连接认证：`connection_auth`
 
-本节要求 `version: 3`，用于控制原生 TCP、安全 TCP、WSS 上控制端发出的
+本节要求 `version: 3` 或 `4`，用于控制原生 TCP、安全 TCP、WSS 上控制端发出的
 `PunchHoleRequest` 与直接 `RequestRelay`。UDP 不支持发起这种已认证连接，也不会分配
 中继服务器。
 
@@ -286,6 +290,107 @@ connection_auth:
 只接受带唯一显式 `kid` 的 EdDSA/Ed25519 公共 JWK；拒绝私有、对称或重复 key material。
 raw token 不会作为 cache key 或 status label。进入 audit/enforce 前先阅读
 [连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication)。
+
+## Relay 质量：`relay_quality`
+
+此 Akari 专用扩展要求 `version: 4`，默认关闭。官方客户端不会声明能力，仍使用传统的
+单 Relay 分配。
+
+```yaml
+relay_quality:
+  enabled: true
+  strategy: adaptive
+  legacy_fallback_relays: []
+  max_candidates: 3
+  primary_probe_samples: 3
+  primary_accept_score: 8000
+  primary_max_loss_basis_points: 500
+  p2p_probe_grace_ms: 300
+  probe_samples: 5
+  probe_interval_ms: 50
+  probe_timeout_ms: 1000
+  report_timeout_ms: 15000
+  max_telemetry_age_seconds: 180
+  allocation_ttl_seconds: 30
+  cache_ttl_seconds: 300
+  max_allocations: 10000
+  hysteresis_basis_points: 500
+  missing_report_penalty_basis_points: 1000
+  rtt_bad_ms: 300
+  jitter_bad_ms: 100
+  weights: {rtt: 4000, jitter: 2000, loss: 2500, load: 1500}
+```
+
+| 字段 | 默认值 | 有效范围或规则 |
+| --- | ---: | --- |
+| `enabled` | `false` | 启用时至少需要两个非 legacy 质量 Relay、完整 health endpoint 覆盖，并要求 `max_candidates >= 2`。 |
+| `strategy` | `adaptive` | `adaptive` 先探测 GEO primary，仅在不佳时扩展；`eager` 立即探测全部候选。 |
+| `legacy_fallback_relays` | `[]` | `relay_servers` 的唯一子集；只作显式普通 fallback，绝不进入质量候选。 |
+| `max_candidates` | `3` | 关闭时 `1..5`，启用时 `2..5`。 |
+| `primary_probe_samples` | `3` | `1..20` 且不大于 `probe_samples`；GEO primary 的顺序样本数。 |
+| `primary_accept_score` | `8000` | `1..10000`；只由 HBBS 解释。 |
+| `primary_max_loss_basis_points` | `500` | `0..10000`；任一可用端点超过阈值即触发扩展。 |
+| `p2p_probe_grace_ms` | `300` | `0..5000`；让成功 P2P 在主动探测前取消 allocation。 |
+| `probe_samples` | `5` | 每个 Relay、每个端点尝试 `3..20` 次。 |
+| `probe_interval_ms` | `50` | `20..2000`。 |
+| `probe_timeout_ms` | `1000` | `100..5000`；单样本硬超时。不同候选并发，同候选样本按顺序执行。 |
+| `report_timeout_ms` | `15000` | `1000..60000`；服务端强制总 deadline。adaptive 必须容纳两段 primary window、一段并发 expansion window 和 1000 ms 信令余量；eager 必须容纳两个完整 window。 |
+| `max_telemetry_age_seconds` | `180` | `5..3600` 且不小于 health interval 加 timeout；更旧 load 会排除候选。 |
+| `allocation_ttl_seconds` | `30` | `5..300` 且大于 `report_timeout_ms`；只用于清理，不决定报告有效性。 |
+| `cache_ttl_seconds` | `300` | `30..86400`；用于对称 `/24` 或 `/56` 网段对选择。 |
+| `max_allocations` | `10000` | `100..1000000`；分别作为待处理 allocation、decision 与网段缓存 map 的硬上限，超限时先淘汰最旧项。 |
+| `hysteresis_basis_points` | `500` | `0..5000`；新分数未超过此差值时保留缓存 Relay。 |
+| `missing_report_penalty_basis_points` | `1000` | 每个缺失端点测量惩罚 `0..10000`。 |
+| `rtt_bad_ms` | `300` | `10..10000`；RTT 归一化上限。 |
+| `jitter_bad_ms` | `100` | `1..5000`；jitter 归一化上限。 |
+| `weights` | `4000/2000/2500/1500` | RTT/jitter/loss/load 均须大于 0，合计必须为 `10000`。 |
+
+每个非 legacy 质量 Relay 必须有一个唯一、受认证的 `/ws/telemetry` endpoint 和绝对
+`telemetry_secret_file`，URL 也必须唯一；`/ws/relay` 只允许用于显式 legacy
+health/fallback。启用 WebSocket Signal 时仍保留原有覆盖全部 Relay 的严格规则。候选与报告
+只在 HBBS 信令内传递。Kessoku 可以管理配置并读取 Control API 计数，但
+Akari 和 HBBR 都不会连接 Control Agent。每台 HBBR 应设置
+`STARRY_RELAY_MAX_SESSIONS`，该值现在是真实 admission 上限；`TOTAL_BANDWIDTH` 仍以
+Mbit/s 表示容量。HBBR 通过 `STARRY_RELAY_TELEMETRY_SECRET_FILE` 读取同一密钥。内部
+mTLS 优先；反向代理终止 TLS 时再由 secret-file HMAC 提供端到端请求/响应认证。HBBS 的
+load 评分只信任自己拉取并验签的遥测。启用 Relay 质量时，即使
+`websocket_signal.enabled` 为 false，经过证书验证的探测仍会运行。HBBR 必须显式声明
+probe/load protocol v1，不能从版本字符串推断；遥测缺失、不完整或过期时，该 Relay 会
+退出质量 offer，但显式配置的普通 fallback 仍可使用。
+
+公开 `/ws/relay` 握手和 `RelayProbeResponse` 不再包含详细 load。HBBR 默认每传输源 IP
+每分钟 120 次、全局 10,000 次 probe，可用 `STARRY_RELAY_PROBE_PER_IP_PER_MINUTE` 和
+`STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE` 调整。`STARRY_RELAY_DRAINING=true` 或
+`STARRY_RELAY_DRAINING_FILE` 存在时只拒绝新配对，已有会话继续。详见
+[Relay Telemetry v1](../../reference/RELAY-TELEMETRY-v1.zh-CN.md)。
+
+## 极速模式：`fast_mode.relay`
+
+这个 Akari 专用 schema v4 策略通过现有可靠 HBBR 数据流授权 P2P 极速模式的
+`FastCompat` 路径。功能默认关闭，不会开启新的 Relay 传输。
+
+```yaml
+fast_mode:
+  relay:
+    fast_compat_enabled: false
+    authorization_ttl_seconds: 90
+    max_bitrate_kbps: 50000
+```
+
+| 字段 | 默认值 | 有效范围或规则 |
+| --- | ---: | --- |
+| `fast_compat_enabled` | `false` | 设为 `true` 必须启用 `relay_quality`，把连接鉴权设为 `audit` 或 `enforce`，并启用 `secure_tcp.mode: auto` 或 WebSocket 信令。 |
+| `authorization_ttl_seconds` | `90` | `30..300`；功能关闭时也会校验，重试不延长有效期。 |
+| `max_bitrate_kbps` | `50000` | `1000..200000`；这是给 Akari 的签名上限，不是 HBBR 带宽预留。 |
+
+HBBS 只在鉴权返回严格 `allow` 且存在最终、来源绑定的 Relay 质量决定后签名。服务端会
+覆盖客户端提供的不可信授权字节，并向两端发送同一签名授权。任一前置条件缺失都只是不
+签发，普通 Relay 流程继续。官方客户端会忽略增量字段。
+
+patch-v1.3.0 只授权 `FastCompat`，所有授权的 `allow_fast_media_v1` 均为 false。若 WSS
+在反向代理终止 TLS，必须禁止公网直接访问 HBBS 明文 WebSocket 监听端口。线协议、重放、
+重试和隐私要求见
+[极速 Relay 授权协议 v1](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/FAST-RELAY-AUTHORIZATION-v1.zh-CN.md)。
 
 ## 重新加载配置时的行为
 

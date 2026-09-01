@@ -3,8 +3,8 @@
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Upgrade-and-Rollback)
 
 An upgrade changes two versions: the official RustDesk Server base and the
-Starry patch. A tag such as `1.1.16-patch-v1.2.2` means official server
-`1.1.16` plus Starry patch `1.2.2`. Pin that complete tag, and record the image
+Starry patch. A tag such as `1.1.16-patch-v1.3.0` means official server
+`1.1.16` plus Starry patch `1.3.0`. Pin that complete tag, and record the image
 digest used in production.
 
 ## Upgrade rules
@@ -21,19 +21,15 @@ digest used in production.
 
 ## Read the current patch notes
 
-- [patch-v1.2.2 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.2.md)
-- [patch-v1.2.1 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.1.md)
-- [patch-v1.2.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.2.0.md)
+- [patch-v1.3.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.0.md)
 - [Changelog](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.md)
 
-Patch v1.2.2 adds private peer-registry verification for Kessoku device
-discovery without a configuration migration. Upgrade the center HBBS and its
-Control Agent together; relay-only nodes do not provide this endpoint. Patch
-v1.2.1 added Relay version reporting without a configuration migration.
-Patch v1.2.0 added schema v3 last-known-good activation, strict optional
-connection JWT audit/enforcement, immutable Relay snapshots, side-effect-free
-simulation, and an optional least-privilege Linux Control Agent. Schema v1/v2
-remain accepted with connection authentication off.
+Patch v1.3.0 adds optional candidate Relay probes, two-endpoint RTT/jitter/loss
+scoring, trusted HBBR load telemetry, and signed FastCompat authorization for
+compatible Akari/Kessoku deployments. It also adds matching-ACK Profile
+Activation Leases; that path remains dormant until a capable Akari opts in.
+Official clients and schema v1-v3 keep the legacy registration and single-Relay
+flow.
 
 ## 1. Inventory and backup
 
@@ -65,33 +61,42 @@ format or migration behaviour.
 
 ## 2. Prepare a candidate configuration
 
-For patch v1.1.0 to v1.2.0, keep the existing schema v2 (or v1) file for the
-first binary/image replacement. Prepare schema v3 as a separate candidate:
+For patch v1.2.0 to v1.3.0, keep the existing schema v3 (or earlier) file for
+the first binary/image replacement. Prepare schema v4 as a separate candidate:
 
 ```yaml
-version: 3
+version: 4
 
 # Existing relay_servers, secure_tcp, mmdb, and geo sections stay here.
 
-connection_auth:
-  mode: off
-  # Add reviewed issuer/JWKS/introspection values before moving to audit.
+# Preserve existing connection_auth and websocket_signal settings verbatim.
+
+relay_quality:
+  enabled: false
+  # Enable only after the legacy and official-client baseline passes.
+
+fast_mode:
+  relay:
+    fast_compat_enabled: false
+    authorization_ttl_seconds: 90
+    max_bitrate_kbps: 50000
+  # Enable only after quality, auth, and secure signalling canaries pass.
 ```
 
-Keep existing WebSocket settings unchanged. Do not overwrite the active config
-yet, and do not add an authentication issuer merely to satisfy a rollout date.
+Do not overwrite the active config yet or weaken an existing authentication
+mode merely to satisfy a rollout date.
 
 ## 3. Pull and inspect without starting
 
 Set the new immutable version in `.env`:
 
 ```dotenv
-STARRY_VERSION=1.1.16-patch-v1.2.2
+STARRY_VERSION=1.1.16-patch-v1.3.0
 ```
 
-The supplied Compose files use that same Starry image version for HBBS and
-the bundled HBBR with its upstream relay data path and Starry version header.
-There is no separately updated HBBR image tag.
+The supplied Compose files use that same Starry image version for HBBS and the
+bundled HBBR. HBBR preserves the upstream byte-forwarding path and adds a bounded
+public probe plus authenticated telemetry channel; there is no separately updated HBBR image tag.
 
 Then:
 
@@ -112,7 +117,7 @@ docker compose --env-file .env -f compose.yaml ps
 docker compose --env-file .env -f compose.yaml logs --tail 200 hbbs hbbr
 ```
 
-With the old schema v2 or v1 config, verify:
+With the old schema v3 (or earlier) config, verify:
 
 - both services remain stable and use the existing key;
 - native registration works;
@@ -122,7 +127,7 @@ With the old schema v2 or v1 config, verify:
 
 Stop here if the native baseline regresses.
 
-## 5. Introduce schema v3 with authentication off
+## 5. Introduce schema v4 with Relay quality off
 
 Install the candidate as `data/starry/config.yaml`, then invoke the authenticated
 Control Agent `POST /control/v1/runtime:reload` operation and inspect logs:
@@ -136,7 +141,38 @@ digests, and successful subsystem acknowledgements. Validate native and every
 previously enabled WSS/mixed path again. Process survival alone is not
 acceptance; an invalid candidate retains the prior last-known-good generation.
 
-## 6. Commission the Agent and authentication separately
+## 6. Canary Relay quality separately
+
+Upgrade HBBR before HBBS quality activation. Through inventory, require
+`relay_probe_protocol: 1`, `relay_load_protocol: 1`, fresh telemetry, and one
+unique health endpoint for every quality Relay. A legacy HBBR must be named in
+`legacy_fallback_relays`; a version string alone is not capability evidence.
+Keep at least two compatible Relays online, then enable `relay_quality` on one
+centre or client cohort. Verify that:
+
+1. official clients still receive and use the legacy `relay_server` value;
+2. compatible Akari peers receive only the GEO primary in stage 1; a good
+   primary creates no other HBBR probe, while either endpoint reporting poor
+   quality causes both endpoints to receive the remaining candidates together;
+3. HBBS returns the same selected Relay in the legacy field and the optional
+   decision extension;
+4. Kessoku/Control Relay state exposes capability versions, telemetry
+   observation age/stale state, and accepted/late/invalid/binding-mismatch
+   counters without client identifiers;
+5. P2P success cancels the allocation, force-auto/WSS/symmetric-NAT paths wait
+   for a final decision, and an official peer produces an explicit partial
+   single-endpoint result;
+6. loss, overload, stale health, stage reordering, duplicate/late reports, and
+   rate limits select or fall back deterministically; and
+7. reconnects within one network-prefix pair do not flap below the configured
+   hysteresis margin.
+
+Clients never query the Control Agent. Keep `relay_quality.enabled: false` if
+the deployed Akari protocol version or canonical protobuf SHA-256 does not
+match the FROZEN release contract. Do not deploy Akari wire support from an
+unfrozen branch.
+
+## 7. Commission the Agent and authentication separately
 
 1. Deploy the Linux Control Agent with `write_enabled: false` and a private
    listener. Verify mTLS CA/URI-SAN and service-JWT audience/azp/scope denies.
@@ -152,10 +188,75 @@ acceptance; an invalid candidate retains the prior last-known-good generation.
 6. Canary `enforce` on one instance or user cohort. Expand only with measured
    evidence; UDP initiation stays unsupported and must never allocate.
 
+## 8. Canary Profile activation before FastCompat
+
+Upgrade every target HBBS and its Control Agent first. Confirm
+`profile_activation_lease: 1`, then upgrade Kessoku to keep route leases by
+HBBS `instance.id`, call `/peers:verify` on the issuing instance, and redact
+activation IDs/public keys/leases. Do not enable Akari switching yet.
+
+Canary Akari only after its client-side state machine keeps the old Profile
+committed until a successful Ready ACK exactly matches activation ID/epoch and
+contains a 32-byte lease plus non-zero generation. Exercise Native UDP/TCP,
+WSS old-reader exit, reordered messages, A→B→A, legacy official clients, and at
+least two HBBS nodes. Expand only while stale/rate/capacity/TTL counters and
+HBBR session/disconnect pressure remain within baseline.
+
+The complete protocol and rollout contract is
+[Profile Activation Lease v1](../../reference/PROFILE-ACTIVATION-LEASE-v1.md).
+
+## 9. Canary FastCompat authorization last
+
+Leave `allow_fast_media_v1` out of configuration; patch-v1.3.0 hard-codes it
+false and does not ship a FastMedia Relay transport. In a separate planned
+change, set `fast_mode.relay.fast_compat_enabled: true` only after Relay
+quality, exact auth allow, and Secure TCP/WSS have passed canary acceptance.
+
+Verify that:
+
+1. `GET /control/v1/capabilities` reports
+   `fast_relay_authorization: 1`, and `/relays.fast_relay` counters are present;
+2. official clients and Akari sessions without a quality offer receive no
+   grant and still complete the standard Relay flow;
+3. Akari verifies the grant with the existing HBBS public key, matches the
+   session UUID/expiry/bitrate, and observes `allow_fast_media_v1: false`;
+4. the target `RequestRelay` and controller `RelayResponse` contain identical
+   signed bytes after the same final Relay-quality decision;
+5. a same-session retry reuses the exact bytes without extending expiry, while
+   a changed source/target binding receives no grant; and
+6. Kessoku audit and service logs contain policy/counters only—never signing
+   keys, connection tokens, session UUIDs, or signed grants.
+
 Use the complete checklist in
 [Operations and Verification](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Operations-and-Verification).
 
 ## Feature rollback
+
+If Profile activation regresses, stop new Akari switches first and retain each
+client's last committed Profile. Send best-effort `DeactivatePeer` to every
+issuing HBBS with that node's lease/generation, then wait at least 45 seconds
+plus WSS idle/drain. The server state is in memory only; do not delete peer
+records or rotate public keys. An older server returns no matching enhanced
+ACK, so a conforming client fails closed to its previous Profile.
+
+If FastCompat regresses, first set
+`fast_mode.relay.fast_compat_enabled: false` and require a synchronous reload
+acknowledgement. New sessions immediately receive no grant and continue the
+standard reliable Relay path. Wait longer than the configured authorization
+TTL before considering all previously issued grants expired; no HBBR stream is
+forcibly migrated.
+
+If only staged coordination regresses, first set `relay_quality.strategy:
+eager` and require a synchronous reload; this keeps frozen v1 wire bindings
+while restoring eager-all-candidates behaviour for new allocations. If Relay
+quality itself regresses, set `relay_quality.enabled: false`, perform a
+synchronous runtime reload, and confirm that new allocations use only the
+legacy Geo/failover Relay choice. Existing relay byte streams are not migrated;
+let them drain or reconnect according to the incident policy. Wait at least
+one `report_timeout_ms` before rolling back an HBBR image. If only one HBBR
+must be reverted, first move it into `legacy_fallback_relays`, reload, confirm
+it is no longer a quality candidate, wait for in-flight offers, then replace
+it. Roll back HBBS after HBBR capability withdrawal, not before.
 
 If only WebSocket Signal regresses and native behaviour remains sound:
 
@@ -197,9 +298,10 @@ Usually preserving the current key/state and restoring only the compatible
 config plus previous image is the safer first rollback.
 
 After rollback, repeat the native and applicable API/Relay acceptance tests.
-Before starting patch-v1.1.0, the restored file must be schema v2 or v1;
-patch-v1.1.0 does not understand schema v3. Preserve the v1.2 Agent audit and
-transaction state separately until the incident is closed.
+Before starting patch-v1.2.0, restore schema v3 or earlier without
+`fast_mode` or `relay_quality`; patch-v1.2.0 rejects schema v4. Before
+patch-v1.1.0, restore schema v2 or v1. Preserve Agent audit/transaction state
+separately until the incident is closed.
 
 ## DEB or standalone binary upgrade
 
@@ -216,9 +318,10 @@ sudo systemctl restart rustdesk-server-starry-hbbr
 sudo systemctl status rustdesk-server-starry-hbbr --no-pager
 ```
 
-The HBBR package is an unmodified upstream HBBR built from the pinned official
-revision. Rollback requires the previous package files or repository snapshot;
-do not assume a package cache still contains them.
+The HBBR package is built from the pinned official revision, preserves the
+upstream byte-forwarding path, and adds a bounded public probe plus authenticated telemetry channel.
+Rollback requires the previous package files or repository snapshot; do not
+assume a package cache still contains them.
 
 For standalone binaries, keep versioned filenames and atomically update a
 service symlink or service path. Never overwrite the only known-good binary
@@ -231,6 +334,7 @@ before its checksum and backup are recorded.
 - native registration or native Relay regresses;
 - Secure TCP fails for previously working authenticated clients;
 - no eligible Relay exists for a required transport;
+- quality offers or decisions disagree with the legacy Relay field;
 - WSS health never becomes ready after the documented threshold; or
 - a connection-auth request bypasses the shared gate or an expected client is
   unexpectedly denied;

@@ -12,6 +12,7 @@ pub(super) struct RuleSet {
 
 pub(super) struct Selection {
     pub(super) relay: String,
+    pub(super) candidates: Vec<String>,
     pub(super) rule_name: String,
     pub(super) rule_index: usize,
     pub(super) direction: &'static str,
@@ -61,9 +62,11 @@ impl RuleSet {
             let Some(direction) = rule.match_direction(facts_a, facts_b) else {
                 continue;
             };
-            if let Some(relay) = select_ordered(&rule.relays, online_relays) {
+            let candidates = select_ordered(&rule.relays, online_relays);
+            if let Some(relay) = candidates.first().cloned() {
                 return Some(Selection {
                     relay,
+                    candidates,
                     rule_name: rule.name.clone(),
                     rule_index,
                     direction,
@@ -440,16 +443,16 @@ fn parse_nonzero_u32(field: &str, value: &str) -> Result<u32, String> {
     }
 }
 
-fn select_ordered(configured_relays: &[String], online_relays: &[String]) -> Option<String> {
-    for configured in configured_relays {
-        if let Some(online) = online_relays
-            .iter()
-            .find(|online| online.eq_ignore_ascii_case(configured))
-        {
-            return Some(online.clone());
-        }
-    }
-    None
+fn select_ordered(configured_relays: &[String], online_relays: &[String]) -> Vec<String> {
+    configured_relays
+        .iter()
+        .filter_map(|configured| {
+            online_relays
+                .iter()
+                .find(|online| online.eq_ignore_ascii_case(configured))
+                .cloned()
+        })
+        .collect()
 }
 
 fn matches_optional(actual: &Option<String>, expected: &str) -> bool {

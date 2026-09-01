@@ -5,15 +5,15 @@
 `rustdesk-server-starry` 以锁定版本的官方 RustDesk Server 源码为基础，扩展 HBBS 的
 中继服务器选择与连接能力。主要功能包括：按地理位置依次选择中继服务器、MMDB 管理、
 安全 TCP、可选 WebSocket 信令、连接认证、安全的配置生效机制、中继分配模拟，以及
-可选的 Linux 最小权限管理代理。容器镜像还包含从**同一上游版本**构建的 HBBR；其中继
-数据路径保持不变，仅在 WebSocket 握手中增加有界版本响应头，以便盘点实际运行版本。
+可选的 Linux 最小权限管理代理。容器镜像还包含从**同一上游版本**构建的 HBBR；其字节
+转发路径保持不变，并增加有界 Akari 探测与 load/版本遥测。
 
 ## 首先理解组件边界
 
 | 组件 | 职责 | Starry 是否提供或修改？ |
 | --- | --- | --- |
 | Starry HBBS | 注册设备、协调连接、协商安全 TCP、执行地理位置规则并选择中继服务器。 | **经过 Starry 修改**。 |
-| Starry 镜像内的 HBBR | P2P 不可用或使用 WebSocket 时转发远程控制数据。 | 上游中继数据路径不变，仅增加 WebSocket 握手版本响应头；示例与 HBBS 使用同一锁定镜像防止版本漂移。 |
+| Starry 镜像内的 HBBR | P2P 不可用或使用 WebSocket 时转发远程控制数据。 | 上游字节转发路径不变，增加有界质量探测与 load/版本遥测；示例与 HBBS 使用同一锁定镜像防止版本漂移。 |
 | Starry 管理代理 | 通过 mTLS 和按权限划分的服务令牌管理一台本机 HBBS。 | 可选 Linux 组件；默认禁止写入配置。 |
 | 账户/API 服务 | 登录、地址簿、设备数据和管理。 | **不包含**。可搭配兼容的第三方 API，推荐 Kessoku。 |
 | RustDesk 客户端 | 向 HBBS 注册并建立 P2P 或中继会话。 | 不包含。 |
@@ -29,6 +29,10 @@ API 登录成功不能证明 HBBS 信令传输正常；HBBS 注册成功也不�
 - 原生 HBBS `21116/TCP` 上的客户端兼容 Secure TCP。
 - 面向受限网络的可选持久 `/ws/id` 信令。
 - 通过保持上游中继数据路径的 HBBR 实现 WSS↔WSS 与 WSS↔原生会话。
+- Akari 可选候选探测和双端 RTT/jitter/loss/load 评分；官方客户端仍只使用一个传统 Relay。
+- 面向 Akari P2P 极速模式的默认关闭签名 FastCompat 授权；鉴权和最终质量选择后才签发，patch-v1.3.0 绝不启用 FastMedia Relay UDP。
+- 面向 Akari 的 generation-safe Profile activation：匹配 Ready ACK、不透明 route lease、
+  仅当前路由显式注销和有上限的已验证快速重新注册；官方客户端保持现有注册路径。
 - 检查 `/ws/relay` 的证书与可用状态，只把可用中继服务器分配给 WSS 客户端。
 - 仅在所有子系统确认成功后启用新配置；失败时保留最近一次有效配置。
 - 在原生 TCP、安全 TCP 和 WSS 上提供可选连接令牌认证；UDP 不能发起此类连接。

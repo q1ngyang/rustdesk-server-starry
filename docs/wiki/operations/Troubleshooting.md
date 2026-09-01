@@ -220,6 +220,53 @@ A lower geographic distance is not guaranteed lower latency. Use real
 measurements to adjust ordered rules. Restart or reload only the component
 whose state actually changed, then repeat the same controlled transfer.
 
+## FastCompat is enabled but no grant arrives
+
+An empty tag 64 is a safe fallback, not a Relay failure. Read
+`/control/v1/relays.fast_relay` and identify the counter that increased:
+
+- `disabled` or `invalid_configuration`: inspect the active schema v4 policy;
+- `insecure_requests`: require exact auth `allow` and Secure TCP or the
+  protected WSS signalling path;
+- `quality_selection_failures`: complete the quality-capable PunchHole
+  preflight and final source-bound selection before `RequestRelay`;
+- `missing_signing_keys` or `signing_failures`: verify the preserved HBBS
+  identity/key and system clock without printing secret material;
+- `rate_limited`: stop the reconnect/signature storm; or
+- `response_misses`: check target IP binding, UUID, final Relay, expiry, and
+  configuration generation.
+
+Do not copy a signed grant into a ticket or make Kessoku proxy it. The client
+must verify with the existing HBBS public key and reject expired, wrong-UUID,
+or malformed payloads. `allow_fast_media_v1: false` is expected in this
+release.
+
+## Profile switch never commits or removes the wrong route
+
+Akari must keep the previous Profile committed unless a successful Ready ACK
+echoes the exact pending activation ID and epoch and supplies a 32-byte lease
+with a non-zero generation. A default-valued ACK normally means the target
+server is legacy; do not weaken the client check.
+
+Read `/control/v1/relays.profile_activation` as aggregate evidence:
+
+- `invalid_requests`: check exact ID lengths and required non-zero fields;
+- `stale_rejections`: look for a reused epoch, wrong-node lease, delayed A/B
+  heartbeat/deactivation, or old WSS reader;
+- `rate_limited`: stop the switch loop; an exact identity receives at most 12
+  new leases in 30 seconds and normal IP/global protection remains active;
+- `capacity_rejections`: stop rollout and investigate unbounded distinct peer
+  or identity churn;
+- `disconnect_cleanups`: expected after exact reader/socket close; and
+- `ttl_expirations`: occasional crash fallback only. Sustained growth means
+  disconnect/deactivation delivery is failing.
+
+On multiple HBBS nodes, compare capability and counters per `instance.id` and
+call `/peers:verify` with that node's lease. Never copy a lease to another node
+or print activation IDs, public keys, or leases in diagnostics. Follow the
+[Profile Activation Lease v1 contract](../../reference/PROFILE-ACTIVATION-LEASE-v1.md)
+before rollback.
+
 ## Connection authentication unexpectedly denies or allows
 
 Read `configured_mode`, `effective_mode`, `verifier_state`, key age, and metric

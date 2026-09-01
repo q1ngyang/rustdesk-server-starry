@@ -29,7 +29,7 @@ Agent 不是账户 API，也不是 HBBS 数据面的必需组件。停止 Agent 
 ## Linux 安装
 
 Linux archive/container 和 `rustdesk-server-starry-control-agent` DEB 包含 Agent。DEB 安装
-后不会自动 enable systemd service。v1.2.0 不发布 Windows Agent，因为原子配置事务只在
+后不会自动 enable systemd service。v1.3.0 不发布 Windows Agent，因为原子配置事务只在
 Unix filesystem 上属于发布支持范围。
 
 从 [`config/control-agent.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/control-agent.example.yaml)开始：
@@ -86,15 +86,34 @@ loopback，并默认只读。
    返回结构化数据；`/config` 包含精确 managed UTF-8 YAML 与 strong ETag，但绝不读取
    secret-file reference 指向的内容；每个 Relay 条目同时返回最近一次 WSS 握手观测到的
    HBBR Starry 精确版本，legacy 或尚未探测的 endpoint 返回 `null`；
-4. 仅服务身份的 JWT 使用 `starry.peer.verify` 调用
-   `POST /control/v1/peers:verify` 时，只返回实例 ID 与 RustDesk ID/设备 UUID 是否精确
-   存在，不返回设备资料、密钥、地址或可枚举的注册表；
+4. `POST /peers:verify` 使用 `starry.peer.verify` scope，只接受精确匹配的 peer ID、UUID、
+   activation epoch/ID 与至少一个当前 route lease；仅在该 HBBS Profile activation 仍有效时
+   返回 `registered: true`；
 5. `POST /allocations:simulate` 返回 trace，重复调用不改变 rotation/health/generation 或
    production counter；
 6. 公网无法访问 listener，HBBS `21115` 继续只在 loopback。
 
+patch-v1.3.0 的能力发现包含 `relay_quality: 1`、`relay_active_probe: 1`、
+`relay_probe_protocol: 1`、`relay_load_protocol: 1`、`fast_relay_authorization: 1`、
+`profile_activation_lease: 1` 与 `peer_registry: 2`。
+`/relays` 响应包含聚合的 `quality`、`fast_relay` 和 `profile_activation` 运行
+对象。每个 Relay 返回显式 probe/load capability 版本、telemetry 观测时间/年龄/stale
+状态及当前是否为质量候选；质量计数聚合 accepted、late、invalid 与 binding mismatch，
+以及当前 `adaptive`/`eager` strategy、primary probe/accept、expansion、P2P cancel、估算
+节省尝试数、expanded decision/timeout、hysteresis/cache hit、duplicate 和 stage mismatch；
+绝不暴露客户端完整 IP、allocation/session UUID、stage token、nonce 或原始报告。极速 Relay 计数用于
+区分签发、完全重试复用、送达和 fail-closed 原因，绝不包含
+令牌、会话 UUID 或签名授权。Kessoku 应先检查 capability 与 schema v4 digest，再通过与
+其他配置相同的 validate/plan/apply/audit 事务提供 FastCompat 控制。
+
+Profile activation 计数区分 lease/ACK/续期/注销/清理、stale、rate、TTL 与有界容量结果，
+绝不包含 peer ID、UUID、public key、activation ID 或 route lease。Kessoku 应另外以
+`profile_activation_lease: 1` 为 Profile 切换门禁，按 HBBS `instance.id` 保存 lease，并对
+每个签发实例调用 `/peers:verify`；lease 不是集群级凭证。详见
+[Profile Activation Lease v1](../../reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md)。
+
 每个响应包含 `X-Request-ID`；有效 W3C `traceparent` 会进入 mutation 的持久 audit。不得把
-用户 raw connection token 发送给该 API。
+用户 raw connection token 或极速 Relay 签名授权发送给该 API。
 
 ## 开启配置写入
 
@@ -109,6 +128,10 @@ loopback，并默认只读。
    `Idempotency-Key`；
 5. 轮询 `GET /operations/{id}` 至 `succeeded`，再将 activation ack 与 `GET /config`、
    `/status` 比较。
+
+所有位于 `/relay_quality` 或其子路径的 JSON Pointer 变更至少分类为 `medium`，包括
+启用/关闭功能、修改 strategy 或阈值，以及整体替换/删除对象。鉴权模式等更高风险变更
+继续保持既有 `high`/`critical` 优先级。
 
 Agent 拒绝并发/stale plan 与外部 disk drift；idempotency key 只能重放完全相同的 mutation。
 只有原子替换磁盘文件且 HBBS 确认 source digest、effective digest、generation 与所有必需

@@ -1,4 +1,5 @@
 use super::session::{SendError, WsWriteTransport};
+use crate::profile_activation;
 use hbb_common::{log, tokio::sync::RwLock};
 use once_cell::sync::Lazy;
 use std::{
@@ -12,7 +13,6 @@ use std::{
 };
 
 static CLOCK: Lazy<Instant> = Lazy::new(Instant::now);
-static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 static SESSIONS: Lazy<RwLock<HashMap<String, Session>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 static CONNECTIONS: Lazy<RwLock<HashMap<SocketAddr, ConnectionContext>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
@@ -48,6 +48,7 @@ struct ConnectionContext {
 pub(crate) struct SessionToken {
     pub(crate) peer_id: String,
     pub(crate) generation: u64,
+    pub(crate) connection_id: u64,
     pub(crate) last_seen_millis: Arc<AtomicU64>,
 }
 
@@ -179,10 +180,12 @@ pub(crate) async fn bind(
     writer: WsWriteTransport,
     effective_ip: IpAddr,
     route_addr: SocketAddr,
+    route_generation: Option<u64>,
     max_sessions: usize,
     max_sessions_per_ip: usize,
 ) -> Result<SessionToken, String> {
-    let generation = NEXT_GENERATION.fetch_add(1, Ordering::SeqCst);
+    let generation = route_generation.unwrap_or_else(profile_activation::next_route_generation);
+    let connection_id = writer.connection_id;
     let last_seen_millis = Arc::new(AtomicU64::new(now_millis()));
     let new = Session {
         generation,
@@ -224,6 +227,7 @@ pub(crate) async fn bind(
     Ok(SessionToken {
         peer_id,
         generation,
+        connection_id,
         last_seen_millis,
     })
 }
@@ -242,33 +246,93 @@ pub(crate) async fn route(peer_id: &str) -> Option<SessionRoute> {
 pub(crate) async fn try_send(peer_id: &str, bytes: Vec<u8>) -> bool {
     let candidate = {
         let sessions = SESSIONS.read().await;
-        sessions
-            .get(peer_id)
-            .map(|session| (session.generation, session.writer.clone()))
+        sessions.get(peer_id).map(|session| {
+            (
+                session.generation,
+                session.writer.connection_id,
+                session.writer.clone(),
+            )
+        })
     };
-    let Some((generation, writer)) = candidate else {
+    let Some((generation, connection_id, writer)) = candidate else {
         return false;
     };
     match writer.send_binary(bytes) {
         Ok(()) => true,
         Err(SendError::Full) => {
             SLOW_CONSUMERS.fetch_add(1, Ordering::Relaxed);
-            remove_if_current(peer_id, generation, "slow consumer").await;
+            remove_if_current(peer_id, generation, connection_id, "slow consumer").await;
             false
         }
         Err(SendError::Closed) => {
-            remove_if_current(peer_id, generation, "writer closed").await;
+            remove_if_current(peer_id, generation, connection_id, "writer closed").await;
             false
         }
     }
 }
 
-pub(crate) async fn remove_if_current(peer_id: &str, generation: u64, reason: &str) -> bool {
+pub(crate) async fn remove_if_current(
+    peer_id: &str,
+    generation: u64,
+    connection_id: u64,
+    reason: &str,
+) -> bool {
+    let removed =
+        remove_if_current_inner(peer_id, generation, Some(connection_id), reason, true).await;
+    if removed {
+        profile_activation::disconnect_route(
+            peer_id,
+            profile_activation::RouteKind::WebSocket {
+                generation,
+                connection_id,
+            },
+        )
+        .await;
+    }
+    removed
+}
+
+pub(crate) async fn detach_profile_if_current(
+    peer_id: &str,
+    generation: u64,
+    connection_id: u64,
+    reason: &str,
+) -> bool {
+    remove_if_current_inner(peer_id, generation, Some(connection_id), reason, false).await
+}
+
+pub(crate) async fn remove_profile_if_current(
+    peer_id: &str,
+    generation: u64,
+    connection_id: u64,
+) -> bool {
+    remove_if_current_inner(
+        peer_id,
+        generation,
+        Some(connection_id),
+        "profile deactivated",
+        true,
+    )
+    .await
+}
+
+async fn remove_if_current_inner(
+    peer_id: &str,
+    generation: u64,
+    connection_id: Option<u64>,
+    reason: &str,
+    abort_writer: bool,
+) -> bool {
     let removed = {
         let mut sessions = SESSIONS.write().await;
         if sessions
             .get(peer_id)
-            .map(|session| session.generation == generation)
+            .map(|session| {
+                session.generation == generation
+                    && connection_id
+                        .map(|connection_id| session.writer.connection_id == connection_id)
+                        .unwrap_or(true)
+            })
             .unwrap_or(false)
         {
             sessions.remove(peer_id)
@@ -277,7 +341,9 @@ pub(crate) async fn remove_if_current(peer_id: &str, generation: u64, reason: &s
         }
     };
     if let Some(session) = removed {
-        session.writer.abort();
+        if abort_writer {
+            session.writer.abort();
+        }
         if reason == "idle timeout" {
             TIMED_OUT.fetch_add(1, Ordering::Relaxed);
         }
@@ -309,8 +375,16 @@ pub(crate) async fn drain_all() -> usize {
         std::mem::take(&mut *guard)
     };
     let count = sessions.len();
-    for session in sessions.into_values() {
+    for (peer_id, session) in sessions {
         session.writer.abort();
+        profile_activation::disconnect_route(
+            &peer_id,
+            profile_activation::RouteKind::WebSocket {
+                generation: session.generation,
+                connection_id: session.writer.connection_id,
+            },
+        )
+        .await;
     }
     count
 }
@@ -326,12 +400,23 @@ pub(crate) fn drain_all_now() -> Result<(usize, usize), String> {
     let drained_connections = std::mem::take(&mut *connections);
     let session_count = drained_sessions.len();
     let connection_count = drained_connections.len();
+    let routes = drained_sessions
+        .iter()
+        .map(|(peer_id, session)| {
+            (
+                peer_id.clone(),
+                session.generation,
+                session.writer.connection_id,
+            )
+        })
+        .collect::<Vec<_>>();
     for session in drained_sessions.into_values() {
         session.writer.abort();
     }
     for connection in drained_connections.into_values() {
         connection.writer.abort();
     }
+    profile_activation::disconnect_websocket_routes_now(&routes);
     Ok((session_count, connection_count))
 }
 
@@ -380,7 +465,7 @@ mod tests {
     static ROUTING_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn old_generation_cannot_remove_replacement() {
+    fn old_reader_cannot_remove_replacement_even_when_generation_is_reused() {
         let _guard = ROUTING_TEST_LOCK.lock().unwrap();
         hbb_common::tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -394,6 +479,7 @@ mod tests {
                     first,
                     "192.0.2.1".parse().unwrap(),
                     "127.0.0.1:10001".parse().unwrap(),
+                    None,
                     10,
                     10,
                 )
@@ -405,29 +491,93 @@ mod tests {
                     second,
                     "192.0.2.1".parse().unwrap(),
                     "127.0.0.1:10002".parse().unwrap(),
+                    None,
                     10,
                     10,
                 )
                 .await
                 .unwrap();
-                assert!(!remove_if_current(&peer, first.generation, "old reader").await);
+                assert!(
+                    !remove_if_current(&peer, first.generation, first.connection_id, "old reader",)
+                        .await
+                );
                 assert_eq!(route(&peer).await.unwrap().generation, second.generation);
-                assert!(remove_if_current(&peer, second.generation, "test cleanup").await);
+                assert!(
+                    remove_if_current(
+                        &peer,
+                        second.generation,
+                        second.connection_id,
+                        "test cleanup",
+                    )
+                    .await
+                );
 
-                let (third, _third_rx) = WsWriteTransport::channel(3, 4);
+                let shared_generation = profile_activation::next_route_generation();
+                let (same_first, _same_first_rx) = WsWriteTransport::channel(3, 4);
+                let same_first = bind(
+                    peer.clone(),
+                    same_first,
+                    "192.0.2.1".parse().unwrap(),
+                    "127.0.0.1:10003".parse().unwrap(),
+                    Some(shared_generation),
+                    10,
+                    10,
+                )
+                .await
+                .unwrap();
+                let (same_second, _same_second_rx) = WsWriteTransport::channel(4, 4);
+                let same_second = bind(
+                    peer.clone(),
+                    same_second,
+                    "192.0.2.1".parse().unwrap(),
+                    "127.0.0.1:10004".parse().unwrap(),
+                    Some(shared_generation),
+                    10,
+                    10,
+                )
+                .await
+                .unwrap();
+                assert_eq!(same_first.generation, same_second.generation);
+                assert!(
+                    !remove_if_current(
+                        &peer,
+                        same_first.generation,
+                        same_first.connection_id,
+                        "old same-generation reader",
+                    )
+                    .await
+                );
+                assert_eq!(route(&peer).await.unwrap().generation, shared_generation);
+                assert!(
+                    remove_if_current(
+                        &peer,
+                        same_second.generation,
+                        same_second.connection_id,
+                        "test cleanup",
+                    )
+                    .await
+                );
+
+                let (third, _third_rx) = WsWriteTransport::channel(5, 4);
                 bind(
                     peer.clone(),
                     third,
                     "192.0.2.1".parse().unwrap(),
-                    "127.0.0.1:10003".parse().unwrap(),
+                    "127.0.0.1:10005".parse().unwrap(),
+                    None,
                     10,
                     10,
                 )
                 .await
                 .unwrap();
                 assert!(!native_registration(&peer).await);
-                let current = route(&peer).await.unwrap();
-                assert!(remove_if_current(&peer, current.generation, "test cleanup").await);
+                let current = SESSIONS
+                    .read()
+                    .await
+                    .get(&peer)
+                    .map(|session| (session.generation, session.writer.connection_id));
+                let (generation, connection_id) = current.unwrap();
+                assert!(remove_if_current(&peer, generation, connection_id, "test cleanup").await);
                 assert!(route(&peer).await.is_none());
             });
     }
@@ -450,6 +600,7 @@ mod tests {
                         writer,
                         "192.0.2.10".parse().unwrap(),
                         SocketAddr::from(([127, 0, 0, 1], 20_000 + index)),
+                        None,
                         1_000,
                         1_000,
                     )
@@ -483,6 +634,7 @@ mod tests {
                         writer,
                         "192.0.2.10".parse().unwrap(),
                         SocketAddr::from(([127, 0, 0, 1], 30_000 + index)),
+                        None,
                         1_000,
                         1_000,
                     )

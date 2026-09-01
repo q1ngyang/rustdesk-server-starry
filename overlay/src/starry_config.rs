@@ -12,7 +12,7 @@ use std::{
 pub const DEFAULT_CONFIG_PATH: &str = "starry/config.yaml";
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const MIN_CONFIG_VERSION: u8 = 1;
-pub const CONFIG_VERSION: u8 = 3;
+pub const CONFIG_VERSION: u8 = 4;
 const EXAMPLE_CONFIG: &str = include_str!("starry_config.example.yaml");
 
 static STATE: Lazy<RwLock<ConfigState>> = Lazy::new(|| {
@@ -149,6 +149,8 @@ pub struct StarryConfig {
     pub geo: GeoConfig,
     pub websocket_signal: WebSocketSignalConfig,
     pub connection_auth: ConnectionAuthConfig,
+    pub relay_quality: RelayQualityConfig,
+    pub fast_mode: FastModeConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,6 +169,10 @@ struct StarryConfigWire {
     websocket_signal: Option<WebSocketSignalConfig>,
     #[serde(default)]
     connection_auth: Option<ConnectionAuthConfig>,
+    #[serde(default)]
+    relay_quality: Option<RelayQualityConfig>,
+    #[serde(default)]
+    fast_mode: Option<FastModeConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -259,6 +265,114 @@ impl Default for RelayHealthConfig {
 pub struct RelayEndpointConfig {
     pub relay: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_secret_file: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RelayQualityConfig {
+    pub enabled: bool,
+    pub strategy: RelayQualityStrategyConfig,
+    pub legacy_fallback_relays: Vec<String>,
+    pub max_candidates: usize,
+    pub primary_probe_samples: u32,
+    pub primary_accept_score: u32,
+    pub primary_max_loss_basis_points: u32,
+    pub p2p_probe_grace_ms: u32,
+    pub probe_samples: u32,
+    pub probe_interval_ms: u32,
+    pub probe_timeout_ms: u32,
+    pub report_timeout_ms: u32,
+    pub max_telemetry_age_seconds: u64,
+    pub allocation_ttl_seconds: u64,
+    pub cache_ttl_seconds: u64,
+    pub max_allocations: usize,
+    pub hysteresis_basis_points: u32,
+    pub missing_report_penalty_basis_points: u32,
+    pub rtt_bad_ms: u32,
+    pub jitter_bad_ms: u32,
+    pub weights: RelayQualityWeightsConfig,
+}
+
+impl Default for RelayQualityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strategy: RelayQualityStrategyConfig::Adaptive,
+            legacy_fallback_relays: Vec::new(),
+            max_candidates: 3,
+            primary_probe_samples: 3,
+            primary_accept_score: 8_000,
+            primary_max_loss_basis_points: 500,
+            p2p_probe_grace_ms: 300,
+            probe_samples: 5,
+            probe_interval_ms: 50,
+            probe_timeout_ms: 1_000,
+            report_timeout_ms: 15_000,
+            max_telemetry_age_seconds: 180,
+            allocation_ttl_seconds: 30,
+            cache_ttl_seconds: 300,
+            max_allocations: 10_000,
+            hysteresis_basis_points: 500,
+            missing_report_penalty_basis_points: 1_000,
+            rtt_bad_ms: 300,
+            jitter_bad_ms: 100,
+            weights: RelayQualityWeightsConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RelayQualityStrategyConfig {
+    #[default]
+    Adaptive,
+    Eager,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RelayQualityWeightsConfig {
+    pub rtt: u32,
+    pub jitter: u32,
+    pub loss: u32,
+    pub load: u32,
+}
+
+impl Default for RelayQualityWeightsConfig {
+    fn default() -> Self {
+        Self {
+            rtt: 4_000,
+            jitter: 2_000,
+            loss: 2_500,
+            load: 1_500,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FastModeConfig {
+    pub relay: FastRelayConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FastRelayConfig {
+    pub fast_compat_enabled: bool,
+    pub authorization_ttl_seconds: u64,
+    pub max_bitrate_kbps: u32,
+}
+
+impl Default for FastRelayConfig {
+    fn default() -> Self {
+        Self {
+            fast_compat_enabled: false,
+            authorization_ttl_seconds: 90,
+            max_bitrate_kbps: 50_000,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -942,7 +1056,7 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
             "SCHEMA_UNSUPPORTED",
             "/version",
             format!(
-                "unsupported version {}; expected 1, 2, or {CONFIG_VERSION}",
+                "unsupported version {}; expected 1, 2, 3, or {CONFIG_VERSION}",
                 wire.version
             ),
         ));
@@ -964,6 +1078,26 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
             ),
         ));
     }
+    if wire.version < 4 && wire.relay_quality.is_some() {
+        return Err(Diagnostics::single(
+            "FIELD_REQUIRES_SCHEMA_V4",
+            "/relay_quality",
+            format!(
+                "version {} does not allow relay_quality; upgrade the document to version 4",
+                wire.version
+            ),
+        ));
+    }
+    if wire.version < 4 && wire.fast_mode.is_some() {
+        return Err(Diagnostics::single(
+            "FIELD_REQUIRES_SCHEMA_V4",
+            "/fast_mode",
+            format!(
+                "version {} does not allow fast_mode; upgrade the document to version 4",
+                wire.version
+            ),
+        ));
+    }
     let config = StarryConfig {
         version: wire.version,
         relay_servers: wire.relay_servers,
@@ -972,6 +1106,8 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
         geo: wire.geo,
         websocket_signal: wire.websocket_signal.unwrap_or_default(),
         connection_auth: wire.connection_auth.unwrap_or_default(),
+        relay_quality: wire.relay_quality.unwrap_or_default(),
+        fast_mode: wire.fast_mode.unwrap_or_default(),
     };
     let config = validate(config)
         .map_err(|err| Diagnostics::single("CONFIG_INVALID", diagnostic_pointer(&err), err))?;
@@ -1003,7 +1139,253 @@ fn validate(mut config: StarryConfig) -> Result<StarryConfig, String> {
     validate_geo(&mut config.geo, &config.relay_servers)?;
     validate_websocket_signal(&mut config.websocket_signal, &config.relay_servers)?;
     validate_connection_auth(&mut config.connection_auth)?;
+    validate_relay_quality(
+        &mut config.relay_quality,
+        &config.relay_servers,
+        &config.websocket_signal.relay_health,
+    )?;
+    validate_fast_mode(&config)?;
     Ok(config)
+}
+
+fn validate_fast_mode(config: &StarryConfig) -> Result<(), String> {
+    let relay = &config.fast_mode.relay;
+    if !(30..=300).contains(&relay.authorization_ttl_seconds) {
+        return Err(
+            "fast_mode.relay.authorization_ttl_seconds must be between 30 and 300".to_owned(),
+        );
+    }
+    if !(1_000..=200_000).contains(&relay.max_bitrate_kbps) {
+        return Err("fast_mode.relay.max_bitrate_kbps must be between 1000 and 200000".to_owned());
+    }
+    if relay.fast_compat_enabled && !config.relay_quality.enabled {
+        return Err(
+            "fast_mode.relay.fast_compat_enabled requires relay_quality.enabled".to_owned(),
+        );
+    }
+    if relay.fast_compat_enabled && config.connection_auth.mode == ConnectionAuthMode::Off {
+        return Err(
+            "fast_mode.relay.fast_compat_enabled requires connection_auth.mode audit or enforce"
+                .to_owned(),
+        );
+    }
+    if relay.fast_compat_enabled
+        && config.secure_tcp.mode == SecureTcpMode::Off
+        && !config.websocket_signal.enabled
+    {
+        return Err(
+            "fast_mode.relay.fast_compat_enabled requires Secure TCP or WebSocket signalling"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_relay_quality(
+    config: &mut RelayQualityConfig,
+    relay_servers: &[String],
+    relay_health: &RelayHealthConfig,
+) -> Result<(), String> {
+    normalize_unique(
+        &mut config.legacy_fallback_relays,
+        "relay_quality.legacy_fallback_relays",
+    )?;
+    if !(1..=5).contains(&config.max_candidates) {
+        return Err("relay_quality.max_candidates must be between 1 and 5".to_owned());
+    }
+    if !(1..=20).contains(&config.primary_probe_samples)
+        || config.primary_probe_samples > config.probe_samples
+    {
+        return Err(
+            "relay_quality.primary_probe_samples must be between 1 and probe_samples".to_owned(),
+        );
+    }
+    if !(1..=10_000).contains(&config.primary_accept_score) {
+        return Err("relay_quality.primary_accept_score must be between 1 and 10000".to_owned());
+    }
+    if config.primary_max_loss_basis_points > 10_000 {
+        return Err("relay_quality.primary_max_loss_basis_points must not exceed 10000".to_owned());
+    }
+    if config.p2p_probe_grace_ms > 5_000 {
+        return Err("relay_quality.p2p_probe_grace_ms must not exceed 5000".to_owned());
+    }
+    if !(3..=20).contains(&config.probe_samples) {
+        return Err("relay_quality.probe_samples must be between 3 and 20".to_owned());
+    }
+    if !(20..=2_000).contains(&config.probe_interval_ms) {
+        return Err("relay_quality.probe_interval_ms must be between 20 and 2000".to_owned());
+    }
+    if !(100..=5_000).contains(&config.probe_timeout_ms) {
+        return Err("relay_quality.probe_timeout_ms must be between 100 and 5000".to_owned());
+    }
+    if !(1_000..=60_000).contains(&config.report_timeout_ms) {
+        return Err("relay_quality.report_timeout_ms must be between 1000 and 60000".to_owned());
+    }
+    if !(5..=3_600).contains(&config.max_telemetry_age_seconds) {
+        return Err(
+            "relay_quality.max_telemetry_age_seconds must be between 5 and 3600".to_owned(),
+        );
+    }
+    if !(5..=300).contains(&config.allocation_ttl_seconds) {
+        return Err("relay_quality.allocation_ttl_seconds must be between 5 and 300".to_owned());
+    }
+    if !(30..=86_400).contains(&config.cache_ttl_seconds) {
+        return Err("relay_quality.cache_ttl_seconds must be between 30 and 86400".to_owned());
+    }
+    if !(100..=1_000_000).contains(&config.max_allocations) {
+        return Err("relay_quality.max_allocations must be between 100 and 1000000".to_owned());
+    }
+    if config.hysteresis_basis_points > 5_000 {
+        return Err("relay_quality.hysteresis_basis_points must not exceed 5000".to_owned());
+    }
+    if config.missing_report_penalty_basis_points > 10_000 {
+        return Err(
+            "relay_quality.missing_report_penalty_basis_points must not exceed 10000".to_owned(),
+        );
+    }
+    if !(10..=10_000).contains(&config.rtt_bad_ms) {
+        return Err("relay_quality.rtt_bad_ms must be between 10 and 10000".to_owned());
+    }
+    if !(1..=5_000).contains(&config.jitter_bad_ms) {
+        return Err("relay_quality.jitter_bad_ms must be between 1 and 5000".to_owned());
+    }
+    let weights = &config.weights;
+    let total = weights
+        .rtt
+        .saturating_add(weights.jitter)
+        .saturating_add(weights.loss)
+        .saturating_add(weights.load);
+    if total != 10_000 || [weights.rtt, weights.jitter, weights.loss, weights.load].contains(&0) {
+        return Err(
+            "relay_quality.weights must all be positive and sum to 10000 basis points".to_owned(),
+        );
+    }
+    if config.enabled && relay_servers.len() < 2 {
+        return Err(
+            "relay_quality.enabled requires at least two configured Relay servers".to_owned(),
+        );
+    }
+    if config.enabled && config.max_candidates < 2 {
+        return Err("relay_quality.enabled requires max_candidates to be at least 2".to_owned());
+    }
+    let configured: HashSet<String> = relay_servers
+        .iter()
+        .map(|relay| relay.to_ascii_lowercase())
+        .collect();
+    let legacy: HashSet<String> = config
+        .legacy_fallback_relays
+        .iter()
+        .map(|relay| relay.to_ascii_lowercase())
+        .collect();
+    if let Some(unknown) = config
+        .legacy_fallback_relays
+        .iter()
+        .find(|relay| !configured.contains(&relay.to_ascii_lowercase()))
+    {
+        return Err(format!(
+            "relay_quality.legacy_fallback_relays references '{unknown}' which is absent from relay_servers"
+        ));
+    }
+    if config.enabled {
+        let quality_relays = relay_servers
+            .iter()
+            .filter(|relay| !legacy.contains(&relay.to_ascii_lowercase()))
+            .collect::<Vec<_>>();
+        if quality_relays.len() < 2 {
+            return Err(
+                "relay_quality.enabled requires at least two non-legacy quality Relay servers"
+                    .to_owned(),
+            );
+        }
+        let telemetry_relays: HashSet<String> = relay_health
+            .endpoints
+            .iter()
+            .map(|endpoint| endpoint.relay.to_ascii_lowercase())
+            .collect();
+        let missing = quality_relays
+            .iter()
+            .filter(|relay| !telemetry_relays.contains(&relay.to_ascii_lowercase()))
+            .map(|relay| relay.as_str())
+            .collect::<Vec<_>>();
+        let unknown = relay_health
+            .endpoints
+            .iter()
+            .filter(|endpoint| !configured.contains(&endpoint.relay.to_ascii_lowercase()))
+            .map(|endpoint| endpoint.relay.as_str())
+            .collect::<Vec<_>>();
+        if !missing.is_empty() || !unknown.is_empty() {
+            return Err(format!(
+                "relay_quality.enabled requires a unique health/telemetry endpoint for every non-legacy Relay; missing={missing:?}, unknown={unknown:?}"
+            ));
+        }
+        let insecure = relay_health
+            .endpoints
+            .iter()
+            .filter(|endpoint| !legacy.contains(&endpoint.relay.to_ascii_lowercase()))
+            .filter(|endpoint| {
+                url::Url::parse(&endpoint.url)
+                    .ok()
+                    .map(|url| url.path() != "/ws/telemetry")
+                    .unwrap_or(true)
+                    || endpoint.telemetry_secret_file.is_none()
+            })
+            .map(|endpoint| endpoint.relay.as_str())
+            .collect::<Vec<_>>();
+        if !insecure.is_empty() {
+            return Err(format!(
+                "relay_quality.enabled requires authenticated /ws/telemetry endpoints with telemetry_secret_file for every non-legacy Relay; invalid={insecure:?}"
+            ));
+        }
+        let minimum_freshness = relay_health
+            .interval_seconds
+            .saturating_add(relay_health.timeout_ms.saturating_add(999) / 1_000);
+        if config.max_telemetry_age_seconds < minimum_freshness {
+            return Err(format!(
+                "relay_quality.max_telemetry_age_seconds must be at least relay health interval plus timeout ({minimum_freshness} seconds)"
+            ));
+        }
+        // Candidates within one stage are concurrent, while samples for a
+        // candidate are ordered. The initial target report precedes the
+        // controller report on the rendezvous path. Adaptive mode therefore
+        // needs two primary windows plus one concurrent expanded window and a
+        // bounded signalling margin. Eager mode retains two full endpoint
+        // windows. This is a proof that the configured total deadline is
+        // achievable without assuming infinite waits.
+        let probe_window_ms = |samples: u32| {
+            u64::from(samples)
+                .saturating_mul(u64::from(config.probe_timeout_ms))
+                .saturating_add(
+                    u64::from(samples.saturating_sub(1))
+                        .saturating_mul(u64::from(config.probe_interval_ms)),
+                )
+        };
+        let required_report_ms = match config.strategy {
+            RelayQualityStrategyConfig::Adaptive => u64::from(config.p2p_probe_grace_ms)
+                .saturating_add(probe_window_ms(config.primary_probe_samples))
+                .saturating_mul(2)
+                .saturating_add(probe_window_ms(config.probe_samples))
+                .saturating_add(1_000),
+            RelayQualityStrategyConfig::Eager => {
+                probe_window_ms(config.probe_samples).saturating_mul(2)
+            }
+        };
+        if u64::from(config.report_timeout_ms) < required_report_ms {
+            return Err(format!(
+                "relay_quality report deadline is not achievable for {:?}: report_timeout_ms={} but staged probe windows require at least {required_report_ms}ms",
+                config.strategy,
+                config.report_timeout_ms
+            ));
+        }
+        if config.allocation_ttl_seconds.saturating_mul(1_000)
+            <= u64::from(config.report_timeout_ms)
+        {
+            return Err(
+                "relay_quality.allocation_ttl_seconds must exceed report_timeout_ms; TTL is cleanup only"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(())
 }
 
 pub fn effective_connection_auth_mode(
@@ -1314,12 +1696,23 @@ fn validate_websocket_signal(
             "websocket_signal.relay_health thresholds must be between 1 and 100".to_owned(),
         );
     }
+    if health.endpoints.len() > 256 {
+        return Err(
+            "websocket_signal.relay_health.endpoints must not contain more than 256 Relays"
+                .to_owned(),
+        );
+    }
 
     let mut relays = HashSet::new();
     let mut urls = HashSet::new();
     for (index, endpoint) in health.endpoints.iter_mut().enumerate() {
         endpoint.relay = endpoint.relay.trim().to_owned();
         endpoint.url = endpoint.url.trim().to_owned();
+        endpoint.telemetry_secret_file = endpoint
+            .telemetry_secret_file
+            .take()
+            .map(|path| path.trim().to_owned())
+            .filter(|path| !path.is_empty());
         if endpoint.relay.is_empty() || endpoint.url.is_empty() {
             return Err(format!(
                 "websocket_signal.relay_health.endpoints[{index}] has an empty relay or url"
@@ -1343,18 +1736,41 @@ fn validate_websocket_signal(
                 endpoint.relay
             )
         })?;
+        let telemetry_endpoint = parsed.path() == "/ws/telemetry";
         if parsed.scheme() != "wss"
             || !matches!(parsed.host(), Some(url::Host::Domain(_)))
-            || parsed.path() != "/ws/relay"
+            || !matches!(parsed.path(), "/ws/relay" | "/ws/telemetry")
             || parsed.query().is_some()
             || parsed.fragment().is_some()
             || !parsed.username().is_empty()
             || parsed.password().is_some()
         {
             return Err(format!(
-                "websocket_signal.relay_health endpoint '{}' must use a hostname and exact wss://.../ws/relay URL without credentials, query, or fragment",
+                "websocket_signal.relay_health endpoint '{}' must use a hostname and exact wss://.../ws/relay or wss://.../ws/telemetry URL without credentials, query, or fragment",
                 endpoint.relay
             ));
+        }
+        match (&endpoint.telemetry_secret_file, telemetry_endpoint) {
+            (Some(path), true) if std::path::Path::new(path).is_absolute() => {}
+            (Some(_), true) => {
+                return Err(format!(
+                    "websocket_signal.relay_health endpoint '{}' telemetry_secret_file must be an absolute path",
+                    endpoint.relay
+                ));
+            }
+            (None, true) => {
+                return Err(format!(
+                    "websocket_signal.relay_health endpoint '{}' /ws/telemetry requires telemetry_secret_file",
+                    endpoint.relay
+                ));
+            }
+            (Some(_), false) => {
+                return Err(format!(
+                    "websocket_signal.relay_health endpoint '{}' may set telemetry_secret_file only with /ws/telemetry",
+                    endpoint.relay
+                ));
+            }
+            (None, false) => {}
         }
     }
 
@@ -1473,7 +1889,11 @@ fn sha256_digest(bytes: &[u8]) -> String {
 }
 
 fn diagnostic_pointer(message: &str) -> &'static str {
-    if message.starts_with("connection_auth.") {
+    if message.starts_with("fast_mode.") {
+        "/fast_mode"
+    } else if message.starts_with("relay_quality.") {
+        "/relay_quality"
+    } else if message.starts_with("connection_auth.") {
         "/connection_auth"
     } else if message.starts_with("websocket_signal.") {
         "/websocket_signal"
@@ -1642,6 +2062,35 @@ websocket_signal:
     }
 
     #[test]
+    fn telemetry_endpoint_requires_an_absolute_secret_file_and_public_health_forbids_one() {
+        let missing = r#"
+version: 4
+relay_servers: [relay-a.example.com:21117]
+websocket_signal:
+  relay_health:
+    endpoints:
+      - relay: relay-a.example.com:21117
+        url: wss://relay-a.example.com/ws/telemetry
+"#;
+        let err = parse_config(missing).unwrap_err();
+        assert!(err.contains("requires telemetry_secret_file"));
+
+        let relative = missing.replace(
+            "        url: wss://relay-a.example.com/ws/telemetry\n",
+            "        url: wss://relay-a.example.com/ws/telemetry\n        telemetry_secret_file: secrets/relay\n",
+        );
+        let err = parse_config(&relative).unwrap_err();
+        assert!(err.contains("must be an absolute path"));
+
+        let public_with_secret = missing.replace(
+            "        url: wss://relay-a.example.com/ws/telemetry\n",
+            "        url: wss://relay-a.example.com/ws/relay\n        telemetry_secret_file: /run/secrets/relay\n",
+        );
+        let err = parse_config(&public_with_secret).unwrap_err();
+        assert!(err.contains("only with /ws/telemetry"));
+    }
+
+    #[test]
     fn invalid_reload_preserves_the_last_known_good_configuration() {
         let _guard = STATE_TEST_LOCK.lock().unwrap();
         let directory =
@@ -1664,6 +2113,46 @@ websocket_signal:
         assert_eq!(after.generation, before.generation);
         assert_eq!(after.source_digest, before.source_digest);
         assert_eq!(after.effective_digest, before.effective_digest);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn impossible_relay_quality_reload_preserves_generation_and_last_known_good() {
+        let _guard = STATE_TEST_LOCK.lock().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "starry-config-quality-reload-{}",
+            std::process::id()
+        ));
+        let path = directory.join("config.yaml");
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let valid = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+websocket_signal:
+  relay_health:
+    endpoints:
+      - { relay: relay-a:21117, url: wss://relay-a.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://relay-b.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+relay_quality:
+  enabled: true
+"#;
+        fs::write(&path, valid).unwrap();
+        initialize(path.to_str().unwrap());
+        let before = runtime_state();
+
+        let impossible = valid.replace(
+            "relay_quality:\n  enabled: true\n",
+            "relay_quality:\n  enabled: true\n  probe_timeout_ms: 1000\n  report_timeout_ms: 1000\n",
+        );
+        fs::write(&path, impossible).unwrap();
+        let rejected = reload();
+        assert!(!rejected.accepted);
+        assert!(rejected.message.contains("deadline is not achievable"));
+        let after = runtime_state();
+        assert_eq!(after.generation, before.generation);
+        assert_eq!(after.effective_digest, before.effective_digest);
+        assert!(snapshot().unwrap().relay_quality.enabled);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -1703,6 +2192,245 @@ websocket_signal:
     fn older_schemas_reject_connection_auth() {
         let err = parse_config("version: 2\nconnection_auth:\n  mode: off\n").unwrap_err();
         assert!(err.contains("upgrade the document to version 3"));
+    }
+
+    #[test]
+    fn schema_v4_enables_bounded_relay_quality_configuration() {
+        let raw = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+websocket_signal:
+  relay_health:
+    endpoints:
+      - { relay: relay-a:21117, url: wss://relay-a.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://relay-b.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+relay_quality:
+  enabled: true
+  max_candidates: 2
+  weights: { rtt: 4000, jitter: 2000, loss: 2500, load: 1500 }
+"#;
+        let config = parse_config(raw).unwrap();
+        assert!(config.relay_quality.enabled);
+        assert_eq!(
+            config.relay_quality.strategy,
+            RelayQualityStrategyConfig::Adaptive
+        );
+        assert_eq!(config.relay_quality.max_candidates, 2);
+        assert_eq!(config.relay_quality.primary_probe_samples, 3);
+        assert_eq!(config.relay_quality.primary_accept_score, 8_000);
+        assert_eq!(config.relay_quality.weights.load, 1_500);
+    }
+
+    #[test]
+    fn relay_quality_requires_telemetry_coverage_and_explicit_legacy_fallbacks() {
+        let missing = r#"
+version: 4
+relay_servers: [legacy-a:21117, relay-a:21117, relay-b:21117]
+relay_quality:
+  enabled: true
+"#;
+        let err = parse_config(missing).unwrap_err();
+        assert!(err.contains("health/telemetry endpoint"));
+
+        let valid = r#"
+version: 4
+relay_servers: [legacy-a:21117, relay-a:21117, relay-b:21117]
+websocket_signal:
+  relay_health:
+    endpoints:
+      - { relay: relay-a:21117, url: wss://relay-a.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://relay-b.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+relay_quality:
+  enabled: true
+  legacy_fallback_relays: [legacy-a:21117]
+"#;
+        let parsed = parse_config(valid).unwrap();
+        assert_eq!(
+            parsed.relay_quality.legacy_fallback_relays,
+            ["legacy-a:21117"]
+        );
+
+        let duplicate_url = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+websocket_signal:
+  relay_health:
+    endpoints:
+      - { relay: relay-a:21117, url: wss://shared.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://shared.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+relay_quality:
+  enabled: true
+"#;
+        let err = parse_config(duplicate_url).unwrap_err();
+        assert!(err.contains("duplicate URL"));
+    }
+
+    #[test]
+    fn relay_quality_rejects_unachievable_probe_and_report_deadlines() {
+        let raw = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+websocket_signal:
+  relay_health:
+    endpoints:
+      - { relay: relay-a:21117, url: wss://relay-a.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://relay-b.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+relay_quality:
+  enabled: true
+  probe_samples: 5
+  probe_interval_ms: 50
+  probe_timeout_ms: 1000
+  report_timeout_ms: 10000
+"#;
+        let err = parse_config(raw).unwrap_err();
+        assert!(err.contains("deadline is not achievable"));
+        assert!(err.contains("13000ms"));
+    }
+
+    #[test]
+    fn eager_deadline_keeps_v1_all_candidate_compatibility() {
+        let raw = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+websocket_signal:
+  relay_health:
+    endpoints:
+      - { relay: relay-a:21117, url: wss://relay-a.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://relay-b.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+relay_quality:
+  enabled: true
+  strategy: eager
+  probe_samples: 5
+  probe_interval_ms: 50
+  probe_timeout_ms: 1000
+  report_timeout_ms: 10400
+"#;
+        let config = parse_config(raw).unwrap();
+        assert_eq!(
+            config.relay_quality.strategy,
+            RelayQualityStrategyConfig::Eager
+        );
+        assert_eq!(config.relay_quality.report_timeout_ms, 10_400);
+
+        let impossible_primary = raw
+            .replace("strategy: eager", "strategy: adaptive")
+            .replace(
+                "probe_samples: 5",
+                "probe_samples: 3\n  primary_probe_samples: 4",
+            );
+        let error = parse_config(&impossible_primary).unwrap_err();
+        assert!(error.contains("primary_probe_samples"));
+    }
+
+    #[test]
+    fn relay_quality_rejects_telemetry_age_shorter_than_health_cycle() {
+        let raw = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+websocket_signal:
+  relay_health:
+    interval_seconds: 60
+    timeout_ms: 5000
+    endpoints:
+      - { relay: relay-a:21117, url: wss://relay-a.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://relay-b.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+relay_quality:
+  enabled: true
+  max_telemetry_age_seconds: 64
+"#;
+        let err = parse_config(raw).unwrap_err();
+        assert!(err.contains("at least relay health interval plus timeout (65 seconds)"));
+    }
+
+    #[test]
+    fn older_schemas_reject_relay_quality_and_v4_rejects_bad_weights() {
+        let old = parse_config("version: 3\nrelay_quality:\n  enabled: false\n").unwrap_err();
+        assert!(old.contains("upgrade the document to version 4"));
+
+        let invalid = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+relay_quality:
+  enabled: true
+  weights: { rtt: 5000, jitter: 2000, loss: 2500, load: 1500 }
+"#;
+        let err = parse_config(invalid).unwrap_err();
+        assert!(err.contains("sum to 10000"));
+    }
+
+    #[test]
+    fn schema_v4_fast_relay_is_bounded_fail_closed_and_dependency_checked() {
+        let defaults = parse_config("version: 4\n").unwrap();
+        assert!(!defaults.fast_mode.relay.fast_compat_enabled);
+        assert_eq!(defaults.fast_mode.relay.authorization_ttl_seconds, 90);
+        assert_eq!(defaults.fast_mode.relay.max_bitrate_kbps, 50_000);
+
+        let old =
+            parse_config("version: 3\nfast_mode:\n  relay:\n    fast_compat_enabled: false\n")
+                .unwrap_err();
+        assert!(old.contains("upgrade the document to version 4"));
+
+        let bad_ttl =
+            parse_config("version: 4\nfast_mode:\n  relay:\n    authorization_ttl_seconds: 29\n")
+                .unwrap_err();
+        assert!(bad_ttl.contains("between 30 and 300"));
+
+        let bad_bitrate =
+            parse_config("version: 4\nfast_mode:\n  relay:\n    max_bitrate_kbps: 200001\n")
+                .unwrap_err();
+        assert!(bad_bitrate.contains("between 1000 and 200000"));
+
+        let missing_quality =
+            parse_config("version: 4\nfast_mode:\n  relay:\n    fast_compat_enabled: true\n")
+                .unwrap_err();
+        assert!(missing_quality.contains("requires relay_quality.enabled"));
+
+        let insecure = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+websocket_signal:
+  relay_health:
+    endpoints:
+      - { relay: relay-a:21117, url: wss://relay-a.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://relay-b.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+connection_auth:
+  mode: audit
+  issuer: https://api.example.com
+  audience: rustdesk-connect
+  jwks: { file: auth/jwks.json }
+relay_quality: { enabled: true }
+fast_mode:
+  relay: { fast_compat_enabled: true }
+"#;
+        let insecure = parse_config(insecure).unwrap_err();
+        assert!(insecure.contains("requires Secure TCP or WebSocket signalling"));
+
+        let enabled = r#"
+version: 4
+relay_servers: [relay-a:21117, relay-b:21117]
+secure_tcp: { mode: auto }
+websocket_signal:
+  relay_health:
+    endpoints:
+      - { relay: relay-a:21117, url: wss://relay-a.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+      - { relay: relay-b:21117, url: wss://relay-b.example/ws/telemetry, telemetry_secret_file: /run/secrets/relay-telemetry }
+connection_auth:
+  mode: audit
+  issuer: https://api.example.com
+  audience: rustdesk-connect
+  jwks: { file: auth/jwks.json }
+relay_quality:
+  enabled: true
+fast_mode:
+  relay:
+    fast_compat_enabled: true
+    authorization_ttl_seconds: 120
+    max_bitrate_kbps: 80000
+"#;
+        let config = parse_config(enabled).unwrap();
+        assert!(config.fast_mode.relay.fast_compat_enabled);
+        assert_eq!(config.fast_mode.relay.authorization_ttl_seconds, 120);
+        assert_eq!(config.fast_mode.relay.max_bitrate_kbps, 80_000);
     }
 
     #[test]

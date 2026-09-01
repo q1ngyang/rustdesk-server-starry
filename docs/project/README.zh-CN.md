@@ -21,7 +21,13 @@ Starry 为 **HBBS** 增加以下能力：
 - 在 HBBS 原生 `21116/TCP` 端口上提供兼容 RustDesk 客户端的安全 TCP 协商与加密传输；
 - 可选的 `/ws/id` 持久 WebSocket 信令，包括 WSS↔WSS 与 WSS↔原生中继会话；
 - 验证 `/ws/relay` 的证书和可用状态；
-- 配置结构版本 3：只有所有相关子系统确认成功后才启用新配置，失败时保留最近一次有效配置；
+- 面向 Akari 的候选 Relay 主动探测，以双端 RTT、jitter、loss 和可信 HBBR load 综合
+  评分，并使用网段缓存、迟滞和单 Relay 兼容兜底；
+- 面向 Akari P2P 极速模式的默认关闭短期 Ed25519 FastCompat 授权；只有鉴权严格允许且
+  最终 Relay 选择完成后才签发，首个 v1 版本明确关闭 FastMedia Relay UDP；
+- 面向 Akari 的 generation-safe Profile Activation Lease，包括匹配 Ready ACK 后提交、
+  仅当前 lease 显式注销、有上限的已验证快速重新注册，并保持官方客户端默认兼容；
+- 配置结构版本 4：只有所有相关子系统确认成功后才启用新配置，失败时保留最近一次有效配置；
 - 对原生 TCP、Secure TCP 和 WSS 上的 `PunchHoleRequest` 与直接
   `RequestRelay` 提供可选的 Ed25519 连接令牌认证；UDP 不支持发起这种已认证连接；
 - 提供只读中继状态快照、不影响线上状态的分配模拟，以及由 mTLS、按权限划分的服务
@@ -32,20 +38,20 @@ Starry 为 **HBBS** 增加以下能力：
 | 组件 | Starry 范围 | 部署责任 |
 | --- | --- | --- |
 | HBBS | 由 Starry 扩展层修改 | 运行 Starry 镜像或发布物中的 `hbbs`。 |
-| HBBR | 仅增加版本声明 | 保留上游中继数据路径，只在 WebSocket 握手中增加有界 `X-Starry-Version` 响应头，供认证后的管理端盘点实际运行版本。使用同一 Starry 镜像或发布物中附带的 HBBR。 |
-| 管理代理 | 可选 Starry 组件；v1.2 仅支持 Linux | HBBS 本地控制保持仅本机可用；管理代理只通过私有 mTLS 管理通道访问，默认禁止写入配置。 |
+| HBBR | 公开探测与认证遥测 | 保留上游字节转发数据路径，响应不含负载明细的 Akari 探测消息；有界会话数和带宽遥测仅供 HBBS 认证拉取。使用同一 Starry 镜像或发布物中附带的 HBBR。 |
+| 管理代理 | 可选 Starry 组件；v1.3 仅支持 Linux | HBBS 本地控制保持仅本机可用；管理代理只通过私有 mTLS 管理通道访问，默认禁止写入配置。 |
 | 账户/API 服务 | 不包含 | 可搭配兼容的第三方 API；推荐同一开发者维护的 Kessoku。 |
 
 账户 API 登录、HBBS 信令连接、可选的 Starry 管理接口与 HBBR 数据转发是相互独立的
 协议层。Starry 不会让第三方 API 代替中继服务器，不会改动 HBBR 中继数据路径，也不会替代 RustDesk 客户端。
 
-当前版本：**patch-v1.2.2**。参见
-[`patch-v1.2.2` 版本说明](../releases/RELEASE-NOTES-patch-v1.2.2.zh-CN.md)和
+当前开发版本：**patch-v1.3.0**。参见
+[`patch-v1.3.0` 版本说明](../releases/RELEASE-NOTES-patch-v1.3.0.zh-CN.md)和
 [`更新日志`](../releases/CHANGELOG.zh-CN.md)。Docker 镜像发布于
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)。
 
-patch-v1.2.2 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制文件和 amd64 DEB
-安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.2.2
+patch-v1.3.0 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制文件和 amd64 DEB
+安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.3.0
 正式发布文件。
 
 > 这是非官方社区项目，与 RustDesk、MaxMind、任何 MMDB 镜像提供方或任何 AI
@@ -73,6 +79,7 @@ patch-v1.2.2 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制�
 | [配置参数详解](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Configuration-Reference) | 所有配置项、默认值、范围、依赖和失败时的处理方式。 |
 | [连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication) | 令牌要求、从仅记录到强制拦截的上线顺序、传输范围、故障处理与回滚。 |
 | [管理代理](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent) | Linux 部署、mTLS/服务令牌授权、只读模式、配置事务、恢复与接口约定。 |
+| [Profile Activation Lease v1](../reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md) | Akari 匹配 ACK 切换规则、当前路由注销、多节点 lease、可观测性、发布与回滚。 |
 | [地理位置规则入门](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Basics) | 国家规则、优先级、双向匹配、兜底规则与 `test-geo`。 |
 | [地理位置规则进阶](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Advanced) | 城市、ASN、运营商、嵌套表达式、引号和常用写法。 |
 | [运维与完整验证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Operations-and-Verification) | 从静态检查到真实桌面会话的分层验收。 |
