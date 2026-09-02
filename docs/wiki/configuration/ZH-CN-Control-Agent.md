@@ -87,7 +87,11 @@ starry-control-agent rotate
 代码只从 stdin 或 mode-0600 文件读取。Agent 本地生成 server key/CSR，固定精确 HTTPS
 Broker SPKI，验证返回 CA 签名和 key binding，并且不覆盖不同身份。空状态使用 `pair`；
 既有实例必须显式 `adopt`；经审核证书轮换使用 `rotate`。生成 YAML 只含
-patch-v1.3.0 Agent v1 已支持字段。
+patch-v1.3.0 Agent v1 已支持字段。Kessoku 通过 DNS 连接 Agent 时，用
+`--tls-server-name`（或 `STARRY_CONTROL_AGENT_TLS_SERVER_NAME`）传入 allowlist 中完全
+相同的名字，使本地生成的 CSR 包含匹配 DNS SAN。首次配对中断会复用 durable pending
+instance UUID；rotation 校验既有 generated path binding，并保留已安装的 listen/
+local-control address、managed-config 大小上限与写策略。
 
 容器 identity/runtime state 必须位于
 `STARRY_PERSIST_ROOT/control/{state,identity,generated,shared}` 及
@@ -101,6 +105,10 @@ write-enabled 的 `prepare`、`complete`、健康门控 `activate`、`revoke`。
 `starry.relay.enroll` scope；Relay endpoint、池、profile、限制和 digest 由 Agent 而非
 Kessoku/Broker 固定。registry 有界，完全相同重试幂等；list/get 不含 SP1 secret、
 telemetry secret、私钥或 CSR。
+
+撤销会先记录 terminal state，再删除精确当前 certificate、telemetry secret 和 claim
+marker；部分清理可重试，相同 node 的替换只可清理匹配且已 `revoked`/`expired` 的前任。
+active、未知、不匹配或并发变化的 claim 一律 fail closed。
 
 `activate` 不信任调用方提交的健康结论。它要求引用成功的 `config_apply` operation 与
 完整 HBBS activation ACK，再重新读取当前 `/relays` snapshot，并绑定精确 config

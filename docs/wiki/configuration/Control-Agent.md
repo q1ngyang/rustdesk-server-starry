@@ -103,7 +103,13 @@ server key and CSR locally, pins the exact HTTPS Broker SPKI, validates the
 returned CA signature and key binding, and never overwrites a different
 identity. Use `pair` for empty state, explicit `adopt` for an existing instance,
 and `rotate` for a reviewed certificate rotation. Pairing-generated YAML
-contains only fields already accepted by patch-v1.3.0 Agent v1.
+contains only fields already accepted by patch-v1.3.0 Agent v1. When Kessoku
+connects to the Agent by DNS, pass the exact allowlisted name as
+`--tls-server-name` (or `STARRY_CONTROL_AGENT_TLS_SERVER_NAME`) so the locally
+generated CSR contains the matching DNS SAN. Interrupted first pairing reuses
+its durable pending instance UUID. Rotation validates the existing generated
+path bindings and preserves the installed listen/local-control addresses,
+managed-config size limit, and write policy.
 
 All container identity and runtime state must remain under
 `STARRY_PERSIST_ROOT/control/{state,identity,generated,shared}` plus
@@ -120,6 +126,12 @@ write-enabled `prepare`, `complete`, health-gated `activate`, and `revoke` opera
 pool, profile, limits, and digest. The registry is bounded and exact retries
 are idempotent. No list/get response contains an SP1 secret, telemetry secret,
 private key, or CSR.
+
+Revocation records the terminal state before removing the exact current
+certificate, telemetry secret, and claim marker. Partial cleanup is retryable,
+and a same-node replacement can retire only a matching `revoked` or `expired`
+predecessor. Active, unknown, mismatched, or concurrently changed claims fail
+closed.
 
 `activate` does not trust caller-supplied health. It requires a succeeded
 `config_apply` operation with a complete HBBS activation ACK, then rereads the

@@ -11,7 +11,7 @@ use std::{
 const HELP: &str = "\
 Starry Control Agent\n\n\
 Usage:\n  starry-control-agent [serve] [CONFIG]\n  starry-control-agent pair [OPTIONS]\n  starry-control-agent adopt [OPTIONS]\n  starry-control-agent rotate [OPTIONS]\n  starry-control-agent config downgrade --to-schema 4 [--preview | --output PATH] [OPTIONS]\n\n\
-Pairing options (the SP1 code is accepted only from stdin or a mode-0600 file):\n  --code-file PATH\n  --broker-ca-file PATH\n  --state-dir PATH\n  --identity-dir PATH\n  --output PATH\n  --shared-dir PATH\n  --managed-config PATH\n  --backup-dir PATH\n  --listen ADDRESS\n  --local-control-address ADDRESS\n\n\
+Pairing options (the SP1 code is accepted only from stdin or a mode-0600 file):\n  --code-file PATH\n  --broker-ca-file PATH\n  --tls-server-name NAME\n  --state-dir PATH\n  --identity-dir PATH\n  --output PATH\n  --shared-dir PATH\n  --managed-config PATH\n  --backup-dir PATH\n  --listen ADDRESS\n  --local-control-address ADDRESS\n\n\
 Downgrade options:\n  --agent-config PATH\n  --runtime-state PATH (offline audited override)\n  --certificate PATH (repeatable)\n";
 
 fn main() -> ResultType<()> {
@@ -220,6 +220,10 @@ fn run_pairing(mode: ControlPairMode, options: BTreeMap<String, String>) -> Resu
     let code = read_pairing_code(code_file.as_deref()).map_err(hbb_common::anyhow::Error::msg)?;
     let pairing = ControlPairOptions {
         mode,
+        tls_server_name: options
+            .get("tls-server-name")
+            .cloned()
+            .or(defaults.tls_server_name),
         state_dir: path_option(&options, "state-dir", defaults.state_dir),
         identity_dir: path_option(&options, "identity-dir", defaults.identity_dir),
         output: path_option(&options, "output", defaults.output),
@@ -242,6 +246,7 @@ fn run_pairing(mode: ControlPairMode, options: BTreeMap<String, String>) -> Resu
 }
 
 struct ControlPaths {
+    tls_server_name: Option<String>,
     state_dir: PathBuf,
     identity_dir: PathBuf,
     output: PathBuf,
@@ -258,6 +263,7 @@ impl ControlPaths {
         if let Some(root) = persist_root {
             require_absolute(&root, "STARRY_PERSIST_ROOT")?;
             Ok(Self {
+                tls_server_name: std::env::var("STARRY_CONTROL_AGENT_TLS_SERVER_NAME").ok(),
                 state_dir: root.join("control/state"),
                 identity_dir: root.join("control/identity"),
                 output: root.join("control/generated/control-agent.yaml"),
@@ -272,6 +278,7 @@ impl ControlPaths {
             })
         } else {
             Ok(Self {
+                tls_server_name: std::env::var("STARRY_CONTROL_AGENT_TLS_SERVER_NAME").ok(),
                 state_dir: PathBuf::from("/var/lib/rustdesk-server-starry/control/state"),
                 identity_dir: PathBuf::from("/etc/rustdesk-server-starry/control-identity"),
                 output: PathBuf::from("/etc/rustdesk-server-starry/control-agent.yaml"),
@@ -292,6 +299,7 @@ fn parse_options(arguments: Vec<String>) -> ResultType<BTreeMap<String, String>>
     let allowed = [
         "code-file",
         "broker-ca-file",
+        "tls-server-name",
         "state-dir",
         "identity-dir",
         "output",

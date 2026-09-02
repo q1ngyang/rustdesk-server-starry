@@ -55,10 +55,13 @@ allocation ID、nonce、stage token、grant、secret 或媒体。
 - `starry-control-agent pair`、`adopt`、`rotate` 只从 stdin 或 mode-0600 文件读取短期
   单次 `SP1` 代码。Agent 本地生成私钥/CSR，校验 Broker origin/SPKI pin、响应绑定、
   key/certificate 匹配、CA 签名与证书有效期，并且不覆盖不相关既有身份。
+  显式 `--tls-server-name` 会作为经过校验的 DNS SAN 写入 CSR；首次配对中断后复用
+  durable pending instance UUID，rotate 保留已经校验的 Agent-v1 运行设置。
 - Relay enrollment 由现有 mTLS/JWT Control Agent API 授权。Kessoku 可代理领取，但不能
   选择 Relay endpoint、池、secret 或配置。prepare/complete/health-activate/revoke/list/get
   有界且幂等；health activation 还会把成功 config operation ACK 绑定到精确 generation，
-  并重新读取 HBBS inventory 后才把 enrollment 标为 active。
+  并重新读取 HBBS inventory 后才把 enrollment 标为 active。撤销只清理精确当前凭据；
+  相同 node 的后续 enrollment 只能清理匹配且已 revoked/expired 的前任。
 - `starry-relayctl enroll` 在本机生成 Relay node key，不改变上游 `hbbr` CLI。每 Relay
   获得独立 telemetry secret、证书、批准运行配置和只指向 secret 文件的非 secret
   `relay-compat.env`。
@@ -78,6 +81,8 @@ overlay/tmpfs 容器状态、不安全路径类型或权限、缺失显式 mount
 upgrade/downgrade 不覆盖身份。
 Relay-only Compose 默认把 enrollment 强制开关设为 `1`；保留的手工公钥模式必须显式
 设为 `0`，而且不得用于在状态缺失时重启曾经 enrollment 的 Relay。
+兼容文件解析器只在每个 allowlist assignment 的首个分隔符处分割，因此不会丢失公开
+RustDesk `KEY` 的标准 Base64 padding。
 
 ## 升级与回滚
 
@@ -124,19 +129,30 @@ bind、AKF1 转发/replay、来源端口 rebind、速率/生命周期、认证 t
 SP1 过期/重放/用途/key/digest/pin、中断安装恢复、enrollment 幂等、持久 mount 和无副作用
 downgrade 测试。真实 HBBR 子进程测试覆盖双角色，并证明 UDP 工作不破坏可靠 TCP。
 
-本地候选还通过了 136 个非 SQLite lib 测试、单独串行 SQLite 慢测、11 个 HBBR binary
+本地候选还通过了 140 个非 SQLite lib 测试、单独串行 SQLite 慢测、11 个 HBBR binary
 测试、24 个定向集成测试（另有一个显式 ignored 的负载门禁）以及单独运行的 1000 WSS
 发布门禁；CI 所属文件 rustfmt、`cargo check --all-targets`、`cargo clippy
 --all-targets`、native/amd64-musl release build、本地镜像命令与持久化 smoke、四包 DEB
 可复现构建、固定 Debian 镜像安装及 HBBS v1.3.1→v1.3.0→v1.3.1 身份往返均通过。
 干净官方 commit 连续应用 overlay 两次的整树文件 digest 均为
-`afc3fc3bc98d7361fbff9518e5841e13d02539ffdc94b3e027e5a7428a15d7c9`。
+`a83db4b81c4dc2867785a36d869bba09afc2b677e085d47a9cb686537f48a1e5`。
+
+后续隔离、非发布 staging 使用同一 `KESSOKU_DATA_DIR` 对接 Kessoku v3.0.8，通过 SP1
+Control 证书轮换、重启后 mTLS/JWT inventory、健康门控 Relay 重新 enrollment、修正后的
+容器重建，以及 relative content/metadata manifest 完全相同的停机备份恢复。
+协调执行 v3.0.8/v1.3.1 → v3.0.7/v1.3.0 schema-v4 → v3.0.8/v1.3.1 后，registry、
+HBBS identity、生成的 Agent-v1 identity、普通 Native/WSS Relay 与新鲜 telemetry 均保留。
+Kessoku v3.0.7 直接读取 Starry v1.3.1 inventory 会因前者冻结 config schema ≤4 和
+telemetry schema 1 而被正确拒绝。该 staging image 来自 pre-review worktree，只是诊断
+证据；所有适用操作仍须对最终精确干净 release commit 重跑。
 
 以下仍是对同一精确候选的发布阻断项：
 
 - Native、WSS、mixed 上真实 Akari↔HBBS↔HBBR 自动回退与重入；
 - 真实 UDP block、HBBR restart、300–1200 ms 迁移、整形丢包/超限及设备长时 soak；
-- Kessoku Broker SP1 端到端、九十日回滚窗口前 enrolled Relay 证书轮换，以及多主机迁移、
-  身份克隆和 down-volume 演练；
+- 生产 PKI 证书轮换、九十日回滚窗口前 enrolled Relay 轮换，以及多主机迁移、身份克隆
+  和 down-volume 演练；
+- 修复并复验 Kessoku v3.0.8 Relay adapter 当前遗漏契约字段
+  `websocket.process_instance_id` 的问题；
 - 精确干净 commit 上的托管 CI、RustSec/历史 secret scan、SBOM/attestation、交叉构建工件
   可复现性及完整 Docker/DEB/native 配对与 Relay 交叉升级矩阵。

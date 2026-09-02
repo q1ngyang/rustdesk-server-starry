@@ -85,6 +85,7 @@ impl ControlPairMode {
 #[derive(Clone, Debug)]
 pub struct ControlPairOptions {
     pub mode: ControlPairMode,
+    pub tls_server_name: Option<String>,
     pub state_dir: PathBuf,
     pub identity_dir: PathBuf,
     pub output: PathBuf,
@@ -256,7 +257,8 @@ struct RelayRuntimeConfig<'a> {
     fast_media_udp_port: Option<u16>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct GeneratedAgentConfig {
     version: u32,
     instance_id_file: String,
@@ -267,7 +269,8 @@ struct GeneratedAgentConfig {
     config: GeneratedManagedConfig,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct GeneratedTlsConfig {
     ca_file: String,
     cert_file: String,
@@ -275,20 +278,23 @@ struct GeneratedTlsConfig {
     allowed_client_uri_sans: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct GeneratedServiceJwtConfig {
     issuer: String,
     jwks_file: String,
     audience_prefix: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct GeneratedLocalControlConfig {
     address: SocketAddr,
     token_file: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct GeneratedManagedConfig {
     path: String,
     backup_dir: String,
@@ -430,8 +436,15 @@ pub async fn control_pair(
     }
 
     let existing_instance = read_optional_trimmed(&options.state_dir.join("instance-id"), 64)?;
+    let pending_instance = if options.mode == ControlPairMode::Pair && existing_instance.is_none() {
+        recover_pending_control_instance(&pending_path, &code)?
+    } else {
+        None
+    };
     let instance_id = match (options.mode, existing_instance) {
-        (ControlPairMode::Pair, None) => uuid::Uuid::now_v7().to_string(),
+        (ControlPairMode::Pair, None) => {
+            pending_instance.unwrap_or_else(|| uuid::Uuid::now_v7().to_string())
+        }
         (ControlPairMode::Pair, Some(value)) if pending_path.exists() => {
             // A first pairing may have reached the durable install phase before
             // the process or host stopped. The pending record below still has
@@ -457,6 +470,7 @@ pub async fn control_pair(
         options.mode != ControlPairMode::Pair,
         &options.identity_dir.join("server-key.pem"),
         &instance_id,
+        options.tls_server_name.as_deref(),
     )?;
     let request_digest = claim_request_digest(
         code.purpose,
@@ -552,6 +566,7 @@ pub async fn relay_enroll(
         false,
         &enrollment_dir.join("node-key.pem"),
         &code.enrollment_id,
+        None,
     )?;
     let request_digest = claim_request_digest(
         code.purpose,
@@ -777,6 +792,7 @@ fn load_or_create_pending_key(
     allow_existing_identity: bool,
     existing_key_path: &Path,
     common_name: &str,
+    tls_server_name: Option<&str>,
 ) -> Result<(String, String, String), String> {
     let private_key_pem = if pending_key_path.exists() {
         validate_private_input(pending_key_path)?;
@@ -801,7 +817,12 @@ fn load_or_create_pending_key(
     let key_pair =
         KeyPair::from_pem(&private_key_pem).map_err(|_| "identity_key_invalid".to_owned())?;
     let key_fingerprint = digest(&key_pair.public_key_der());
-    let mut params = CertificateParams::new(Vec::<String>::new());
+    let subject_alt_names: Vec<String> = tls_server_name
+        .map(validate_tls_server_name)
+        .transpose()?
+        .into_iter()
+        .collect();
+    let mut params = CertificateParams::new(subject_alt_names);
     params.alg = &rcgen::PKCS_ED25519;
     let mut name = DistinguishedName::new();
     name.push(DnType::CommonName, bounded_name(common_name)?);
@@ -811,7 +832,9 @@ fn load_or_create_pending_key(
         .map_err(|_| "identity_csr_generation_failed".to_owned())?;
     let csr_pem = certificate
         .serialize_request_pem()
-        .map_err(|_| "identity_csr_generation_failed".to_owned())?;
+        .map_err(|_| "identity_csr_generation_failed".to_owned())?
+        .trim()
+        .to_owned();
     Ok((private_key_pem, csr_pem, key_fingerprint))
 }
 
@@ -1044,6 +1067,11 @@ fn install_control_identity(
     if completed && options.mode == ControlPairMode::Pair {
         return Err("control_identity_exists".to_owned());
     }
+    let previous = if completed {
+        Some(load_existing_generated_config(options)?)
+    } else {
+        None
+    };
     atomic_write(
         &options.state_dir.join("instance-id"),
         format!("{instance_id}\n").as_bytes(),
@@ -1084,7 +1112,10 @@ fn install_control_identity(
     let generated = GeneratedAgentConfig {
         version: 1,
         instance_id_file: options.state_dir.join("instance-id").display().to_string(),
-        listen: options.listen,
+        listen: previous
+            .as_ref()
+            .map(|config| config.listen)
+            .unwrap_or(options.listen),
         tls: GeneratedTlsConfig {
             ca_file: client_ca.display().to_string(),
             cert_file: server_cert.display().to_string(),
@@ -1097,14 +1128,23 @@ fn install_control_identity(
             audience_prefix: bundle.service_jwt_audience_prefix.clone(),
         },
         local_control: GeneratedLocalControlConfig {
-            address: options.local_control_address,
+            address: previous
+                .as_ref()
+                .map(|config| config.local_control.address)
+                .unwrap_or(options.local_control_address),
             token_file: token_file.display().to_string(),
         },
         config: GeneratedManagedConfig {
             path: options.managed_config_path.display().to_string(),
             backup_dir: options.backup_dir.display().to_string(),
-            max_bytes: 1024 * 1024,
-            write_enabled: false,
+            max_bytes: previous
+                .as_ref()
+                .map(|config| config.config.max_bytes)
+                .unwrap_or(1024 * 1024),
+            write_enabled: previous
+                .as_ref()
+                .map(|config| config.config.write_enabled)
+                .unwrap_or(false),
         },
     };
     let yaml =
@@ -1125,6 +1165,68 @@ fn install_control_identity(
         0o600,
         completed,
     )
+}
+
+fn load_existing_generated_config(
+    options: &ControlPairOptions,
+) -> Result<GeneratedAgentConfig, String> {
+    let metadata = fs::symlink_metadata(&options.output)
+        .map_err(|_| "control_generated_config_unreadable".to_owned())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 1024 * 1024 {
+        return Err("control_generated_config_invalid".to_owned());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 || metadata.mode() & 0o027 != 0 {
+            return Err("control_generated_config_invalid".to_owned());
+        }
+    }
+    let raw = fs::read_to_string(&options.output)
+        .map_err(|_| "control_generated_config_unreadable".to_owned())?;
+    let config: GeneratedAgentConfig =
+        serde_yml::from_str(&raw).map_err(|_| "control_generated_config_invalid".to_owned())?;
+    let expected_instance = options.state_dir.join("instance-id").display().to_string();
+    let expected_ca = options
+        .identity_dir
+        .join("client-ca.pem")
+        .display()
+        .to_string();
+    let expected_cert = options
+        .identity_dir
+        .join("server-cert.pem")
+        .display()
+        .to_string();
+    let expected_key = options
+        .identity_dir
+        .join("server-key.pem")
+        .display()
+        .to_string();
+    let expected_jwks = options
+        .identity_dir
+        .join("service-jwks.json")
+        .display()
+        .to_string();
+    let expected_token = options
+        .shared_dir
+        .join("local-control.token")
+        .display()
+        .to_string();
+    if config.version != 1
+        || config.instance_id_file != expected_instance
+        || config.tls.ca_file != expected_ca
+        || config.tls.cert_file != expected_cert
+        || config.tls.key_file != expected_key
+        || config.service_jwt.jwks_file != expected_jwks
+        || config.local_control.token_file != expected_token
+        || config.config.path != options.managed_config_path.display().to_string()
+        || config.config.backup_dir != options.backup_dir.display().to_string()
+        || config.config.max_bytes == 0
+        || config.config.max_bytes > 16 * 1024 * 1024
+    {
+        return Err("control_generated_config_binding_mismatch".to_owned());
+    }
+    Ok(config)
 }
 
 fn install_relay_identity(
@@ -1319,6 +1421,32 @@ fn validate_or_write_pending(path: &Path, expected: &PendingIdentity) -> Result<
     atomic_json(path, expected, 0o600, false)
 }
 
+fn recover_pending_control_instance(
+    path: &Path,
+    code: &PairingCode,
+) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let pending: PendingIdentity = serde_json::from_slice(
+        &fs::read(path).map_err(|_| "pairing_pending_unreadable".to_owned())?,
+    )
+    .map_err(|_| "pairing_pending_invalid".to_owned())?;
+    if pending.version != PROTOCOL_VERSION
+        || pending.purpose != Purpose::ControlAgent.as_str()
+        || pending.action != ControlPairMode::Pair.action()
+        || pending.enrollment_id != code.enrollment_id
+        || pending.configuration_digest != code.configuration_digest
+    {
+        return Err("pairing_pending_identity_changed".to_owned());
+    }
+    let instance_id = pending
+        .instance_id
+        .ok_or_else(|| "pairing_pending_invalid".to_owned())?;
+    uuid::Uuid::parse_str(&instance_id).map_err(|_| "pairing_pending_invalid".to_owned())?;
+    Ok(Some(instance_id))
+}
+
 fn remove_pending(metadata: &Path, key: &Path) -> Result<(), String> {
     for path in [metadata, key] {
         match fs::remove_file(path) {
@@ -1435,7 +1563,36 @@ fn validate_control_paths(options: &ControlPairOptions) -> Result<(), String> {
     {
         return Err("control_pairing_path_layout_invalid".to_owned());
     }
+    if let Some(name) = options.tls_server_name.as_deref() {
+        validate_tls_server_name(name)?;
+    }
     Ok(())
+}
+
+fn validate_tls_server_name(value: &str) -> Result<String, String> {
+    let valid = !value.is_empty()
+        && value.len() <= 253
+        && value.is_ascii()
+        && value.parse::<std::net::IpAddr>().is_err()
+        && value.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        });
+    if !valid {
+        return Err("control_tls_server_name_invalid".to_owned());
+    }
+    Ok(value.to_owned())
 }
 
 /// Rejects container writable layers and tmpfs for durable identity/config
@@ -1979,6 +2136,173 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_control_pair_recovers_the_pending_instance_id() {
+        let temporary = tempfile::tempdir().unwrap();
+        let pending_path = temporary.path().join("pairing.pending.json");
+        let raw_code = code("control-agent", unix_seconds() + 600);
+        let parsed_code = PairingCode::parse(&raw_code, Purpose::ControlAgent).unwrap();
+        let instance_id = uuid::Uuid::now_v7().to_string();
+        atomic_json(
+            &pending_path,
+            &PendingIdentity {
+                version: PROTOCOL_VERSION,
+                purpose: Purpose::ControlAgent.as_str().to_owned(),
+                action: ControlPairMode::Pair.action().to_owned(),
+                enrollment_id: parsed_code.enrollment_id.clone(),
+                configuration_digest: parsed_code.configuration_digest.clone(),
+                request_digest: format!("sha256:{}", "3".repeat(64)),
+                key_fingerprint: format!("sha256:{}", "4".repeat(64)),
+                csr_digest: format!("sha256:{}", "5".repeat(64)),
+                instance_id: Some(instance_id.clone()),
+            },
+            0o600,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            recover_pending_control_instance(&pending_path, &parsed_code).unwrap(),
+            Some(instance_id)
+        );
+
+        let different = PairingCode::parse(
+            &code("control-agent", unix_seconds() + 600),
+            Purpose::ControlAgent,
+        )
+        .unwrap();
+        assert_eq!(
+            recover_pending_control_instance(&pending_path, &different).unwrap_err(),
+            "pairing_pending_identity_changed"
+        );
+    }
+
+    #[test]
+    fn generated_control_csr_is_canonical_and_contains_the_explicit_tls_name() {
+        let temporary = tempfile::tempdir().unwrap();
+        let (_, csr, _) = load_or_create_pending_key(
+            &temporary.path().join("server-key.pending.pem"),
+            false,
+            false,
+            &temporary.path().join("server-key.pem"),
+            &uuid::Uuid::now_v7().to_string(),
+            Some("starry.internal"),
+        )
+        .unwrap();
+        assert_eq!(csr.trim(), csr);
+        let request = rcgen::CertificateSigningRequest::from_pem(&csr).unwrap();
+        assert!(request.params.subject_alt_names.iter().any(|name| {
+            matches!(name, rcgen::SanType::DnsName(value) if value == "starry.internal")
+        }));
+        assert_eq!(
+            validate_tls_server_name("not/a/host").unwrap_err(),
+            "control_tls_server_name_invalid"
+        );
+        for invalid in [
+            "host:21120",
+            "127.0.0.1",
+            "::1",
+            ".starry.internal",
+            "starry.internal.",
+            "starry..internal",
+            "-starry.internal",
+            "starry-.internal",
+        ] {
+            assert_eq!(
+                validate_tls_server_name(invalid).unwrap_err(),
+                "control_tls_server_name_invalid"
+            );
+        }
+        let oversized_label = format!("{}.internal", "a".repeat(64));
+        assert_eq!(
+            validate_tls_server_name(&oversized_label).unwrap_err(),
+            "control_tls_server_name_invalid"
+        );
+        assert_eq!(
+            validate_tls_server_name("Starry-01.internal").unwrap(),
+            "Starry-01.internal"
+        );
+    }
+
+    #[test]
+    fn rotation_preserves_existing_generated_runtime_settings() {
+        let temporary = tempfile::tempdir().unwrap();
+        let options = ControlPairOptions {
+            mode: ControlPairMode::Rotate,
+            tls_server_name: Some("starry.internal".to_owned()),
+            state_dir: temporary.path().join("control/state"),
+            identity_dir: temporary.path().join("control/identity"),
+            output: temporary
+                .path()
+                .join("control/generated/control-agent.yaml"),
+            shared_dir: temporary.path().join("control/shared"),
+            managed_config_path: temporary.path().join("config/config.yaml"),
+            backup_dir: temporary.path().join("config/history"),
+            listen: "0.0.0.0:21120".parse().unwrap(),
+            local_control_address: "127.0.0.1:21119".parse().unwrap(),
+            broker_ca_file: None,
+        };
+        let existing = GeneratedAgentConfig {
+            version: 1,
+            instance_id_file: options.state_dir.join("instance-id").display().to_string(),
+            listen: "0.0.0.0:24443".parse().unwrap(),
+            tls: GeneratedTlsConfig {
+                ca_file: options
+                    .identity_dir
+                    .join("client-ca.pem")
+                    .display()
+                    .to_string(),
+                cert_file: options
+                    .identity_dir
+                    .join("server-cert.pem")
+                    .display()
+                    .to_string(),
+                key_file: options
+                    .identity_dir
+                    .join("server-key.pem")
+                    .display()
+                    .to_string(),
+                allowed_client_uri_sans: vec!["spiffe://old-client".to_owned()],
+            },
+            service_jwt: GeneratedServiceJwtConfig {
+                issuer: "https://old-issuer.example".to_owned(),
+                jwks_file: options
+                    .identity_dir
+                    .join("service-jwks.json")
+                    .display()
+                    .to_string(),
+                audience_prefix: "urn:old:".to_owned(),
+            },
+            local_control: GeneratedLocalControlConfig {
+                address: "127.0.0.1:21115".parse().unwrap(),
+                token_file: options
+                    .shared_dir
+                    .join("local-control.token")
+                    .display()
+                    .to_string(),
+            },
+            config: GeneratedManagedConfig {
+                path: options.managed_config_path.display().to_string(),
+                backup_dir: options.backup_dir.display().to_string(),
+                max_bytes: 2 * 1024 * 1024,
+                write_enabled: true,
+            },
+        };
+        atomic_write(
+            &options.output,
+            serde_yml::to_string(&existing).unwrap().as_bytes(),
+            0o640,
+            false,
+        )
+        .unwrap();
+
+        let loaded = load_existing_generated_config(&options).unwrap();
+        assert_eq!(loaded.listen, existing.listen);
+        assert_eq!(loaded.local_control.address, existing.local_control.address);
+        assert_eq!(loaded.config.max_bytes, existing.config.max_bytes);
+        assert!(loaded.config.write_enabled);
+    }
+
+    #[test]
     fn completed_relay_enrollment_retry_is_idempotent_after_lost_response() {
         let temporary = tempfile::tempdir().unwrap();
         let enrollment = temporary.path().join("starry/enrollment");
@@ -2136,6 +2460,7 @@ mod tests {
         .unwrap();
         let options = ControlPairOptions {
             mode: ControlPairMode::Pair,
+            tls_server_name: Some("starry.internal".to_owned()),
             state_dir: state.clone(),
             identity_dir: identity,
             output: temporary.path().join("control-agent.yaml"),

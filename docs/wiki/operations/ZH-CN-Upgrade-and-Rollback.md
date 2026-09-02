@@ -43,7 +43,9 @@ FastMedia Relay UDP、telemetry schema 2、schema v5 和 SP1 pairing。
 2. 使用原 schema v4 或两个 Fast 开关均 false 的 schema v5 滚动 HBBS；验证精确 Relay
    Quality v1 digest 和普通 GEO/failover。
 3. 滚动 Control Agent，验证 schema/OpenAPI fixtures、SP1 capability 和只读 inventory。
-   既有身份只能通过显式审核的 pair/adopt 操作接入，`pair` 不得覆盖。
+   既有身份只能通过显式审核的 pair/adopt 操作接入，`pair` 不得覆盖。证书通过 DNS 使用时，
+   用 `--tls-server-name` 传入 Kessoku allowlist 中完全相同的名字；rotate 必须保留既有
+   Agent listen、local-control address、大小上限与写策略。
 4. 先 canary FastCompat，再在有界 Relay/Akari 群组 canary FastMedia；bind 失败、UDP
    block、listener restart 或限流都必须保留可靠桌面会话。
 
@@ -78,6 +80,13 @@ Agent/Relay 证书剩余不足九十天时，命令拒绝。进入回退窗口�
 `relay-compat.env` 的 HBBR、Control Agent。patch-v1.3.0 继续读取 Agent v1 YAML/PEM/JWKS
 和普通 telemetry secret-file，只忽略、不能删除 pairing/enrollment 状态。重新升级 v1.3.1
 会复用同一身份，并在恢复 FastMedia 前重新检查 UDP 健康。
+兼容解析器会保留公开 `KEY` 末尾的 Base64 padding。
+
+Kessoku 降级必须作为协调兼容变更执行。Kessoku v3.0.7 冻结 config schema ≤4 和
+telemetry schema 1，不能直接读取 schema-v5/telemetry-v2 Starry v1.3.1 inventory。
+启动 Kessoku v3.0.7 前，先激活导出的 schema-v4 配置并把 Starry 回滚到 v1.3.0；升级时
+反向执行，恢复 Kessoku v3.0.8 与 Starry v1.3.1、验证新鲜 telemetry-v2 inventory 后，
+才重新启用 FastMedia。
 
 以下编号步骤是原 v1.3.0 commissioning 流程，仍适用于 Relay Quality/Profile activation。
 

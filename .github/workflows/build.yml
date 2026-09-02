@@ -662,6 +662,28 @@ jobs:
           docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" \
             starry-relayctl --help >/dev/null
 
+          relay_state="$(mktemp -d)"
+          relay_stub="$(mktemp -d)"
+          expected_key='c3RhcnJ5LXBhZGRlZC1wdWJsaWMta2V5LXYx=='
+          mkdir -p "${relay_state}/starry/enrollment"
+          printf '%s\n' \
+            "KEY=${expected_key}" \
+            'STARRY_RELAY_ENROLLMENT_DIR=/relay-data/starry/enrollment' \
+            > "${relay_state}/starry/enrollment/relay-compat.env"
+          printf '%s\n' 'staging-relay-machine-id' > "${relay_stub}/machine-id"
+          printf '%s\n' '#!/bin/sh' 'printf "%s" "$KEY" > /relay-data/observed-key' \
+            > "${relay_stub}/hbbr"
+          chmod 0755 "${relay_stub}/hbbr"
+          docker run --rm --platform "linux/${ARCH}" \
+            --entrypoint /usr/bin/starry-relay-entrypoint \
+            -e RELAY_DATA_DIR=/relay-data \
+            -e STARRY_REQUIRE_RELAY_ENROLLMENT=1 \
+            -v "${relay_state}:/relay-data" \
+            -v "${relay_stub}/machine-id:/etc/machine-id:ro" \
+            -v "${relay_stub}/hbbr:/usr/bin/hbbr:ro" \
+            "starry-smoke:${ARCH}"
+          test "$(cat "${relay_state}/observed-key")" = "$expected_key"
+
           state_dir="$(mktemp -d)"
           container="$(docker run -d --platform "linux/${ARCH}" \
             -v "${state_dir}:/root" "starry-smoke:${ARCH}" \

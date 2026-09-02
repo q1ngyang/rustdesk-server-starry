@@ -69,13 +69,18 @@ media.
   single-use `SP1` code only from stdin or a mode-0600 file. The Agent generates
   its private key and CSR locally, validates Broker origin/SPKI pin, response
   bindings, key/certificate match, CA signature, and certificate lifetime, and
-  never overwrites an unrelated existing identity.
+  never overwrites an unrelated existing identity. An explicit
+  `--tls-server-name` is placed in the CSR as a validated DNS SAN; interrupted
+  first pairing reuses its durable pending instance UUID, and rotation
+  preserves the validated installed Agent-v1 runtime settings.
 - Relay enrollment is authorized by the existing mTLS/JWT Control Agent API.
   Kessoku may broker claim delivery but cannot choose Relay endpoints, pools,
   secrets, or configuration. Prepare/complete/health-activate/revoke/list/get
   operations are bounded and idempotent. Health activation additionally binds
   a succeeded config operation ACK to the exact generation and a freshly read
-  HBBS inventory snapshot before the enrollment becomes active.
+  HBBS inventory snapshot before the enrollment becomes active. Revocation
+  retires only the exact current credentials, and a later same-node enrollment
+  may clean up only a matching revoked or expired predecessor.
 - `starry-relayctl enroll` generates the Relay node key locally without
   changing upstream `hbbr` CLI. Each Relay gets a separate telemetry secret,
   certificate, approved runtime configuration, and a non-secret
@@ -100,6 +105,8 @@ package upgrade/downgrade does not overwrite identity.
 The Relay-only Compose profile defaults enrollment enforcement to `1`; the
 preserved manual public-key mode requires an explicit `0` and must not be used
 to restart a previously enrolled Relay with missing state.
+The compatibility-file parser splits each allowlisted assignment at its first
+delimiter so standard Base64 padding in the public RustDesk `KEY` is retained.
 
 ## Upgrade and rollback
 
@@ -156,7 +163,7 @@ idempotency, persistence-mount checks, and no-side-effect downgrade export. A
 real HBBR subprocess test exercises both roles and proves its reliable TCP path
 survives UDP work.
 
-Local candidate validation additionally passed 136 non-SQLite library tests,
+Local candidate validation additionally passed 140 non-SQLite library tests,
 the separately serialized SQLite test, 11 HBBR binary tests, 24 directed
 integration tests (with one explicitly ignored load gate), and the explicit
 1,000-WebSocket release gate. The CI-owned rustfmt set, `cargo check
@@ -165,7 +172,20 @@ builds, local image command/persistence smoke, reproducible four-package DEB
 build, pinned-Debian install smoke, and an HBBS
 v1.3.1→v1.3.0→v1.3.1 identity round trip also passed. Applying the overlay
 twice to clean official commits produced the same full-file digest
-`afc3fc3bc98d7361fbff9518e5841e13d02539ffdc94b3e027e5a7428a15d7c9`.
+`a83db4b81c4dc2867785a36d869bba09afc2b677e085d47a9cb686537f48a1e5`.
+
+A later isolated, non-publishing staging exercise against Kessoku v3.0.8 used
+one persistent `KESSOKU_DATA_DIR` and passed SP1 Control certificate rotation,
+mTLS/JWT inventory after restart, health-gated Relay re-enrollment, corrected
+container reconstruction, and a stopped backup/restore with identical
+relative content and metadata manifests. A coordinated
+v3.0.8/v1.3.1 → v3.0.7/v1.3.0 schema-v4 → v3.0.8/v1.3.1 round trip preserved
+the registry, HBBS identity, generated Agent-v1 identity, ordinary Native/WSS
+Relay, and fresh telemetry. Direct Kessoku v3.0.7 → Starry v1.3.1 inventory was
+correctly rejected because the former freezes config schema ≤4 and telemetry
+schema 1. This staging image was built from a pre-review worktree and is
+diagnostic evidence only; every applicable operation must be repeated for the
+exact clean release commit.
 
 The following remain release blockers until recorded for one exact candidate:
 
@@ -173,8 +193,10 @@ The following remain release blockers until recorded for one exact candidate:
   mixed signalling;
 - real UDP-block, HBBR-restart, 300–1200 ms migration, shaped loss/overload,
   and long device/network soak;
-- Kessoku Broker SP1 end-to-end, enrolled-Relay certificate rotation before a
+- production-PKI certificate rotation, enrolled-Relay rotation before a
   90-day rollback window, and multi-host migration/clone/down-volume drills;
+- correction and retest of the Kessoku v3.0.8 Relay adapter that currently
+  omits the contracted `websocket.process_instance_id` field;
 - hosted clean-commit CI, RustSec/history secret scans, SBOM/attestations,
   cross-built artifact reproducibility, and the full Docker/DEB/native pairing
   and Relay cross-upgrade matrix.

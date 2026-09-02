@@ -190,7 +190,7 @@ struct EnrollmentRecord {
     activated_at_unix: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClaimMarker {
     version: u32,
@@ -394,6 +394,7 @@ impl RelayEnrollmentStore {
             key_fingerprint: request.key_fingerprint.clone(),
             csr_digest: csr_digest.clone(),
         };
+        self.retire_revoked_claim(&relay_dir, &record, &marker)?;
         validate_or_write_claim(&relay_dir.join("claim.json"), &marker)?;
         let certificate_path = relay_dir.join("node-cert.pem");
         if !certificate_path.exists() {
@@ -514,6 +515,7 @@ impl RelayEnrollmentStore {
         }
         record.state = "revoked".to_owned();
         atomic_json(&path, &record, true).map_err(|_| EnrollmentError::internal())?;
+        self.remove_relay_credentials_if_current(&record)?;
         Ok(summary(&record))
     }
 
@@ -557,6 +559,61 @@ impl RelayEnrollmentStore {
 
     fn record_path(&self, id: &str) -> PathBuf {
         self.registry_dir.join(format!("{id}.json"))
+    }
+
+    fn retire_revoked_claim(
+        &self,
+        relay_dir: &Path,
+        current: &EnrollmentRecord,
+        expected: &ClaimMarker,
+    ) -> Result<(), EnrollmentError> {
+        let claim_path = relay_dir.join("claim.json");
+        if !claim_path.exists() {
+            return Ok(());
+        }
+        let existing: ClaimMarker = serde_json::from_slice(
+            &fs::read(&claim_path).map_err(|_| EnrollmentError::internal())?,
+        )
+        .map_err(|_| EnrollmentError::internal())?;
+        if existing == *expected {
+            return Ok(());
+        }
+        let previous = read_record(&self.record_path(&existing.enrollment_id)).map_err(|_| {
+            EnrollmentError::conflict(
+                "RELAY_ENROLLMENT_REPLAYED",
+                "The Relay identity is still bound to another enrollment.",
+            )
+        })?;
+        if previous.approved.node_id != current.approved.node_id
+            || !matches!(previous.state.as_str(), "revoked" | "expired")
+        {
+            return Err(EnrollmentError::conflict(
+                "RELAY_ENROLLMENT_REPLAYED",
+                "The Relay identity is still bound to another enrollment.",
+            ));
+        }
+        remove_relay_credentials(relay_dir, Some(&existing))
+    }
+
+    fn remove_relay_credentials_if_current(
+        &self,
+        record: &EnrollmentRecord,
+    ) -> Result<(), EnrollmentError> {
+        let relay_dir = self.secret_root.join(&record.approved.node_id);
+        let claim_path = relay_dir.join("claim.json");
+        if !claim_path.exists() {
+            return Ok(());
+        }
+        let marker: ClaimMarker = serde_json::from_slice(
+            &fs::read(&claim_path).map_err(|_| EnrollmentError::internal())?,
+        )
+        .map_err(|_| EnrollmentError::internal())?;
+        if marker.enrollment_id != record.enrollment_id
+            || marker.configuration_digest != record.configuration_digest
+        {
+            return Ok(());
+        }
+        remove_relay_credentials(&relay_dir, Some(&marker))
     }
 
     fn issue_certificate(&self, csr_pem: &str) -> Result<String, EnrollmentError> {
@@ -1022,6 +1079,45 @@ fn validate_or_write_claim(path: &Path, expected: &ClaimMarker) -> Result<(), En
     atomic_json(path, expected, false).map_err(|_| EnrollmentError::internal())
 }
 
+fn remove_relay_credentials(
+    directory: &Path,
+    expected: Option<&ClaimMarker>,
+) -> Result<(), EnrollmentError> {
+    let claim_path = directory.join("claim.json");
+    if let Some(expected) = expected {
+        let actual: ClaimMarker = serde_json::from_slice(
+            &fs::read(&claim_path).map_err(|_| EnrollmentError::internal())?,
+        )
+        .map_err(|_| EnrollmentError::internal())?;
+        if &actual != expected {
+            return Err(EnrollmentError::conflict(
+                "RELAY_ENROLLMENT_REPLAYED",
+                "The Relay identity changed while credentials were being retired.",
+            ));
+        }
+    }
+    // Leave the old claim marker until last. If the process stops midway, a
+    // retry still sees the old binding and finishes this bounded cleanup;
+    // once the new marker is installed, missing credentials are regenerated.
+    for path in [
+        directory.join("node-cert.pem"),
+        directory.join("telemetry.secret"),
+        claim_path,
+    ] {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(EnrollmentError::internal());
+            }
+            Ok(_) => fs::remove_file(&path).map_err(|_| EnrollmentError::internal())?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(EnrollmentError::internal()),
+        }
+    }
+    File::open(directory)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| EnrollmentError::internal())
+}
+
 fn read_record(path: &Path) -> Result<EnrollmentRecord, EnrollmentError> {
     let bytes = fs::read(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -1316,6 +1412,50 @@ mod tests {
     }
 
     #[test]
+    fn credential_retirement_requires_the_exact_claim_and_recovers_partial_cleanup() {
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path();
+        let marker = ClaimMarker {
+            version: 1,
+            enrollment_id: uuid::Uuid::now_v7().to_string(),
+            configuration_digest: format!("sha256:{}", "1".repeat(64)),
+            request_digest: format!("sha256:{}", "2".repeat(64)),
+            key_fingerprint: format!("sha256:{}", "3".repeat(64)),
+            csr_digest: format!("sha256:{}", "4".repeat(64)),
+        };
+        atomic_json(&directory.join("claim.json"), &marker, false).unwrap();
+        atomic_write(
+            &directory.join("node-cert.pem"),
+            b"staging-certificate\n",
+            0o640,
+            false,
+        )
+        .unwrap();
+        atomic_write(
+            &directory.join("telemetry.secret"),
+            b"staging-secret\n",
+            0o600,
+            false,
+        )
+        .unwrap();
+
+        let mut conflicting = marker.clone();
+        conflicting.request_digest = format!("sha256:{}", "5".repeat(64));
+        let rejected = remove_relay_credentials(directory, Some(&conflicting)).unwrap_err();
+        assert_eq!(rejected.code, "RELAY_ENROLLMENT_REPLAYED");
+        assert!(directory.join("claim.json").exists());
+        assert!(directory.join("node-cert.pem").exists());
+        assert!(directory.join("telemetry.secret").exists());
+
+        // A stop after the first removal leaves the claim as the durable
+        // binding. The exact retry completes cleanup without broad deletion.
+        fs::remove_file(directory.join("node-cert.pem")).unwrap();
+        remove_relay_credentials(directory, Some(&marker)).unwrap();
+        assert!(!directory.join("claim.json").exists());
+        assert!(!directory.join("telemetry.secret").exists());
+    }
+
+    #[test]
     fn prepare_claim_and_lost_response_retry_are_idempotent() {
         sodiumoxide::init().unwrap();
         let temporary = tempfile::tempdir().unwrap();
@@ -1501,5 +1641,75 @@ mod tests {
         atomic_json(&record_path, &outside_recovery, true).unwrap();
         let expired_recovery = store.complete(claim).unwrap_err();
         assert_eq!(expired_recovery.code, "RELAY_ENROLLMENT_RECOVERY_EXPIRED");
+
+        let relay_dir = root.join("relay-secrets/relay-sg");
+        let stale_claim = fs::read(relay_dir.join("claim.json")).unwrap();
+        let stale_certificate = fs::read(relay_dir.join("node-cert.pem")).unwrap();
+        let stale_telemetry = fs::read(relay_dir.join("telemetry.secret")).unwrap();
+        let stale_telemetry_value = String::from_utf8(stale_telemetry.clone())
+            .unwrap()
+            .trim()
+            .to_owned();
+        let revoked = store
+            .revoke(RelayEnrollmentRevokeRequest {
+                version: 1,
+                enrollment_id: completed.enrollment_id,
+                configuration_digest: completed.configuration_digest,
+            })
+            .unwrap();
+        assert_eq!(revoked.state, "revoked");
+        assert!(!relay_dir.join("claim.json").exists());
+        assert!(!relay_dir.join("node-cert.pem").exists());
+        assert!(!relay_dir.join("telemetry.secret").exists());
+
+        // Simulate a pre-fix revoked record whose per-node credentials were
+        // left behind. A new enrollment may retire exactly that revoked
+        // claim, while active and unknown claims remain fail-closed.
+        atomic_write(&relay_dir.join("claim.json"), &stale_claim, 0o600, false).unwrap();
+        atomic_write(
+            &relay_dir.join("node-cert.pem"),
+            &stale_certificate,
+            0o640,
+            false,
+        )
+        .unwrap();
+        atomic_write(
+            &relay_dir.join("telemetry.secret"),
+            &stale_telemetry,
+            0o600,
+            false,
+        )
+        .unwrap();
+
+        let replacement = store.prepare(request(), "test-enrollment-0002").unwrap();
+        let replacement_key = KeyPair::generate(&rcgen::PKCS_ED25519).unwrap();
+        let replacement_fingerprint = digest(&replacement_key.public_key_der());
+        let mut replacement_params = CertificateParams::new(Vec::<String>::new());
+        replacement_params.alg = &rcgen::PKCS_ED25519;
+        replacement_params.key_pair = Some(replacement_key);
+        let replacement_csr = Certificate::from_params(replacement_params)
+            .unwrap()
+            .serialize_request_pem()
+            .unwrap()
+            .trim()
+            .to_owned();
+        let replacement_digest = relay_claim_request_digest(
+            &replacement.enrollment_id,
+            &replacement.configuration_digest,
+            &replacement_fingerprint,
+            &replacement_csr,
+        );
+        let replacement = store
+            .complete(RelayEnrollmentCompleteRequest {
+                version: 1,
+                enrollment_id: replacement.enrollment_id,
+                configuration_digest: replacement.configuration_digest,
+                request_digest: replacement_digest,
+                key_fingerprint: replacement_fingerprint,
+                csr_pem: replacement_csr,
+            })
+            .unwrap();
+        assert_eq!(replacement.state, "claimed_pending_health");
+        assert_ne!(replacement.bundle.telemetry_secret, stale_telemetry_value);
     }
 }

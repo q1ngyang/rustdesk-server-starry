@@ -58,12 +58,21 @@ an existing Starry instance while retaining the instance identity.
 `rotate` changes the managed certificate material only through a new bound SP1
 claim. All modes support explicit `--state-dir`, `--identity-dir`, `--output`,
 `--shared-dir`, `--managed-config`, `--backup-dir`, `--listen`,
-`--local-control-address`, and optional `--broker-ca-file` paths.
+`--local-control-address`, and optional `--broker-ca-file` paths. When the
+Agent certificate is used through a DNS name, pass that exact allowlisted name
+with `--tls-server-name` (or `STARRY_CONTROL_AGENT_TLS_SERVER_NAME`). It is
+encoded as a DNS SAN in the locally generated CSR. IP literals, ports, URL
+syntax, empty labels, and invalid DNS labels are rejected locally.
 
 Pairing is crash-idempotent: an exact already-installed file is accepted on
 retry, while any different byte content fails rather than being overwritten.
-The generated local control token remains between Agent and HBBS and is never
-returned to the Broker.
+An interrupted first `pair` also resumes the instance UUID already bound in
+its durable pending record; it does not silently generate a second identity.
+`rotate` preserves the installed Agent listen address, local-control address,
+managed-config size limit, and write policy after validating all generated
+Agent-v1 path bindings. Broker-returned trust material is still replaced only
+by the new bound response. The generated local control token remains between
+Agent and HBBS and is never returned to the Broker.
 
 ## Relay enrollment
 
@@ -99,6 +108,15 @@ before pending-file cleanup or the success response, an exact retry validates
 the installed key/certificate and those bindings, removes only matching
 pending files, and returns the same completed state. A changed code, key, CSR,
 purpose, or digest is never adopted as recovery.
+
+Revocation durably changes the registry state before retiring the current
+per-Relay certificate, telemetry secret, and claim marker. Retirement is
+bound to the exact claim, leaves the claim marker until last, and is retryable
+after partial cleanup. A later enrollment for the same node may replace only
+a claim whose matching registry record is `revoked` or `expired`; active,
+unknown, mismatched, and concurrently changed claims remain fail-closed. The
+compatibility parser also preserves standard Base64 padding in the public
+RustDesk `KEY` instead of treating a trailing `=` as a delimiter.
 
 The Relay-only Compose profile defaults `RELAY_REQUIRE_ENROLLMENT=1` (mapped to
 `STARRY_REQUIRE_RELAY_ENROLLMENT=1`) before enrollment. Run `starry-relayctl`

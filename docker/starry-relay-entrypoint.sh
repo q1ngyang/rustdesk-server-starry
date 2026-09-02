@@ -35,8 +35,18 @@ enrollment_dir="$relay_data_dir/starry/enrollment"
 compatibility="$enrollment_dir/relay-compat.env"
 if [ -f "$compatibility" ]; then
     [ ! -L "$compatibility" ] || { echo "unsafe Relay compatibility file" >&2; exit 78; }
-    while IFS='=' read -r name value; do
-        [ -n "$name" ] || continue
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        case "$line" in
+            *=*)
+                # Split only at the first delimiter. A standard Base64 public
+                # KEY may end in '=' padding, which is part of the exact key.
+                name=${line%%=*}
+                value=${line#*=}
+                ;;
+            *) echo "malformed Relay compatibility setting" >&2; exit 78 ;;
+        esac
+        [ -n "$name" ] || { echo "malformed Relay compatibility setting" >&2; exit 78; }
         case "$name" in
             KEY|STARRY_RELAY_TELEMETRY_SECRET_FILE|STARRY_RELAY_PUBLIC_ENDPOINT|STARRY_RELAY_MAX_SESSIONS|STARRY_RELAY_CAPACITY_BANDWIDTH_BPS|STARRY_RELAY_DRAINING|STARRY_RELAY_ENROLLMENT_DIR|STARRY_RELAY_FAST_MEDIA_UDP_PORT)
                 case "$value" in *[!A-Za-z0-9_./:+\[\]=-]*) echo "unsafe Relay compatibility value" >&2; exit 78;; esac

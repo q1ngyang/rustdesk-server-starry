@@ -54,7 +54,10 @@ Upgrade in this order:
    ordinary GEO/failover decisions.
 3. Roll Control Agent, verify the schema/OpenAPI fixtures, SP1 capability, and
    read-only inventory. Pair/adopt existing identity only through an explicit
-   reviewed command; never allow `pair` to overwrite it.
+   reviewed command; never allow `pair` to overwrite it. For certificates
+   addressed by DNS, pass the exact Kessoku-allowlisted name with
+   `--tls-server-name`; a rotate must preserve the installed Agent listen,
+   local-control address, size limit, and write policy.
 4. Canary FastCompat, then FastMedia on a bounded Relay/Akari cohort. Every
    failed bind, UDP block, listener restart, or rate limit must leave the
    reliable desktop session alive.
@@ -94,6 +97,16 @@ non-secret `relay-compat.env`, then Control Agent. patch-v1.3.0 continues to
 read Agent v1 YAML/PEM/JWKS and ordinary telemetry secret files; it ignores but
 must not delete pairing/enrollment state. Upgrading back to v1.3.1 reuses the
 same identity and requires fresh UDP health before reenabling FastMedia.
+The compatibility parser preserves any trailing Base64 padding in public
+`KEY` values.
+
+Treat the Kessoku downgrade as a coordinated compatibility change. Kessoku
+v3.0.7 freezes config schema ≤4 and telemetry schema 1, so it must not be
+pointed directly at a schema-v5/telemetry-v2 Starry v1.3.1 inventory. Activate
+the exported schema-v4 configuration and roll Starry to v1.3.0 before starting
+Kessoku v3.0.7. Reverse the sequence on upgrade: restore Kessoku v3.0.8 and
+Starry v1.3.1, verify fresh telemetry-v2 inventory, and only then re-enable
+FastMedia.
 
 The remaining numbered workflow below documents the original v1.3.0
 commissioning sequence and still applies to Relay Quality/Profile activation.

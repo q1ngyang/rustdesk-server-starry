@@ -48,10 +48,17 @@ Paste pairing code:
 `adopt` 显式接管已有 Starry 实例，同时保留实例身份；`rotate` 只通过新的绑定 SP1 claim
 轮换托管证书材料。所有模式均支持显式 `--state-dir`、`--identity-dir`、`--output`、
 `--shared-dir`、`--managed-config`、`--backup-dir`、`--listen`、
-`--local-control-address` 和可选 `--broker-ca-file`。
+`--local-control-address` 和可选 `--broker-ca-file`。Agent 证书通过 DNS 名使用时，必须用
+`--tls-server-name`（或 `STARRY_CONTROL_AGENT_TLS_SERVER_NAME`）传入 allowlist 中完全
+相同的名字；该名称作为 DNS SAN 写入本地生成的 CSR。IP literal、端口、URL 语法、空
+label 和非法 DNS label 会在本地拒绝。
 
 配对具备崩溃幂等性：重试时完全相同的已安装文件可接受，任一不同字节都会拒绝而不
-覆盖。生成的 local control token 只在 Agent 与 HBBS 之间共享，不返回 Broker。
+覆盖。首次 `pair` 中断后还会恢复 durable pending record 已绑定的 instance UUID，不会
+静默生成第二个身份。`rotate` 校验所有生成 Agent-v1 path binding 后，保留现有 Agent
+listen address、local-control address、managed-config 大小上限和写策略；Broker 返回的
+trust material 仍只由新绑定响应替换。生成的 local control token 只在 Agent 与 HBBS
+之间共享，不返回 Broker。
 
 ## Relay enrollment
 
@@ -79,6 +86,12 @@ telemetry secret、已批准运行 JSON、host binding 和 `relay-compat.env`。
 在 marker 已持久化、但 pending 文件尚未清理或成功响应尚未返回时停止，完全相同的重试会
 先校验已安装 key/certificate 及这些绑定，只删除匹配的 pending 文件，再返回相同完成
 状态；发生变化的 code、key、CSR、用途或 digest 绝不作为恢复接受。
+
+撤销先持久化 registry 状态，再清理当前 Relay 的 certificate、telemetry secret 和 claim
+marker。清理绑定精确 claim，把 marker 留到最后，并可在部分清理中断后重试。相同 node
+的后续 enrollment 只可替换 registry 中匹配记录已为 `revoked` 或 `expired` 的 claim；
+active、未知、不匹配或并发变化的 claim 一律 fail closed。兼容文件解析器还会保留公开
+RustDesk `KEY` 的标准 Base64 padding，不会把末尾 `=` 错当成分隔符丢弃。
 
 Relay-only Compose 在 enrollment 前即默认 `RELAY_REQUIRE_ENROLLMENT=1`（映射为
 `STARRY_REQUIRE_RELAY_ENROLLMENT=1`）。先让 `starry-relayctl` 以一次性命令使用同一个
