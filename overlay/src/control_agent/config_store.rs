@@ -2044,6 +2044,8 @@ fn classify_risk(changes: &[Value], before: Option<&Value>, after: &Value) -> St
     }
     if pointers.iter().any(|pointer| {
         is_relay_quality_pointer(pointer)
+            || *pointer == "/fast_mode"
+            || pointer.starts_with("/fast_mode/")
             || pointer.starts_with("/websocket_signal")
             || pointer.starts_with("/secure_tcp")
     }) {

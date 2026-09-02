@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "enrollment_id": "019b1234-5678-7000-8000-000000000001",
+  "configuration_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "request_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "key_fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "state": "claimed_pending_health",
+  "bundle": {
+    "node_id": "relay-sin-01",
+    "relay_server": "relay-sin-01.example.com:21117",
+    "public_endpoint": "relay-sin-01.example.com:21117",
+    "node_certificate_pem": "-----BEGIN CERTIFICATE-----\nTEST-FIXTURE-ONLY\n-----END CERTIFICATE-----\n",
+    "relay_ca_pem": "-----BEGIN CERTIFICATE-----\nTEST-FIXTURE-ONLY\n-----END CERTIFICATE-----\n",
+    "center_public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "telemetry_secret": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "max_sessions": 10000,
+    "capacity_bandwidth_bps": 1000000000,
+    "draining": false,
+    "relay_pool": "asia",
+    "profile": "native-wss-fastmedia",
+    "wss_endpoint": "wss://relay-sin-01.example.com/ws/telemetry",
+    "activate_after_health": true,
+    "fast_media_udp_port": 22119
+  },
+  "reused": false
+}

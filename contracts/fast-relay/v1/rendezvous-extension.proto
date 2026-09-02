@@ -11,6 +11,13 @@ message FastRelayAuthorization {
   bool allow_fast_compat = 4;
   bool allow_fast_media_v1 = 5;
   uint32 max_bitrate_kbps = 6;
+  uint32 relay_udp_protocol = 7;
+  string relay_server = 8;
+  uint32 relay_udp_port = 9;
+  bytes relay_allocation_id = 10;
+  uint32 relay_max_datagram = 11;
+  // Stable values: 1=controller, 2=target.
+  uint32 relay_endpoint_role = 12;
 }
 
 // Official message bindings added by the overlay:

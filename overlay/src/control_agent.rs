@@ -1,6 +1,7 @@
 mod auth;
 mod config_store;
 mod local_client;
+mod relay_enrollment;
 
 use auth::{AuthFailure, ControlPrincipal, ServiceJwtVerifier};
 use axum::{
@@ -19,6 +20,10 @@ use hbb_common::tokio::{
 };
 use hyper::body::HttpBody as _;
 use hyper::service::service_fn;
+use relay_enrollment::{
+    EnrollmentError, RelayEnrollmentActivateRequest, RelayEnrollmentCompleteRequest,
+    RelayEnrollmentPrepareRequest, RelayEnrollmentRevokeRequest, RelayEnrollmentStore,
+};
 use rustls::{
     pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
     server::WebPkiClientVerifier,
@@ -35,7 +40,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio_rustls::TlsAcceptor;
 use tower::ServiceExt;
@@ -45,9 +50,9 @@ const CONTROL_BODY_LIMIT: u64 = 1024 * 1024 + 4096;
 const MAX_CONNECTIONS: usize = 256;
 const CONNECTION_DEADLINE_SECONDS: u64 = 30;
 const REQUESTS_PER_MINUTE: u32 = 120;
-const STARRY_PATCH_VERSION: &str = "1.3.0";
-const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v4/config.schema.json");
-const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v4/config.ui-schema.json");
+const STARRY_PATCH_VERSION: &str = "1.3.1";
+const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v5/config.schema.json");
+const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v5/config.ui-schema.json");
 
 fn starry_version() -> String {
     format!(
@@ -110,6 +115,7 @@ struct AgentState {
     write_enabled: bool,
     verifier: ServiceJwtVerifier,
     transactions: Arc<ConfigTransactions>,
+    relay_enrollments: Option<Arc<RelayEnrollmentStore>>,
     rate: Mutex<HashMap<String, RateWindow>>,
 }
 
@@ -199,14 +205,46 @@ pub async fn run(config_path: impl AsRef<Path>) -> Result<(), String> {
     validate_config(&config)?;
     let base = config_path.parent().unwrap_or_else(|| Path::new("."));
     let instance_path = resolve_path(base, &config.instance_id_file);
+    let local_token_path = resolve_path(base, &config.local_control.token_file);
+    let tls_key_path = resolve_path(base, &config.tls.key_file);
+    let managed_config_path = resolve_path(base, &config.config.path);
+    let backup_dir = resolve_path(base, &config.config.backup_dir);
+    for directory in [
+        instance_path.parent(),
+        local_token_path.parent(),
+        tls_key_path.parent(),
+        managed_config_path.parent(),
+    ] {
+        crate::pairing::validate_persistent_directory(
+            directory.ok_or_else(|| "control Agent persistent path has no parent".to_owned())?,
+        )?;
+    }
+    // A first start is allowed to create the transaction history directory,
+    // but only after proving that its existing parent is on durable storage.
+    // ConfigTransactions then creates every child with private permissions.
+    let backup_persistence_anchor = if backup_dir.exists() {
+        backup_dir.as_path()
+    } else {
+        backup_dir
+            .parent()
+            .ok_or_else(|| "control Agent backup path has no parent".to_owned())?
+    };
+    crate::pairing::validate_persistent_directory(backup_persistence_anchor)?;
     let instance_id = load_or_create_instance_id(&instance_path)?;
-    local_client::configure_auth_token_file(resolve_path(base, &config.local_control.token_file))?;
+    let relay_enrollments = RelayEnrollmentStore::open(
+        instance_id.clone(),
+        &instance_path,
+        &tls_key_path,
+        &local_token_path,
+    )?
+    .map(Arc::new);
+    local_client::configure_auth_token_file(local_token_path)?;
     let verifier = ServiceJwtVerifier::load(&config.service_jwt, base, &instance_id)?;
     let tls = load_tls(&config.tls, base)?;
     let transactions = ConfigTransactions::open(
         instance_id.clone(),
-        resolve_path(base, &config.config.path),
-        resolve_path(base, &config.config.backup_dir),
+        managed_config_path,
+        backup_dir,
         config.config.max_bytes,
     )?;
     if config.config.write_enabled {
@@ -221,6 +259,7 @@ pub async fn run(config_path: impl AsRef<Path>) -> Result<(), String> {
         write_enabled: config.config.write_enabled,
         verifier,
         transactions,
+        relay_enrollments,
         rate: Mutex::new(HashMap::new()),
     });
     let instance_id = state.instance_id.clone();
@@ -289,6 +328,107 @@ pub async fn run(config_path: impl AsRef<Path>) -> Result<(), String> {
     }
 }
 
+/// Queries HBBS over its authenticated loopback control socket and reduces the
+/// response to the bounded, non-sensitive state required by schema downgrade.
+pub async fn collect_fast_media_drain_state(
+    config_path: impl AsRef<Path>,
+) -> Result<Value, String> {
+    let config_path = config_path.as_ref();
+    let raw = fs::read(config_path).map_err(|_| "downgrade_agent_config_unreadable".to_owned())?;
+    let config: AgentConfig =
+        serde_yml::from_slice(&raw).map_err(|_| "downgrade_agent_config_invalid".to_owned())?;
+    validate_config(&config).map_err(|_| "downgrade_agent_config_invalid".to_owned())?;
+    let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let token_path = resolve_path(base, &config.local_control.token_file);
+    let request_id = new_request_id();
+    let snapshot = local_client::call_with_token_file(
+        config.local_control.address,
+        &request_id,
+        "relays",
+        json!({}),
+        &token_path,
+    )
+    .await
+    .map_err(|error| format!("fast_media_drain_runtime_unavailable:{}", error.code))?;
+    fast_media_drain_state_from_snapshot(&snapshot, unix_seconds())
+}
+
+fn fast_media_drain_state_from_snapshot(
+    snapshot: &Value,
+    observed_at_unix: u64,
+) -> Result<Value, String> {
+    let fast_relay = snapshot
+        .get("fast_relay")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "fast_media_drain_runtime_invalid".to_owned())?;
+    let runtime_enabled = fast_relay
+        .get("fast_media_v1_enabled")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "fast_media_drain_runtime_invalid".to_owned())?;
+    let active_authorizations = fast_relay
+        .get("active_fast_media_authorizations")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "fast_media_drain_runtime_invalid".to_owned())?;
+    let last_expiry = fast_relay
+        .get("last_fast_media_authorization_expires_at_unix")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "fast_media_drain_runtime_invalid".to_owned())?;
+    let relays = snapshot
+        .get("relays")
+        .and_then(Value::as_array)
+        .filter(|relays| relays.len() <= 4096)
+        .ok_or_else(|| "fast_media_drain_runtime_invalid".to_owned())?;
+    let mut active_allocations = 0_u64;
+    let mut active_streams = 0_u64;
+    for relay in relays {
+        let fast_media = relay
+            .get("fast_media_udp")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "fast_media_drain_runtime_invalid".to_owned())?;
+        let configured = fast_media
+            .get("configured_port")
+            .is_some_and(|value| !value.is_null())
+            || fast_media.get("enabled").and_then(Value::as_bool) == Some(true);
+        if !configured {
+            continue;
+        }
+        let fresh = relay.pointer("/websocket/stale").and_then(Value::as_bool) == Some(false);
+        if !fresh {
+            return Err("fast_media_drain_telemetry_stale".to_owned());
+        }
+        let allocations = fast_media
+            .get("active_allocations")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "fast_media_drain_telemetry_incomplete".to_owned())?;
+        let streams = fast_media
+            .get("active_streams")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "fast_media_drain_telemetry_incomplete".to_owned())?;
+        active_allocations = active_allocations
+            .checked_add(allocations)
+            .ok_or_else(|| "fast_media_drain_runtime_invalid".to_owned())?;
+        active_streams = active_streams
+            .checked_add(streams)
+            .ok_or_else(|| "fast_media_drain_runtime_invalid".to_owned())?;
+    }
+    Ok(json!({
+        "version": 1,
+        "observed_at_unix": observed_at_unix,
+        "fast_media_runtime_enabled": runtime_enabled,
+        "fast_media_active_allocations": active_allocations,
+        "fast_media_active_authorizations": active_authorizations,
+        "fast_media_active_streams": active_streams,
+        "last_fast_media_authorization_expires_at_unix": last_expiry
+    }))
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 fn router(state: Arc<AgentState>) -> Router {
     Router::new()
         .route("/health/live", get(health_live))
@@ -300,6 +440,11 @@ fn router(state: Arc<AgentState>) -> Router {
         .route("/control/v1/config", get(config_get))
         .route("/control/v1/config/history", get(config_history))
         .route("/control/v1/operations/:id", get(operation_get))
+        .route("/control/v1/relay-enrollments", get(relay_enrollment_list))
+        .route(
+            "/control/v1/relay-enrollments/:id",
+            get(relay_enrollment_get),
+        )
         // matchit 0.5 treats every colon in a route pattern as a wildcard,
         // including the literal action separator used by this API. One exact
         // action dispatcher preserves the public paths without ambiguous routes.
@@ -324,6 +469,10 @@ async fn control_action(
         "config:apply" => ("starry.config.apply", true),
         "config:rollback" => ("starry.config.rollback", true),
         "runtime:reload" => ("starry.runtime.reload", true),
+        "relay-enrollments:prepare" => ("starry.relay.enroll", true),
+        "relay-enrollments:complete" => ("starry.relay.enroll", true),
+        "relay-enrollments:activate" => ("starry.relay.enroll", true),
+        "relay-enrollments:revoke" => ("starry.relay.enroll", true),
         _ => return not_found(headers).await.into_response(),
     };
     if let Err(problem) = verify_principal(&state, &certificate, &headers, scope, &request_id) {
@@ -404,6 +553,18 @@ async fn control_action(
         "config:apply" => decoded!(ConfigApplyRequest, config_apply),
         "config:rollback" => decoded!(ConfigRollbackRequest, config_rollback),
         "runtime:reload" => decoded!(RuntimeReloadRequest, runtime_reload),
+        "relay-enrollments:prepare" => {
+            decoded!(RelayEnrollmentPrepareRequest, relay_enrollment_prepare)
+        }
+        "relay-enrollments:complete" => {
+            decoded!(RelayEnrollmentCompleteRequest, relay_enrollment_complete)
+        }
+        "relay-enrollments:activate" => {
+            decoded!(RelayEnrollmentActivateRequest, relay_enrollment_activate)
+        }
+        "relay-enrollments:revoke" => {
+            decoded!(RelayEnrollmentRevokeRequest, relay_enrollment_revoke)
+        }
         _ => not_found(headers).await.into_response(),
     }
 }
@@ -463,8 +624,9 @@ async fn capabilities(
     let active_schema = runtime
         .get("schema_version")
         .and_then(Value::as_u64)
-        .unwrap_or(4);
+        .unwrap_or(5);
     let mut capabilities = json!({
+        "config_schema": 5,
         "relay_inventory": 1,
         "allocation_simulation": 1,
         "connection_auth": 1,
@@ -472,8 +634,11 @@ async fn capabilities(
         "relay_active_probe": 1,
         "relay_probe_protocol": 1,
         "relay_load_protocol": 1,
-        "relay_telemetry_schema": 1,
+        "relay_telemetry_schema": 2,
         "fast_relay_authorization": 1,
+        "fast_media_relay_udp": 1,
+        "starry_pairing": 1,
+        "config_downgrade_preview": 1,
         "profile_activation_lease": 1,
         "peer_registry": 2
     });
@@ -483,6 +648,16 @@ async fn capabilities(
             .expect("static capabilities value is an object");
         object.insert("config_transaction".to_owned(), json!(1));
         object.insert("config_rollback".to_owned(), json!(1));
+    }
+    if state.relay_enrollments.is_some() {
+        let object = capabilities
+            .as_object_mut()
+            .expect("static capabilities value is an object");
+        object.insert("relay_enrollment".to_owned(), json!(1));
+        if state.write_enabled {
+            object.insert("relay_enrollment_write".to_owned(), json!(1));
+            object.insert("relay_enrollment_health_activation".to_owned(), json!(1));
+        }
     }
     Ok(Json(json!({
         "protocol": {"name": "starry-control", "version": "1.0.0", "major": 1},
@@ -494,7 +669,7 @@ async fn capabilities(
         },
         "capabilities": capabilities,
         "config": {
-            "supported_schema_versions": [1, 2, 3, 4],
+            "supported_schema_versions": [1, 2, 3, 4, 5],
             "active_schema_version": active_schema,
             "schema_digest": digest(CONTROL_SCHEMA.as_bytes())
         },
@@ -520,6 +695,189 @@ async fn relays(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiProblem> {
     proxy_empty(state, certificate, headers, "starry.relay.read", "relays").await
+}
+
+async fn relay_enrollment_list(
+    Extension(state): Extension<Arc<AgentState>>,
+    Extension(certificate): Extension<ClientCertificate>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiProblem> {
+    let request_id = request_id(&headers);
+    authorize(
+        &state,
+        &certificate,
+        &headers,
+        "starry.relay.read",
+        &request_id,
+    )?;
+    let store = enrollment_store(&state, &request_id)?;
+    let records = store
+        .list()
+        .map_err(|error| ApiProblem::from_enrollment(error, request_id))?;
+    Ok(Json(json!({"version": 1, "items": records})))
+}
+
+async fn relay_enrollment_get(
+    Extension(state): Extension<Arc<AgentState>>,
+    Extension(certificate): Extension<ClientCertificate>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, ApiProblem> {
+    let request_id = request_id(&headers);
+    authorize(
+        &state,
+        &certificate,
+        &headers,
+        "starry.relay.read",
+        &request_id,
+    )?;
+    let record = enrollment_store(&state, &request_id)?
+        .get(&id)
+        .map_err(|error| ApiProblem::from_enrollment(error, request_id))?;
+    Ok(Json(
+        serde_json::to_value(record).map_err(|_| ApiProblem::internal(new_request_id()))?,
+    ))
+}
+
+async fn relay_enrollment_prepare(
+    Extension(state): Extension<Arc<AgentState>>,
+    Extension(certificate): Extension<ClientCertificate>,
+    headers: HeaderMap,
+    ContentLengthLimit(Json(request)): ContentLengthLimit<
+        Json<RelayEnrollmentPrepareRequest>,
+        CONTROL_BODY_LIMIT,
+    >,
+) -> Result<Json<Value>, ApiProblem> {
+    let request_id = request_id(&headers);
+    authorize(
+        &state,
+        &certificate,
+        &headers,
+        "starry.relay.enroll",
+        &request_id,
+    )?;
+    let idempotency_key = required_idempotency_key(&headers, &request_id)?;
+    let result = enrollment_store(&state, &request_id)?
+        .prepare(request, &idempotency_key)
+        .map_err(|error| ApiProblem::from_enrollment(error, request_id))?;
+    Ok(Json(
+        serde_json::to_value(result).map_err(|_| ApiProblem::internal(new_request_id()))?,
+    ))
+}
+
+async fn relay_enrollment_complete(
+    Extension(state): Extension<Arc<AgentState>>,
+    Extension(certificate): Extension<ClientCertificate>,
+    headers: HeaderMap,
+    ContentLengthLimit(Json(request)): ContentLengthLimit<
+        Json<RelayEnrollmentCompleteRequest>,
+        CONTROL_BODY_LIMIT,
+    >,
+) -> Result<Json<Value>, ApiProblem> {
+    let request_id = request_id(&headers);
+    authorize(
+        &state,
+        &certificate,
+        &headers,
+        "starry.relay.enroll",
+        &request_id,
+    )?;
+    let result = enrollment_store(&state, &request_id)?
+        .complete(request)
+        .map_err(|error| ApiProblem::from_enrollment(error, request_id))?;
+    Ok(Json(
+        serde_json::to_value(result).map_err(|_| ApiProblem::internal(new_request_id()))?,
+    ))
+}
+
+async fn relay_enrollment_activate(
+    Extension(state): Extension<Arc<AgentState>>,
+    Extension(certificate): Extension<ClientCertificate>,
+    headers: HeaderMap,
+    ContentLengthLimit(Json(request)): ContentLengthLimit<
+        Json<RelayEnrollmentActivateRequest>,
+        CONTROL_BODY_LIMIT,
+    >,
+) -> Result<Json<Value>, ApiProblem> {
+    let request_id = request_id(&headers);
+    authorize(
+        &state,
+        &certificate,
+        &headers,
+        "starry.relay.enroll",
+        &request_id,
+    )?;
+    let operation = state
+        .transactions
+        .operation(&request.operation_id)
+        .map_err(|error| ApiProblem::from_transaction(error, request_id.clone()))?;
+    if operation.kind != "config_apply" || operation.state != "succeeded" {
+        return Err(ApiProblem::new(
+            409,
+            "RELAY_ENROLLMENT_ACTIVATION_ACK_MISMATCH",
+            "Relay activation requires a succeeded configuration apply operation.",
+            false,
+            request_id,
+        ));
+    }
+    let activation_ack = operation.activation_ack.as_ref().ok_or_else(|| {
+        ApiProblem::new(
+            409,
+            "RELAY_ENROLLMENT_ACTIVATION_ACK_MISMATCH",
+            "The configuration apply operation has no activation acknowledgement.",
+            false,
+            request_id.clone(),
+        )
+    })?;
+    let relay_snapshot = local_client::call(state.local_address, &request_id, "relays", json!({}))
+        .await
+        .map_err(|error| ApiProblem::from_agent(error, request_id.clone()))?;
+    let result = enrollment_store(&state, &request_id)?
+        .activate(request, activation_ack, &relay_snapshot)
+        .map_err(|error| ApiProblem::from_enrollment(error, request_id))?;
+    Ok(Json(
+        serde_json::to_value(result).map_err(|_| ApiProblem::internal(new_request_id()))?,
+    ))
+}
+
+async fn relay_enrollment_revoke(
+    Extension(state): Extension<Arc<AgentState>>,
+    Extension(certificate): Extension<ClientCertificate>,
+    headers: HeaderMap,
+    ContentLengthLimit(Json(request)): ContentLengthLimit<
+        Json<RelayEnrollmentRevokeRequest>,
+        CONTROL_BODY_LIMIT,
+    >,
+) -> Result<Json<Value>, ApiProblem> {
+    let request_id = request_id(&headers);
+    authorize(
+        &state,
+        &certificate,
+        &headers,
+        "starry.relay.enroll",
+        &request_id,
+    )?;
+    let result = enrollment_store(&state, &request_id)?
+        .revoke(request)
+        .map_err(|error| ApiProblem::from_enrollment(error, request_id))?;
+    Ok(Json(
+        serde_json::to_value(result).map_err(|_| ApiProblem::internal(new_request_id()))?,
+    ))
+}
+
+fn enrollment_store<'a>(
+    state: &'a AgentState,
+    request_id: &str,
+) -> Result<&'a RelayEnrollmentStore, ApiProblem> {
+    state.relay_enrollments.as_deref().ok_or_else(|| {
+        ApiProblem::new(
+            404,
+            "RELAY_ENROLLMENT_DISABLED",
+            "Relay enrollment is not configured for this Control Agent.",
+            false,
+            request_id.to_owned(),
+        )
+    })
 }
 
 async fn simulate(
@@ -1394,6 +1752,16 @@ impl ApiProblem {
         .with_errors(error.errors)
     }
 
+    fn from_enrollment(error: EnrollmentError, request_id: String) -> Self {
+        Self::new(
+            error.status,
+            error.code,
+            error.detail,
+            error.retryable,
+            request_id,
+        )
+    }
+
     fn with_errors(mut self, errors: Vec<Value>) -> Self {
         self.0.errors = errors;
         self
@@ -1470,7 +1838,73 @@ fn problem_title(code: &str) -> &'static str {
         "OPERATION_IN_PROGRESS" => "Operation in progress",
         "IDEMPOTENCY_KEY_REUSED" => "Idempotency key reused",
         "ROLLBACK_FAILED" => "Rollback failed",
+        "RELAY_ENROLLMENT_INVALID" => "Invalid Relay enrollment",
+        "RELAY_ENROLLMENT_CONFLICT"
+        | "RELAY_ENROLLMENT_BINDING_MISMATCH"
+        | "RELAY_ENROLLMENT_REPLAYED"
+        | "RELAY_ENROLLMENT_RECOVERY_EXPIRED"
+        | "RELAY_ENROLLMENT_PREAUTHORIZATION_REQUIRED"
+        | "RELAY_ENROLLMENT_ACTIVATION_CONFLICT"
+        | "RELAY_ENROLLMENT_STATE_MISMATCH"
+        | "RELAY_ENROLLMENT_ACTIVATION_ACK_MISMATCH"
+        | "RELAY_ENROLLMENT_HEALTH_MISMATCH"
+        | "RELAY_ENROLLMENT_ENDPOINT_DRIFT" => "Relay enrollment conflict",
+        "RELAY_ENROLLMENT_EXPIRED" => "Relay enrollment expired",
+        "RELAY_ENROLLMENT_CAPACITY" | "RELAY_ENROLLMENT_UNAVAILABLE" => {
+            "Relay enrollment unavailable"
+        }
+        "RELAY_ENROLLMENT_DISABLED" => "Relay enrollment disabled",
         "STARRY_NOT_READY" => "Starry is not ready",
         _ => "Invalid request",
+    }
+}
+
+#[cfg(test)]
+mod drain_state_tests {
+    use super::*;
+
+    fn snapshot(stale: bool, allocations: u64, streams: u64) -> Value {
+        json!({
+            "fast_relay": {
+                "fast_media_v1_enabled": false,
+                "active_fast_media_authorizations": 0,
+                "last_fast_media_authorization_expires_at_unix": 0
+            },
+            "relays": [{
+                "websocket": {"stale": stale},
+                "fast_media_udp": {
+                    "configured_port": 22119,
+                    "enabled": true,
+                    "active_allocations": allocations,
+                    "active_streams": streams
+                }
+            }, {
+                "websocket": {"stale": true},
+                "fast_media_udp": {
+                    "configured_port": null,
+                    "enabled": null,
+                    "active_allocations": null,
+                    "active_streams": null
+                }
+            }]
+        })
+    }
+
+    #[test]
+    fn downgrade_drain_state_is_bounded_and_aggregated() {
+        let state = fast_media_drain_state_from_snapshot(&snapshot(false, 2, 1), 42).unwrap();
+        assert_eq!(state["observed_at_unix"], 42);
+        assert_eq!(state["fast_media_active_allocations"], 2);
+        assert_eq!(state["fast_media_active_streams"], 1);
+        assert_eq!(state["fast_media_runtime_enabled"], false);
+        assert!(serde_json::to_string(&state).unwrap().len() < 512);
+    }
+
+    #[test]
+    fn downgrade_drain_state_rejects_stale_configured_relay() {
+        assert_eq!(
+            fast_media_drain_state_from_snapshot(&snapshot(true, 0, 0), 42).unwrap_err(),
+            "fast_media_drain_telemetry_stale"
+        );
     }
 }

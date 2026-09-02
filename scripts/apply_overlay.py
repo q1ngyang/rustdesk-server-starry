@@ -105,12 +105,16 @@ def copy_overlay(repo_root: Path, upstream: Path) -> None:
     for name in (
         "allocation_explain.rs",
         "connection_auth.rs",
+        "config_downgrade.rs",
         "control_agent.rs",
         "database.rs",
+        "fast_media_relay.rs",
         "fast_relay.rs",
         "geo_relay.rs",
         "local_control.rs",
         "profile_activation.rs",
+        "pairing.rs",
+        "relay_enrollment.rs",
         "relay_observer.rs",
         "relay_quality.rs",
         "secure_tcp.rs",
@@ -305,7 +309,7 @@ def patch_dependencies(upstream: Path) -> None:
     production_only_dependencies = (
         'tokio-rustls = { version = "0.26", features = ["ring", "tls12"], default-features = false }',
         'tower = { version = "0.4", features = ["util"] }',
-        'x509-parser = "0.14"',
+        'x509-parser = { version = "0.15.1", features = ["verify"] }',
     )
     content = cargo.read_text(encoding="utf-8")
     dependencies_end = content.find("\n[dev-dependencies]")
@@ -314,6 +318,20 @@ def patch_dependencies(upstream: Path) -> None:
             line = dependency + "\n"
             if dependency not in content[:dependencies_end] and line in content[dependencies_end:]:
                 replace_once(cargo, line, "")
+                content = cargo.read_text(encoding="utf-8")
+                dependencies_end = content.find("\n[dev-dependencies]")
+
+    content = cargo.read_text(encoding="utf-8")
+    dependencies_end = content.find("\n[dev-dependencies]")
+    if dependencies_end >= 0:
+        for rcgen_dev in (
+            'rcgen = "0.9"\n',
+            'rcgen = "0.12.1"\n',
+            'rcgen = { version = "0.12.1", features = ["x509-parser"] }\n',
+        ):
+            position = content.find(rcgen_dev, dependencies_end)
+            if position >= 0:
+                replace_once(cargo, rcgen_dev, "")
                 content = cargo.read_text(encoding="utf-8")
                 dependencies_end = content.find("\n[dev-dependencies]")
 
@@ -345,8 +363,24 @@ def patch_dependencies(upstream: Path) -> None:
             'tokio-rustls = { version = "0.26", features = ["ring", "tls12"], default-features = false }',
             (),
         ),
-        ("x509-parser", 'x509-parser = "0.14"', 'tower = { version = "0.4", features = ["util"] }', ()),
-        ("url", 'url = "2.2"', 'x509-parser = "0.14"', ()),
+        (
+            "x509-parser",
+            'x509-parser = { version = "0.15.1", features = ["verify"] }',
+            'tower = { version = "0.4", features = ["util"] }',
+            ('x509-parser = "0.14"', 'x509-parser = "0.15.1"'),
+        ),
+        (
+            "url",
+            'url = "2.2"',
+            'x509-parser = { version = "0.15.1", features = ["verify"] }',
+            (),
+        ),
+        (
+            "rcgen",
+            'rcgen = { version = "0.12.1", features = ["x509-parser"] }',
+            'url = "2.2"',
+            (),
+        ),
     )
     for name, desired, after, accepted in dependency_chain:
         set_dependency(
@@ -385,15 +419,14 @@ def patch_dependencies(upstream: Path) -> None:
             replace_once(cargo, legacy, desired)
 
     content = cargo.read_text(encoding="utf-8")
-    final_dev = (
-        '[dev-dependencies]\nrcgen = "0.12.1"\ntempfile = "3.27"\n\n'
-    )
+    final_dev = '[dev-dependencies]\ntempfile = "3.27"\n\n'
     if final_dev not in content:
         legacy_dev = (
             '[dev-dependencies]\nrcgen = "0.9"\n\n',
             '[dev-dependencies]\nrcgen = "0.9"\n'
             'tokio-rustls = "0.23"\n\n',
             '[dev-dependencies]\nrcgen = "0.12.1"\n\n',
+            '[dev-dependencies]\ntempfile = "3.27"\n\n',
         )
         source = next((block for block in legacy_dev if block in content), None)
         if source is not None:
@@ -408,15 +441,15 @@ def patch_dependencies(upstream: Path) -> None:
             replace_once(
                 cargo,
                 'rcgen = "0.9"\n',
-                'rcgen = "0.12.1"\ntempfile = "3.27"\n',
+                'tempfile = "3.27"\n',
             )
         elif 'rcgen = "0.12.1"\n' in content and 'tempfile = "3.27"\n' not in content:
             replace_once(
                 cargo,
                 'rcgen = "0.12.1"\n',
-                'rcgen = "0.12.1"\ntempfile = "3.27"\n',
+                'tempfile = "3.27"\n',
             )
-        elif 'rcgen = "0.12.1"\n' in content and 'tempfile = "3.27"\n' in content:
+        elif 'tempfile = "3.27"\n' in content:
             pass
         else:
             raise RuntimeError(
@@ -481,6 +514,13 @@ def patch_common(upstream: Path) -> None:
 def patch_relay(upstream: Path) -> None:
     relay = upstream / "src/relay_server.rs"
     content = relay.read_text(encoding="utf-8")
+    if "stream.write(res.as_bytes()).await.ok();" in content:
+        replace_once(
+            relay,
+            "stream.write(res.as_bytes()).await.ok();",
+            "stream.write_all(res.as_bytes()).await.ok();",
+        )
+    content = relay.read_text(encoding="utf-8")
     if ".send(tungstenite::Message::Binary(bytes))" not in content:
         replace_once(
             relay,
@@ -518,7 +558,7 @@ def patch_relay(upstream: Path) -> None:
 def patch_relay_quality_hbbr(upstream: Path) -> None:
     relay = upstream / "src/relay_server.rs"
     content = relay.read_text(encoding="utf-8")
-    if "const STARRY_RELAY_TELEMETRY_SCHEMA: u32 = 1;" in content:
+    if "const STARRY_RELAY_TELEMETRY_SCHEMA: u32 =" in content:
         return
 
     if "protobuf::{Message as _, MessageField}," not in content:
@@ -576,6 +616,29 @@ def patch_relay_quality_hbbr(upstream: Path) -> None:
             legacy_capacity_parse,
             "    let tmp = std::env::var(\"STARRY_RELAY_MAX_SESSIONS\")\n"
             "        .map(|value| value.parse::<usize>().unwrap_or(0).min(u32::MAX as usize))\n",
+        )
+
+    content = relay.read_text(encoding="utf-8")
+    if '"STARRY_RELAY_CAPACITY_BANDWIDTH_BPS"' not in content:
+        replace_once(
+            relay,
+            "    if tmp > 0. {\n"
+            "        TOTAL_BANDWIDTH.store((tmp * 1024. * 1024.) as usize, Ordering::SeqCst);\n"
+            "    }\n\n"
+            "    log::info!(\n"
+            "        \"TOTAL_BANDWIDTH: {}Mb/s\",\n",
+            "    if tmp > 0. {\n"
+            "        TOTAL_BANDWIDTH.store((tmp * 1024. * 1024.) as usize, Ordering::SeqCst);\n"
+            "    }\n"
+            "    if let Some(capacity) = std::env::var(\"STARRY_RELAY_CAPACITY_BANDWIDTH_BPS\")\n"
+            "        .ok()\n"
+            "        .and_then(|value| value.parse::<usize>().ok())\n"
+            "        .filter(|value| *value > 0)\n"
+            "    {\n"
+            "        TOTAL_BANDWIDTH.store(capacity, Ordering::SeqCst);\n"
+            "    }\n\n"
+            "    log::info!(\n"
+            "        \"TOTAL_BANDWIDTH: {}Mb/s\",\n",
         )
 
     content = relay.read_text(encoding="utf-8")
@@ -881,7 +944,7 @@ mod starry_telemetry_tests {
 def patch_hbbr_telemetry_observability_v1(relay: Path) -> None:
     """Separate public probes from authenticated, bounded HBBR telemetry."""
     content = relay.read_text(encoding="utf-8")
-    if "const STARRY_RELAY_TELEMETRY_SCHEMA: u32 = 1;" in content:
+    if "const STARRY_RELAY_TELEMETRY_SCHEMA: u32 =" in content:
         return
 
     replace_once(
@@ -953,7 +1016,7 @@ static TELEMETRY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static PENDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static PROBE_PER_IP_PER_MINUTE: AtomicUsize = AtomicUsize::new(120);
 static PROBE_GLOBAL_PER_MINUTE: AtomicUsize = AtomicUsize::new(10_000);
-const STARRY_RELAY_TELEMETRY_SCHEMA: u32 = 1;
+const STARRY_RELAY_TELEMETRY_SCHEMA: u32 = crate::fast_media_relay::TELEMETRY_SCHEMA_VERSION;
 const TELEMETRY_AUTH_CLOCK_SKEW_SECONDS: u64 = 30;
 const TELEMETRY_REPLAY_CAPACITY: usize = 4_096;
 const PROBE_IP_BUCKET_CAPACITY: usize = 4_096;
@@ -974,6 +1037,10 @@ const BANDWIDTH_EMA_ALPHA_BASIS_POINTS: u32 = 2_500;
     }
     let _ = &*TELEMETRY_AUTH_KEY;
     let key = get_server_sk(key);
+    if let Err(error) = crate::relay_enrollment::preflight(&key) {
+        bail!("Relay enrollment preflight failed: {error}");
+    }
+    crate::fast_media_relay::spawn(&key);
 ''',
     )
 
@@ -1235,9 +1302,34 @@ fn current_relay_load() -> StarryRelayLoad {
 
 fn telemetry_payload() -> String {
     let load = current_relay_load();
+    let fast_media = crate::fast_media_relay::runtime_snapshot();
     let draining = is_draining();
     let admission_open = !draining && load.active_sessions < load.capacity_sessions;
     let sequence = TELEMETRY_SEQUENCE.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+    let fast_media_payload = serde_json::json!({
+        "protocol": crate::fast_media_relay::PROTOCOL_VERSION,
+        "enabled": fast_media.enabled,
+        "healthy": fast_media.healthy,
+        "udp_port": fast_media.udp_port.unwrap_or_default(),
+        "active_allocations": fast_media.active_allocations,
+        "active_streams": fast_media.active_streams,
+        "hello_accepted": fast_media.hello_accepted,
+        "cookie_rejected": fast_media.cookie_rejected,
+        "bind_succeeded": fast_media.bind_succeeded,
+        "bind_rejected": fast_media.bind_rejected,
+        "grant_rejected": fast_media.grant_rejected,
+        "role_mismatch": fast_media.role_mismatch,
+        "session_mismatch": fast_media.session_mismatch,
+        "allocation_mismatch": fast_media.allocation_mismatch,
+        "rebinds": fast_media.rebinds,
+        "forwarded_packets": fast_media.forwarded_packets,
+        "forwarded_bytes": fast_media.forwarded_bytes,
+        "dropped_packets": fast_media.dropped_packets,
+        "rate_limited": fast_media.rate_limited,
+        "replay_rejected": fast_media.replay_rejected,
+        "expired_allocations": fast_media.expired_allocations,
+        "listener_failures": fast_media.listener_failures,
+    });
     let payload = serde_json::json!({
         "telemetry_schema": STARRY_RELAY_TELEMETRY_SCHEMA,
         "process_instance_id": PROCESS_INSTANCE_ID.as_str(),
@@ -1247,6 +1339,7 @@ fn telemetry_payload() -> String {
         "version": starry_version(),
         "relay_probe_protocol": 1,
         "relay_load_protocol": 1,
+        "fast_media": fast_media_payload,
         "load_basis_points": load.load_basis_points,
         "active_sessions": load.active_sessions,
         "pending_pairs": PENDING_RELAY_PAIRS.load(Ordering::Relaxed).min(u32::MAX as usize) as u32,
@@ -1991,6 +2084,20 @@ def patch_modules(upstream: Path) -> None:
             "mod connection_auth;\npub mod control_agent;\n",
         )
     lib_text = lib.read_text(encoding="utf-8")
+    if "pub mod config_downgrade;" not in lib_text:
+        replace_once(
+            lib,
+            "pub mod control_agent;\n",
+            "pub mod config_downgrade;\npub mod control_agent;\n",
+        )
+    lib_text = lib.read_text(encoding="utf-8")
+    if "pub mod pairing;" not in lib_text:
+        replace_once(
+            lib,
+            "pub mod control_agent;\n",
+            "pub mod control_agent;\npub mod pairing;\n",
+        )
+    lib_text = lib.read_text(encoding="utf-8")
     if "mod local_control;" not in lib_text:
         replace_once(
             lib,
@@ -2011,6 +2118,21 @@ def patch_modules(upstream: Path) -> None:
             lib,
             "mod geo_relay;\n",
             "mod fast_relay;\nmod geo_relay;\n",
+        )
+    hbbr = upstream / "src/hbbr.rs"
+    hbbr_text = hbbr.read_text(encoding="utf-8")
+    if "mod fast_media_relay;" not in hbbr_text:
+        replace_once(
+            hbbr,
+            "mod common;\n",
+            "mod common;\nmod fast_media_relay;\n",
+        )
+    hbbr_text = hbbr.read_text(encoding="utf-8")
+    if "mod relay_enrollment;" not in hbbr_text:
+        replace_once(
+            hbbr,
+            "mod relay_server;\n",
+            "mod relay_enrollment;\nmod relay_server;\n",
         )
 
 
@@ -6021,6 +6143,7 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
             "            addr_a,\n"
             "            addr,\n"
             "            target_effective.ip(),\n"
+            "            &phs.id,\n"
             "            phs.relay_quality_report.clone().into_option(),\n"
             "        );\n"
             "        log::debug!(\n",
@@ -6050,6 +6173,7 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
             "            addr_a,\n"
             "            addr,\n"
             "            target_effective.ip(),\n"
+            "            &la.id,\n"
             "            la.relay_quality_report.clone().into_option(),\n"
             "        );\n"
             "        log::debug!(\n",
@@ -6089,6 +6213,11 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
             "                    let peer_id = rf.id.clone();\n"
             "                    let websocket_route = websocket_signal::route(&peer_id).await;\n"
             "                    let websocket_target = websocket_route.is_some();\n"
+            "                    let requirement = match (ws, websocket_target) {\n"
+            "                        (true, true) => websocket_signal::RelayRequirement::WebSocketOnly,\n"
+            "                        (true, false) | (false, true) => websocket_signal::RelayRequirement::Mixed,\n"
+            "                        (false, false) => websocket_signal::RelayRequirement::NativeOnly,\n"
+            "                    };\n"
             "                    let target = if let Some(route) = websocket_route.as_ref() {\n"
             "                        Some((route.route_addr, route.effective_ip))\n"
             "                    } else if let Some(peer) = self.pm.get_in_memory(&peer_id).await {\n"
@@ -6097,11 +6226,18 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
             "                    } else {\n"
             "                        None\n"
             "                    };\n"
-            "                    let quality_resolution = if let Some((_target_route, target_ip)) = target {\n"
+            "                    let server_selected_relay = target.as_ref().map(|(_, target_ip)| {\n"
+            "                        self.get_relay_server(\n"
+            "                            effective_addr.ip(),\n"
+            "                            *target_ip,\n"
+            "                            requirement,\n"
+            "                        )\n"
+            "                    });\n"
+            "                    let quality_resolution = if let Some((_target_route, target_ip)) = target.as_ref() {\n"
             "                        relay_quality::select_for_request(\n"
             "                            route_addr,\n"
             "                            effective_addr.ip(),\n"
-            "                            target_ip,\n"
+            "                            *target_ip,\n"
             "                            &rf.uuid,\n"
             "                            rf.relay_quality_allocation_id.as_ref(),\n"
             "                            rf.relay_quality_report.clone().into_option(),\n"
@@ -6124,15 +6260,29 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
             "                        relay_quality::RequestResolution::Pending\n"
             "                        | relay_quality::RequestResolution::Blocked => return true,\n"
             "                    };\n"
-            "                    rf.fast_relay_authorization = fast_relay::authorization_for_request(\n"
-            "                        &rf.uuid,\n"
-            "                        effective_addr.ip(),\n"
-            "                        signal_transport,\n"
-            "                        &decision,\n"
-            "                        quality_selection.as_ref(),\n"
-            "                        self.inner.sk.as_ref(),\n"
-            "                    )\n"
-            "                    .unwrap_or_default();\n",
+            "                    if quality_selection.is_none() && fast_relay::enabled() {\n"
+            "                        if let Some(selected) = server_selected_relay.as_ref() {\n"
+            "                            rf.relay_server = selected.clone();\n"
+            "                        }\n"
+            "                    }\n"
+            "                    let fast_media_endpoint =\n"
+            "                        relay_observer::fast_media_endpoint(&rf.relay_server);\n"
+            "                    rf.fast_relay_authorization = target\n"
+            "                        .as_ref()\n"
+            "                        .and_then(|(_, target_ip)| {\n"
+            "                            fast_relay::authorization_for_request(\n"
+            "                                &rf.uuid,\n"
+            "                                effective_addr.ip(),\n"
+            "                                *target_ip,\n"
+            "                                &rf.relay_server,\n"
+            "                                signal_transport,\n"
+            "                                &decision,\n"
+            "                                quality_selection.as_ref(),\n"
+            "                                fast_media_endpoint,\n"
+            "                                self.inner.sk.as_ref(),\n"
+            "                            )\n"
+            "                        })\n"
+            "                        .unwrap_or_default();\n",
         )
 
     content = rendezvous.read_text(encoding="utf-8")
@@ -6295,6 +6445,14 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
         replace_once(
             rendezvous,
             "                    msg_out.set_relay_response(rr);\n",
+            "                    if let Some(server_selected_relay) =\n"
+            "                        fast_relay::selected_relay_for_response(\n"
+            "                            &rr.uuid,\n"
+            "                            effective_addr.ip(),\n"
+            "                        )\n"
+            "                    {\n"
+            "                        rr.relay_server = server_selected_relay;\n"
+            "                    }\n"
             "                    rr.fast_relay_authorization =\n"
             "                        fast_relay::authorization_for_response(\n"
             "                            &rr.uuid,\n"

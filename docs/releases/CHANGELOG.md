@@ -4,7 +4,40 @@
 
 This file records Starry overlay changes. The full artifact version combines
 the official RustDesk Server version with the Starry patch version, for example
-`1.1.16-patch-v1.3.0`.
+`1.1.16-patch-v1.3.1`.
+
+## patch-v1.3.1 — release candidate blocked
+
+Release notes: [`RELEASE-NOTES-patch-v1.3.1.md`](RELEASE-NOTES-patch-v1.3.1.md)
+
+### Added
+
+- Role-bound FastRelayAuthorization fields 7–12 and independent default-off
+  schema-v5 FastCompat/FastMediaV1 policy.
+- HBBR AKR1 UDP cookie/bind/forward/rebind data plane with bounded grants,
+  lifetimes, replay, traffic, cleanup, and authenticated telemetry schema 2.
+- Server-selected FastCompat/FastMedia grants for quality decisions and safe
+  ordinary GEO/failover fallback; clients never select the signed Relay.
+- Starry Pairing v1, Control Agent pair/adopt/rotate, bounded Relay enrollment,
+  and the separate `starry-relayctl` utility.
+- Explicit persistent container/native/DEB identity layouts and a no-side-
+  effect schema-v5 to schema-v4 downgrade preview/export with drain and
+  90-day certificate-window gates.
+
+### Fixed
+
+- Permit only a legitimate native initial `PunchHoleSent`/`LocalAddr` target
+  source-port change under the complete frozen Relay Quality binding; exact
+  top-level report/controller-route and conflicting-duplicate checks remain.
+
+### Compatibility and status
+
+- Relay Quality v1 protobuf, digest, scoring, telemetry, hysteresis, privacy,
+  and fallback semantics are unchanged.
+- Official clients, six-field FastCompat grants, manual Agent/Relay setup, and
+  ordinary Native/WSS Relay remain compatible. All new switches default off.
+- Publication is blocked until real Akari↔HBBS↔HBBR dual-role forwarding,
+  reliable fallback, automatic re-entry, and the complete release matrix pass.
 
 ## patch-v1.3.0 — development
 

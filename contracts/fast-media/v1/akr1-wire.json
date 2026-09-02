@@ -1,0 +1,64 @@
+{
+  "contract": "starry-fast-media-relay-udp",
+  "version": 1,
+  "status": "FROZEN",
+  "runtime_release_status": "BLOCKED",
+  "header": {
+    "bytes": 32,
+    "byte_order": "little-endian",
+    "fields": [
+      {"name": "magic", "offset": 0, "bytes": 4, "constant_ascii": "AKR1"},
+      {"name": "version", "offset": 4, "bytes": 1, "constant": 1},
+      {"name": "kind", "offset": 5, "bytes": 1, "values": {"1": "hello", "2": "cookie", "3": "bind", "4": "bound", "5": "media"}},
+      {"name": "role", "offset": 6, "bytes": 1, "values": {"1": "controller", "2": "target"}},
+      {"name": "reserved", "offset": 7, "bytes": 1, "constant": 0},
+      {"name": "session_id", "offset": 8, "bytes": 8, "minimum": 1},
+      {"name": "relay_allocation_id", "offset": 16, "bytes": 16, "all_zero_forbidden": true}
+    ]
+  },
+  "messages": {
+    "hello": {"kind": 1, "bytes": 56, "body": ["nonce:16", "zero:8"]},
+    "cookie": {"kind": 2, "bytes": 56, "body": ["nonce:16", "cookie:8"]},
+    "bind": {"kind": 3, "minimum_bytes": 59, "maximum_bytes": 4154, "body": ["nonce:16", "cookie:8", "authorization_length_u16:2", "combined_ed25519_authorization:1..4096"]},
+    "bound": {"kind": 4, "bytes": 32, "body": []},
+    "media": {"kind": 5, "minimum_bytes": 121, "maximum_bytes_from_authorization": true, "body": ["complete_AKF1_datagram"]}
+  },
+  "authorization": {
+    "protobuf": "contracts/fast-relay/v1/rendezvous-extension.proto#FastRelayAuthorization",
+    "signature": "Ed25519 combined sign(payload)",
+    "maximum_combined_bytes": 4096,
+    "required_fields": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    "relay_udp_protocol": 1,
+    "relay_endpoint_roles": {"1": "controller", "2": "target"},
+    "relay_max_datagram_range": [608, 1400],
+    "maximum_future_expiry_seconds": 300
+  },
+  "akf1_validation": {
+    "magic_ascii": "AKF1",
+    "version": 1,
+    "direction_by_outer_role": {"1": 0, "2": 1},
+    "session_id_must_equal_outer": true,
+    "sequence_nonzero": true,
+    "replay_window_packets": 128,
+    "forwarding": "strip AKR1 header and forward the complete end-to-end encrypted AKF1 datagram unchanged"
+  },
+  "lifecycle": {
+    "both_roles_required_before_forwarding": true,
+    "cookie_is_source_ip_port_bound": true,
+    "same_role_rebind_requires_new_cookie": true,
+    "rebind_preserves_replay_and_rate_state": true,
+    "half_bind_ttl_seconds_default": 10,
+    "idle_ttl_seconds_default": 30,
+    "absolute_ttl_seconds_maximum": 300
+  },
+  "rate_limits": {
+    "source_to_wire_multiplier_ceiling": "ceil(source_kbps*1.45)",
+    "role_burst_bytes": "max(262144, floor(50ms_wire_allowance))",
+    "bounded_dimensions": ["per-role", "per-source-ip", "global"]
+  },
+  "privacy": {
+    "relay_has_media_keys": false,
+    "public_probe_exposes_load": false,
+    "control_api_exposes_raw_session_or_allocation": false
+  }
+}

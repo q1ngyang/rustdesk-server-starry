@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "version": 1,
+      "enrollment_id": "019b1234-5678-7000-8000-000000000001",
+      "node_id": "relay-sin-01",
+      "relay_server": "relay-sin-01.example.com:21117",
+      "relay_pool": "asia",
+      "profile": "native-wss-fastmedia",
+      "configuration_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "expires_at_unix": 1790000600,
+      "state": "active",
+      "activate_after_health": true,
+      "key_fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "activation_operation_id": "019b1234-5678-7000-8000-000000000010",
+      "activation_config_generation": 42,
+      "activation_health_snapshot_id": "health-17",
+      "activated_at_unix": 1790000300
+    }
+  ]
+}

@@ -159,12 +159,13 @@ def main() -> None:
     lockfile = ROOT / "overlay/Cargo.lock"
     assert lockfile.is_file(), "the reviewed Cargo lockfile is missing"
     assert hashlib.sha256(lockfile.read_bytes()).hexdigest() == (
-        "631d4772927be1d1e3568a3e3185d51e9a925ab49afae19cd520e12679783c36"
+        "ac30b9b86747d51177779a52e56a385230fb81db3e6052ba4ec1b4de13c92de0"
     ), "the fixed Cargo dependency graph changed without review"
     for dependency_control in (
         'tokio-rusqlite = { version = "0.7", features = ["bundled"] }',
         'jsonwebtoken = { version = "9.3.1", default-features = false }',
         'reqwest = { version = "0.12.28"',
+        'x509-parser = { version = "0.15.1", features = ["verify"] }',
     ):
         assert dependency_control in overlay, (
             f"overlay is missing reviewed dependency control: {dependency_control}"
@@ -180,6 +181,10 @@ def main() -> None:
     )
     for test_control in (
         "_upstream/src/database.rs",
+        "components: rustfmt, clippy",
+        "cargo clippy --manifest-path _upstream/Cargo.toml --locked --all-targets -j 1",
+        "--bin hbbr -j 1",
+        "--test fast_media_relay -j 1",
         "ulimit -n 8192",
         "hbbs_sustains_one_thousand_registered_idle_websockets",
     ):

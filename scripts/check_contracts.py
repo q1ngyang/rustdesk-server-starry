@@ -30,10 +30,10 @@ def check_json_contracts() -> None:
     for path in sorted(CONTRACTS.rglob("*.json")):
         read_json(path)
 
-    schema = read_json(CONTRACTS / "config/v4/config.schema.json")
+    schema = read_json(CONTRACTS / "config/v5/config.schema.json")
     assert isinstance(schema, dict)
     assert schema.get("additionalProperties") is False
-    assert schema["properties"]["version"]["enum"] == [1, 2, 3, 4]
+    assert schema["properties"]["version"]["enum"] == [1, 2, 3, 4, 5]
     auth = schema["$defs"]["connectionAuth"]
     assert auth["additionalProperties"] is False
     assert auth["properties"]["mode"]["enum"] == ["off", "audit", "enforce"]
@@ -57,10 +57,17 @@ def check_json_contracts() -> None:
     weights = schema["$defs"]["relayQualityWeights"]["properties"]
     assert set(weights) == {"rtt", "jitter", "loss", "load"}
 
-    telemetry = read_json(CONTRACTS / "relay-telemetry/v1/telemetry.schema.json")
+    fast_relay = schema["$defs"]["fastRelay"]
+    assert fast_relay["additionalProperties"] is False
+    assert fast_relay["properties"]["fast_compat_enabled"]["default"] is False
+    assert fast_relay["properties"]["fast_media_v1_enabled"]["default"] is False
+    assert fast_relay["properties"]["relay_max_datagram"]["minimum"] == 608
+    assert fast_relay["properties"]["relay_max_datagram"]["maximum"] == 1400
+
+    telemetry = read_json(CONTRACTS / "relay-telemetry/v2/telemetry.schema.json")
     assert isinstance(telemetry, dict)
     assert telemetry.get("additionalProperties") is False
-    assert telemetry["properties"]["telemetry_schema"]["const"] == 1
+    assert telemetry["properties"]["telemetry_schema"]["const"] == 2
     assert telemetry["properties"]["load_basis_points"]["maximum"] == 10_000
     assert {
         "process_instance_id",
@@ -76,6 +83,21 @@ def check_json_contracts() -> None:
         "probe_rate_limited",
         "telemetry_auth_failures",
     } <= set(telemetry["required"])
+    fast_media = telemetry["properties"]["fast_media"]
+    assert fast_media["additionalProperties"] is False
+    assert {"active_allocations", "active_streams", "listener_failures"} <= set(
+        fast_media["required"]
+    )
+    telemetry_example = read_json(
+        CONTRACTS / "relay-telemetry/v2/telemetry.example.json"
+    )
+    assert isinstance(telemetry_example, dict)
+    assert set(telemetry_example) == set(telemetry["required"])
+    assert telemetry_example["telemetry_schema"] == 2
+    assert telemetry_example["relay_probe_protocol"] == 1
+    assert telemetry_example["relay_load_protocol"] == 1
+    assert set(telemetry_example["fast_media"]) == set(fast_media["required"])
+    assert telemetry_example["fast_media"]["protocol"] == 1
 
 
 def check_openapi_surface() -> None:
@@ -85,6 +107,12 @@ def check_openapi_surface() -> None:
         "/status",
         "/peers:verify",
         "/relays",
+        "/relay-enrollments",
+        "/relay-enrollments/{id}",
+        "/relay-enrollments:prepare",
+        "/relay-enrollments:complete",
+        "/relay-enrollments:activate",
+        "/relay-enrollments:revoke",
         "/allocations:simulate",
         "/config/schema",
         "/config",
@@ -124,6 +152,10 @@ def check_openapi_surface() -> None:
         "relays.json",
         "status.json",
         "validation.json",
+        "relay-enrollment-prepare.json",
+        "relay-enrollment-complete.json",
+        "relay-enrollment-activate.json",
+        "relay-enrollments.json",
     }
     assert required_examples <= {path.name for path in examples.glob("*.json")}
 
@@ -131,7 +163,7 @@ def check_openapi_surface() -> None:
     assert isinstance(config_example, dict)
     assert config_example.get("format") == "yaml"
     assert isinstance(config_example.get("document"), str)
-    assert config_example["document"].startswith("version: 4\n")
+    assert config_example["document"].startswith("version: 5\n")
     document_digest = "sha256:" + hashlib.sha256(
         config_example["document"].encode("utf-8")
     ).hexdigest()
@@ -140,15 +172,21 @@ def check_openapi_surface() -> None:
 
     capabilities = read_json(examples / "capabilities.json")
     assert isinstance(capabilities, dict)
-    schema_bytes = (CONTRACTS / "config/v4/config.schema.json").read_bytes()
+    schema_bytes = (CONTRACTS / "config/v5/config.schema.json").read_bytes()
     assert capabilities["config"]["schema_digest"] == (
         "sha256:" + hashlib.sha256(schema_bytes).hexdigest()
     )
+    assert capabilities["capabilities"]["config_schema"] == 5
+    assert capabilities["config"]["supported_schema_versions"] == [1, 2, 3, 4, 5]
+    assert capabilities["config"]["active_schema_version"] == 5
     assert capabilities["capabilities"]["peer_registry"] == 2
     assert capabilities["capabilities"]["profile_activation_lease"] == 1
     assert capabilities["capabilities"]["relay_probe_protocol"] == 1
     assert capabilities["capabilities"]["relay_load_protocol"] == 1
-    assert capabilities["capabilities"]["relay_telemetry_schema"] == 1
+    assert capabilities["capabilities"]["relay_telemetry_schema"] == 2
+    assert capabilities["capabilities"]["fast_media_relay_udp"] == 1
+    assert capabilities["capabilities"]["starry_pairing"] == 1
+    assert capabilities["capabilities"]["relay_enrollment"] == 1
 
     status = read_json(examples / "status.json")
     relays = read_json(examples / "relays.json")
@@ -168,12 +206,13 @@ def check_openapi_surface() -> None:
     assert relays["relays"][0]["capabilities"] == {
         "relay_probe_protocol": 1,
         "relay_load_protocol": 1,
+        "fast_media_relay_udp": 1,
     }
     assert relays["relays"][0]["quality_candidate"] is True
     assert relays["relays"][0]["websocket"]["stale"] is False
     assert relays["relays"][0]["websocket"]["age_seconds"] >= 0
     assert relays["relays"][0]["websocket"]["url"].endswith("/ws/telemetry")
-    assert relays["relays"][0]["websocket"]["telemetry_schema"] == 1
+    assert relays["relays"][0]["websocket"]["telemetry_schema"] == 2
     assert relays["relays"][0]["websocket"]["pending_pairs"] >= 0
     assert relays["relays"][0]["websocket"]["bandwidth_ema_alpha_basis_points"] == 2_500
     assert {
@@ -194,6 +233,9 @@ def check_openapi_surface() -> None:
         assert forbidden not in serialized_relays
     assert relays["profile_activation"]["protocol_version"] == 1
     assert relays["profile_activation"]["burst_limit"] == 12
+    assert relays["relays"][0]["fast_media_udp"]["active_streams"] >= 0
+    assert relays["fast_relay"]["active_fast_media_authorizations"] >= 0
+    assert relays["fast_relay"]["fast_media_v1_enabled"] is False
     assert relays["relays"][0]["websocket"]["load_basis_points"] <= 10000
     assert isinstance(simulation, dict) and simulation["selection"]["non_binding"] is True
     assert isinstance(validation, dict) and isinstance(validation.get("diagnostics"), list)
@@ -203,6 +245,23 @@ def check_openapi_surface() -> None:
     assert peer_verification["instance_id"] == capabilities["instance"]["id"]
     assert isinstance(peer_verification["registered"], bool)
     assert isinstance(history, dict) and isinstance(history.get("revisions"), list)
+    enrollments = read_json(examples / "relay-enrollments.json")
+    prepared = read_json(examples / "relay-enrollment-prepare.json")
+    completed = read_json(examples / "relay-enrollment-complete.json")
+    activation = read_json(examples / "relay-enrollment-activate.json")
+    assert (
+        enrollments["version"]
+        == prepared["version"]
+        == completed["version"]
+        == activation["version"]
+        == 1
+    )
+    assert prepared["state"] == "pending_claim"
+    assert completed["state"] == "claimed_pending_health"
+    assert enrollments["items"][0]["state"] == "active"
+    assert enrollments["items"][0]["activation_operation_id"] == activation["operation_id"]
+    assert "telemetry_secret" not in json.dumps(enrollments)
+    assert completed["bundle"]["telemetry_secret"] == "A" * 43
 
 
 def check_auth_fixtures() -> None:
@@ -243,6 +302,129 @@ def check_auth_fixtures() -> None:
         assert isinstance(claims["user_id"], int) and claims["user_id"] > 0
         assert claims["sub"] == str(claims["user_id"])
         assert isinstance(claims["auth_version"], int) and claims["auth_version"] > 0
+
+
+def check_patch_v131_frozen_candidate() -> None:
+    summary_path = CONTRACTS / "patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+    candidate_files = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in summary_path.parent.iterdir()
+        if path.is_file()
+    )
+    assert candidate_files == [
+        "contracts/patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+    ], "patch-v1.3.1 must have exactly one canonical contract candidate summary"
+
+    manifest = read_json(summary_path)
+    assert isinstance(manifest, dict)
+    assert manifest["manifest_schema"] == 1
+    assert manifest["id"] == "patch-v1.3.1-contract-candidate"
+    assert manifest["patch_version"] == "1.3.1"
+    assert manifest["status"] == "FROZEN"
+    assert manifest["candidate_kind"] == "CONTRACT_ONLY"
+    assert manifest["runtime_release_status"] == "BLOCKED"
+    assert manifest["hash_algorithm"] == "SHA-256"
+    assert manifest["source_binding"] == {
+        "type": "git_commit_containing_this_summary",
+        "remote": "origin",
+        "branch": "codex/patch-v1.3.1-fastmedia-pairing",
+        "replacement_policy": "new_patch_version_required",
+    }
+    capability = manifest["schema_v5_capability"]
+    assert capability["expression"] == "capabilities.config_schema"
+    assert capability["json_pointer"] == "/capabilities/config_schema"
+    assert capability["value"] == 5
+    assert capability["supported_versions_path"] == (
+        "config.supported_schema_versions"
+    )
+    assert capability["supported_versions"] == [1, 2, 3, 4, 5]
+    assert capability["active_version_path"] == "config.active_schema_version"
+    assert capability["schema_digest_path"] == "config.schema_digest"
+    assert capability["version_string_inference_forbidden"] is True
+
+    expected_files = {
+        "control_openapi": "contracts/control/v1/openapi.yaml",
+        "config_schema_v5": "contracts/config/v5/config.schema.json",
+        "config_ui_schema_v5": "contracts/config/v5/config.ui-schema.json",
+        "downgrade_drain_state_v1": (
+            "contracts/config/v5/downgrade-drain-state.schema.json"
+        ),
+        "control_capabilities_fixture": (
+            "contracts/control/v1/examples/capabilities.json"
+        ),
+        "control_relays_fixture": "contracts/control/v1/examples/relays.json",
+        "control_status_fixture": "contracts/control/v1/examples/status.json",
+        "relay_enrollment_prepare_fixture": (
+            "contracts/control/v1/examples/relay-enrollment-prepare.json"
+        ),
+        "relay_enrollment_complete_fixture": (
+            "contracts/control/v1/examples/relay-enrollment-complete.json"
+        ),
+        "relay_enrollment_activate_fixture": (
+            "contracts/control/v1/examples/relay-enrollment-activate.json"
+        ),
+        "relay_enrollment_inventory_fixture": (
+            "contracts/control/v1/examples/relay-enrollments.json"
+        ),
+        "fast_relay_authorization_v1": (
+            "contracts/fast-relay/v1/rendezvous-extension.proto"
+        ),
+        "akr1_wire_v1": "contracts/fast-media/v1/akr1-wire.json",
+        "sp1_pairing_v1": "contracts/starry-pairing/v1/pairing.schema.json",
+        "relay_telemetry_schema_v2": (
+            "contracts/relay-telemetry/v2/telemetry.schema.json"
+        ),
+        "relay_telemetry_fixture_v2": (
+            "contracts/relay-telemetry/v2/telemetry.example.json"
+        ),
+    }
+    frozen_files = manifest["files"]
+    assert isinstance(frozen_files, list)
+    assert len(frozen_files) == len(expected_files)
+    assert {item["id"]: item["path"] for item in frozen_files} == expected_files
+    assert len({item["id"] for item in frozen_files}) == len(frozen_files)
+    assert len({item["path"] for item in frozen_files}) == len(frozen_files)
+    for item in frozen_files:
+        digest = "sha256:" + hashlib.sha256(
+            (ROOT / item["path"]).read_bytes()
+        ).hexdigest()
+        assert item["sha256"] == digest, (
+            f"frozen contract digest mismatch: {item['path']}"
+        )
+
+    inherited = manifest["inherited_frozen_contracts"]
+    assert inherited == [
+        {
+            "id": "relay-quality/v1",
+            "path": "contracts/relay-quality/v1/rendezvous-extension.proto",
+            "sha256": (
+                "sha256:19380d18aebf91a6856e43009291c79c"
+                "f002d7c843b9fd7fa92c570916b2734c"
+            ),
+        }
+    ]
+    inherited_path = ROOT / inherited[0]["path"]
+    assert inherited[0]["sha256"] == (
+        "sha256:" + hashlib.sha256(inherited_path.read_bytes()).hexdigest()
+    )
+
+    expected_gates = {
+        "AKARI_DUAL_ROLE_END_TO_END",
+        "RELIABLE_FALLBACK_AUTO_REENTRY",
+        "DEVICE_NETWORK_FAULT_MATRIX",
+        "SP1_BROKER_CERT_ROTATION_MULTIHOST",
+        "HOSTED_RELEASE_CI_ATTESTATION",
+    }
+    gates = manifest["runtime_release_gates"]
+    assert {gate["code"] for gate in gates} == expected_gates
+    assert all(gate["status"] == "BLOCKED" for gate in gates)
+    assert len(gates) == len(expected_gates)
+    assert manifest["kessoku_policy"] == {
+        "minimum_version": "3.0.8",
+        "pin": "exact_remote_commit_containing_this_summary",
+        "dirty_worktree_forbidden": True,
+        "runtime_release_approval": False,
+    }
 
 
 def check_release_version() -> None:
@@ -295,14 +477,26 @@ def check_release_version() -> None:
     )
     assert contracts["config_schema"]["digest"] == (
         "sha256:" + hashlib.sha256(
-            (CONTRACTS / "config/v4/config.schema.json").read_bytes()
+            (CONTRACTS / "config/v5/config.schema.json").read_bytes()
         ).hexdigest()
     )
     assert contracts["config_ui_schema"]["digest"] == (
         "sha256:" + hashlib.sha256(
-            (CONTRACTS / "config/v4/config.ui-schema.json").read_bytes()
+            (CONTRACTS / "config/v5/config.ui-schema.json").read_bytes()
         ).hexdigest()
     )
+    candidate = contracts["contract_candidate"]
+    assert isinstance(candidate, dict)
+    manifest_path = CONTRACTS / "patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+    manifest = read_json(manifest_path)
+    assert candidate["digest"] == (
+        "sha256:" + hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    )
+    assert candidate["path"] == (
+        "contracts/patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+    )
+    for key, value in manifest.items():
+        assert candidate[key] == value
 
 
 def check_relay_quality_protocol() -> None:
@@ -385,14 +579,73 @@ def check_fast_relay_protocol() -> None:
         "bool allow_fast_compat = 4;",
         "bool allow_fast_media_v1 = 5;",
         "uint32 max_bitrate_kbps = 6;",
+        "uint32 relay_udp_protocol = 7;",
+        "string relay_server = 8;",
+        "uint32 relay_udp_port = 9;",
+        "bytes relay_allocation_id = 10;",
+        "uint32 relay_max_datagram = 11;",
+        "uint32 relay_endpoint_role = 12;",
     ):
         assert field in contract
     assert 'upstream / "contracts/fast-relay/v1/rendezvous-extension.proto"' in overlay
     assert '"bytes fast_relay_authorization = 64;"' in overlay
-    assert "allow_fast_media_v1: false" in implementation
+    for control in (
+        "ENDPOINT_CONTROLLER",
+        "ENDPOINT_TARGET",
+        "relay_allocation_id",
+        "selected_relay",
+        "reliable_fallbacks",
+    ):
+        assert control in implementation
     assert "sign::sign(&payload, signing_key)" in implementation
-    assert "fast_relay_authorization = fast_relay::authorization_for_request" in overlay
+    assert "fast_relay::authorization_for_request" in overlay
     assert "fast_relay::authorization_for_response" in overlay
+
+
+def check_fast_media_and_pairing_protocols() -> None:
+    wire = read_json(CONTRACTS / "fast-media/v1/akr1-wire.json")
+    assert isinstance(wire, dict)
+    assert wire["version"] == 1
+    assert wire["status"] == "FROZEN"
+    assert wire["runtime_release_status"] == "BLOCKED"
+    assert wire["header"]["bytes"] == 32
+    assert wire["authorization"]["required_fields"] == list(range(1, 13))
+    assert wire["authorization"]["relay_max_datagram_range"] == [608, 1400]
+    assert wire["privacy"]["relay_has_media_keys"] is False
+    implementation = (ROOT / "overlay/src/fast_media_relay.rs").read_text(
+        encoding="utf-8"
+    )
+    for invariant in (
+        'b"AKR1"',
+        'b"AKF1"',
+        "MAX_AUTHORIZATION_BYTES: usize = 4_096",
+        "MIN_RELAY_DATAGRAM: u32 = 608",
+        "MAX_RELAY_DATAGRAM: u32 = 1_400",
+        "saturating_mul(145)",
+        "ReplayWindow",
+        "allow_rebind",
+    ):
+        assert invariant in implementation
+
+    pairing = read_json(CONTRACTS / "starry-pairing/v1/pairing.schema.json")
+    assert isinstance(pairing, dict)
+    definitions = pairing["$defs"]
+    assert definitions["pairingCode"]["pattern"].startswith("^SP1")
+    assert definitions["pairingCodePayload"]["additionalProperties"] is False
+    assert definitions["claimRequest"]["additionalProperties"] is False
+    assert definitions["relayBundle"]["properties"]["telemetry_secret"][
+        "x-sensitive"
+    ] is True
+    pairing_source = (ROOT / "overlay/src/pairing.rs").read_text(encoding="utf-8")
+    for binding in (
+        "broker_spki_sha256",
+        "configuration_digest",
+        "request_digest",
+        "key_fingerprint",
+        "csr_digest",
+        "pairing_pending_identity_changed",
+    ):
+        assert binding in pairing_source
 
 
 def check_profile_activation_protocol() -> None:
@@ -432,9 +685,11 @@ def main() -> None:
     check_json_contracts()
     check_openapi_surface()
     check_auth_fixtures()
+    check_patch_v131_frozen_candidate()
     check_release_version()
     check_relay_quality_protocol()
     check_fast_relay_protocol()
+    check_fast_media_and_pairing_protocols()
     check_profile_activation_protocol()
     print("Starry contracts are structurally valid and least-privilege surface checks passed")
 

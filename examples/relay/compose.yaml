@@ -6,12 +6,14 @@ name: ${RELAY_COMPOSE_PROJECT_NAME:-rustdesk-relay}
 
 services:
   hbbr:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.3.0}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.3.1}
     container_name: ${RELAY_HBBR_CONTAINER_NAME:-rustdesk-hbbr}
-    command:
-      - hbbr
+    entrypoint: [starry-relay-entrypoint]
     environment:
-      KEY: ${RUSTDESK_PUBLIC_KEY:?set RUSTDESK_PUBLIC_KEY in .env}
+      RUSTDESK_PUBLIC_KEY: ${RUSTDESK_PUBLIC_KEY:-}
+      RELAY_DATA_DIR: /var/lib/rustdesk-server-starry/relay
+      STARRY_REQUIRE_PERSISTENT_STATE: "1"
+      STARRY_REQUIRE_RELAY_ENROLLMENT: ${RELAY_REQUIRE_ENROLLMENT:-1}
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
       SINGLE_BANDWIDTH: ${RELAY_SINGLE_BANDWIDTH:-128}
       TOTAL_BANDWIDTH: ${RELAY_TOTAL_BANDWIDTH:-1024}
@@ -19,16 +21,23 @@ services:
       STARRY_RELAY_PROBE_PER_IP_PER_MINUTE: ${RELAY_PROBE_PER_IP_PER_MINUTE:-120}
       STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE: ${RELAY_PROBE_GLOBAL_PER_MINUTE:-10000}
       STARRY_RELAY_TELEMETRY_SECRET_FILE: ${RELAY_TELEMETRY_SECRET_FILE:-}
-      STARRY_RELAY_DRAINING_FILE: ${RELAY_DRAINING_FILE:-/root/starry/hbbr.draining}
+      STARRY_RELAY_DRAINING_FILE: ${RELAY_DRAINING_FILE:-/var/lib/rustdesk-server-starry/relay/starry/hbbr.draining}
       LIMIT_SPEED: ${RELAY_LIMIT_SPEED:-32}
       DOWNGRADE_START_CHECK: ${RELAY_DOWNGRADE_START_CHECK:-1800}
       DOWNGRADE_THRESHOLD: ${RELAY_DOWNGRADE_THRESHOLD:-0.66}
     volumes:
       - type: bind
         source: ${RELAY_DATA_DIR:-./data}
-        target: /root
+        target: /var/lib/rustdesk-server-starry/relay
+      - type: bind
+        source: /etc/machine-id
+        target: /etc/machine-id
+        read_only: true
     network_mode: host
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
     stop_grace_period: 30s
     logging:
       driver: json-file

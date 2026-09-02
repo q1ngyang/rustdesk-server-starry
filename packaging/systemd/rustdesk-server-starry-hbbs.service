@@ -8,7 +8,7 @@ Type=simple
 User=rustdesk-starry
 Group=rustdesk-starry
 WorkingDirectory=/var/lib/rustdesk-server-starry
-Environment=STARRY_LOCAL_CONTROL_TOKEN_FILE=/etc/rustdesk-server-starry/local-control.token
+Environment=STARRY_LOCAL_CONTROL_TOKEN_FILE=/var/lib/rustdesk-server-starry/control/shared/local-control.token
 ExecStart=/usr/bin/hbbs --starry-config=/etc/rustdesk-server-starry/managed/config.yaml
 Restart=on-failure
 RestartSec=5

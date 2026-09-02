@@ -23,13 +23,15 @@ Starry 为 **HBBS** 增加以下能力：
 - 验证 `/ws/relay` 的证书和可用状态；
 - 面向 Akari 的候选 Relay 主动探测，以双端 RTT、jitter、loss 和可信 HBBR load 综合
   评分，并使用网段缓存、迟滞和单 Relay 兼容兜底；
-- 面向 Akari P2P 极速模式的默认关闭短期 Ed25519 FastCompat 授权；只有鉴权严格允许且
-  最终 Relay 选择完成后才签发，首个 v1 版本明确关闭 FastMedia Relay UDP；
+- 面向 Akari FastCompat/FastMediaV1 的默认关闭短期 Ed25519 授权；只有鉴权严格允许且
+  服务端最终 Relay 已选定后才签发，并提供独立监督的 HBBR AKR1 UDP 数据面；
 - 面向 Akari 的 generation-safe Profile Activation Lease，包括匹配 Ready ACK 后提交、
   仅当前 lease 显式注销、有上限的已验证快速重新注册，并保持官方客户端默认兼容；
-- 配置结构版本 4：只有所有相关子系统确认成功后才启用新配置，失败时保留最近一次有效配置；
+- 配置结构版本 5：只有所有相关子系统确认成功后才启用新配置，失败时保留最近一次有效配置；
 - 对原生 TCP、Secure TCP 和 WSS 上的 `PunchHoleRequest` 与直接
   `RequestRelay` 提供可选的 Ed25519 连接令牌认证；UDP 不支持发起这种已认证连接；
+- 提供 SP1 Control-Agent/Relay 引导、有界 Relay enrollment、持久身份与无副作用
+  v5→v4 降级导出；
 - 提供只读中继状态快照、不影响线上状态的分配模拟，以及由 mTLS、按权限划分的服务
   令牌和原子配置事务保护的独立 Linux 管理代理。
 
@@ -38,21 +40,22 @@ Starry 为 **HBBS** 增加以下能力：
 | 组件 | Starry 范围 | 部署责任 |
 | --- | --- | --- |
 | HBBS | 由 Starry 扩展层修改 | 运行 Starry 镜像或发布物中的 `hbbs`。 |
-| HBBR | 公开探测与认证遥测 | 保留上游字节转发数据路径，响应不含负载明细的 Akari 探测消息；有界会话数和带宽遥测仅供 HBBS 认证拉取。使用同一 Starry 镜像或发布物中附带的 HBBR。 |
+| HBBR | 可靠 Relay 与可选 AKR1 UDP | 保留上游 TCP/WS 字节转发，公开质量探测不返回负载；详细状态只通过认证 telemetry，角色授权后可选转发加密 Akari AKF1 datagram。 |
 | 管理代理 | 可选 Starry 组件；v1.3 仅支持 Linux | HBBS 本地控制保持仅本机可用；管理代理只通过私有 mTLS 管理通道访问，默认禁止写入配置。 |
 | 账户/API 服务 | 不包含 | 可搭配兼容的第三方 API；推荐同一开发者维护的 Kessoku。 |
 
 账户 API 登录、HBBS 信令连接、可选的 Starry 管理接口与 HBBR 数据转发是相互独立的
-协议层。Starry 不会让第三方 API 代替中继服务器，不会改动 HBBR 中继数据路径，也不会替代 RustDesk 客户端。
+协议层。Starry 不会让第三方 API 代替中继服务器，也不会替代 RustDesk 客户端。可选
+FastMedia UDP listener 与普通 HBBR 数据流互相独立，后者始终是可靠回退。
 
-当前开发版本：**patch-v1.3.0**。参见
-[`patch-v1.3.0` 版本说明](../releases/RELEASE-NOTES-patch-v1.3.0.zh-CN.md)和
+当前开发版本：**patch-v1.3.1（发布候选阻断中）**。参见
+[`patch-v1.3.1` 版本说明](../releases/RELEASE-NOTES-patch-v1.3.1.zh-CN.md)和
 [`更新日志`](../releases/CHANGELOG.zh-CN.md)。Docker 镜像发布于
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)。
 
-patch-v1.3.0 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制文件和 amd64 DEB
-安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.3.0
-正式发布文件。
+patch-v1.3.1 候选矩阵包括 Docker `linux/amd64`、Linux x86_64 二进制和 amd64 DEB
+安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.3.1
+正式发布文件。FastMedia 端到端回退/重入与完整发布门禁通过前不会发布本候选。
 
 > 这是非官方社区项目，与 RustDesk、MaxMind、任何 MMDB 镜像提供方或任何 AI
 > 服务提供方均无隶属或背书关系。镜像不内置 GeoLite2 数据库；部署者应自行选择合法、
@@ -80,6 +83,9 @@ patch-v1.3.0 正式提供 Docker `linux/amd64` 镜像、Linux x86_64 二进制�
 | [连接认证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Connection-Authentication) | 令牌要求、从仅记录到强制拦截的上线顺序、传输范围、故障处理与回滚。 |
 | [管理代理](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Control-Agent) | Linux 部署、mTLS/服务令牌授权、只读模式、配置事务、恢复与接口约定。 |
 | [Profile Activation Lease v1](../reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md) | Akari 匹配 ACK 切换规则、当前路由注销、多节点 lease、可观测性、发布与回滚。 |
+| [极速 Relay 授权 v1](../reference/FAST-RELAY-AUTHORIZATION-v1.zh-CN.md) | 服务端选 Relay、增量字段 1–12、兼容性、隐私和签发门禁。 |
+| [FastMedia Relay UDP v1](../reference/FAST-MEDIA-RELAY-UDP-v1.zh-CN.md) | AKR1 cookie/bind/forward/rebind wire 与资源契约。 |
+| [Starry Pairing v1](../reference/STARRY-PAIRING-v1.zh-CN.md) | SP1 Control Agent/Relay 引导、持久化、手工兼容和降级。 |
 | [地理位置规则入门](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Basics) | 国家规则、优先级、双向匹配、兜底规则与 `test-geo`。 |
 | [地理位置规则进阶](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Advanced) | 城市、ASN、运营商、嵌套表达式、引号和常用写法。 |
 | [运维与完整验证](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Operations-and-Verification) | 从静态检查到真实桌面会话的分层验收。 |

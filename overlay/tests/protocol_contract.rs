@@ -220,6 +220,39 @@ fn fast_relay_grant_is_identical_on_both_additive_signalling_fields() {
 }
 
 #[test]
+fn fast_media_role_grants_round_trip_tags_seven_through_twelve() {
+    let allocation_id = vec![0xa5; 16];
+    let common = |role| FastRelayAuthorization {
+        version: 1,
+        session_uuid: "fast-media-session-1".to_owned(),
+        expires_at: 1_800_000_090,
+        allow_fast_compat: true,
+        allow_fast_media_v1: true,
+        max_bitrate_kbps: 50_000,
+        relay_udp_protocol: 1,
+        relay_server: "relay-a.example:21117".to_owned(),
+        relay_udp_port: 21_119,
+        relay_allocation_id: allocation_id.clone().into(),
+        relay_max_datagram: 1_200,
+        relay_endpoint_role: role,
+        ..Default::default()
+    };
+    let controller_bytes = common(1).write_to_bytes().unwrap();
+    let target_bytes = common(2).write_to_bytes().unwrap();
+    assert_ne!(controller_bytes, target_bytes);
+
+    for (bytes, role) in [(controller_bytes, 1), (target_bytes, 2)] {
+        let grant = FastRelayAuthorization::parse_from_bytes(&bytes).unwrap();
+        assert_eq!(grant.relay_udp_protocol, 1);
+        assert_eq!(grant.relay_server, "relay-a.example:21117");
+        assert_eq!(grant.relay_udp_port, 21_119);
+        assert_eq!(grant.relay_allocation_id.as_ref(), allocation_id.as_slice());
+        assert_eq!(grant.relay_max_datagram, 1_200);
+        assert_eq!(grant.relay_endpoint_role, role);
+    }
+}
+
+#[test]
 fn enhanced_offer_report_and_decision_round_trip_without_touching_legacy_fields() {
     let allocation_id = vec![0x41; 16];
     let stage_token = vec![0x42; 16];

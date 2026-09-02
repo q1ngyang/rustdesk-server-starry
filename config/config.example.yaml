@@ -2,7 +2,7 @@
 # Copy the required sections to config.yaml. An empty or invalid config.yaml
 # keeps the exact upstream rustdesk-server behavior on first start. A rejected
 # reload retains the last-known-good active generation.
-version: 4
+version: 5
 
 # The complete HBBS relay pool. Keep one relay server on each line.
 relay_servers:
@@ -55,12 +55,15 @@ websocket_signal:
       - relay: jp-relay-1.example.com:21117
         url: wss://jp-relay-1.example.com/ws/telemetry
         telemetry_secret_file: /run/secrets/starry-relay-telemetry
+        fast_media_udp_port: 21119
       - relay: jp-relay-2.example.com:21117
         url: wss://jp-relay-2.example.com/ws/telemetry
         telemetry_secret_file: /run/secrets/starry-relay-telemetry
+        fast_media_udp_port: 21119
       - relay: us-relay-1.example.com:21117
         url: wss://us-relay-1.example.com/ws/telemetry
         telemetry_secret_file: /run/secrets/starry-relay-telemetry
+        fast_media_udp_port: 21119
 
 # Connection authentication requires schema v3 or newer and defaults to off. Move to
 # audit before enforce, and do not enable either mode until Kessoku (or another
@@ -125,14 +128,19 @@ relay_quality:
     loss: 2500
     load: 1500
 
-# FastCompat authorization for Akari over the existing reliable HBBR stream.
-# Keep this disabled until connection authentication and Relay quality are both
-# enabled and verified. FastMediaV1 Relay UDP is deliberately not advertised.
+# FastCompat authorization keeps using the reliable HBBR stream. FastMediaV1
+# uses an optional AKR1 UDP path while the reliable stream remains connected.
+# Both switches are independent and default to false. Relay Quality remains
+# authoritative when it produces a final decision; otherwise HBBS signs only
+# the Relay it selected itself. FastMedia grants additionally require fresh,
+# authenticated schema-v2 telemetry from that selected HBBR.
 fast_mode:
   relay:
     fast_compat_enabled: false
+    fast_media_v1_enabled: false
     authorization_ttl_seconds: 90
     max_bitrate_kbps: 50000
+    relay_max_datagram: 1200
 
 mmdb:
   update_interval_hours: 168

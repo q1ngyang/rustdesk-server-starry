@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "enrollment_id": "019b1234-5678-7000-8000-000000000001",
+  "configuration_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "expires_at_unix": 1790000600,
+  "state": "pending_claim",
+  "reused": false
+}

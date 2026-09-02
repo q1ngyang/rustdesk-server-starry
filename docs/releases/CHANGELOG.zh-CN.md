@@ -3,7 +3,37 @@
 [English](CHANGELOG.md) | **简体中文**
 
 本文记录 Starry overlay 的变化。完整产物版本由官方 RustDesk Server 版本与 Starry
-patch 版本组合，例如 `1.1.16-patch-v1.3.0`。
+patch 版本组合，例如 `1.1.16-patch-v1.3.1`。
+
+## patch-v1.3.1 — 发布候选阻断中
+
+完整说明：[`RELEASE-NOTES-patch-v1.3.1.zh-CN.md`](RELEASE-NOTES-patch-v1.3.1.zh-CN.md)
+
+### 新增
+
+- 角色绑定 FastRelayAuthorization 字段 7–12，以及互相独立、默认关闭的 schema v5
+  FastCompat/FastMediaV1 策略。
+- HBBR AKR1 UDP cookie/bind/forward/rebind 数据面；授权、生命周期、replay、流量、清理
+  和认证 telemetry schema 2 均有界。
+- Relay Quality decision 和安全普通 GEO/failover 都能得到服务端最终选择的
+  FastCompat/FastMedia 授权；客户端永远不能选择签名 Relay。
+- Starry Pairing v1、Control Agent pair/adopt/rotate、有界 Relay enrollment 和独立
+  `starry-relayctl` 工具。
+- 显式容器/原生/DEB 身份持久化布局，以及带 drain 和 90 天证书窗口门禁的无副作用
+  schema v5→v4 downgrade 预览/导出。
+
+### 修复
+
+- 仅在完整冻结 Relay Quality 绑定全部匹配时允许 native 初始
+  `PunchHoleSent`/`LocalAddr` 的合法 target 来源端口变化；顶层 report/controller route
+  仍精确绑定，冲突重复仍拒绝。
+
+### 兼容性与状态
+
+- Relay Quality v1 protobuf、digest、评分、遥测、迟滞、隐私及 fallback 语义不变。
+- 官方客户端、六字段 FastCompat、手工 Agent/Relay 和普通 Native/WSS Relay 保持兼容；
+  所有新开关默认关闭。
+- 真实 Akari↔HBBS↔HBBR 双角色转发、可靠回退、自动重入与完整发布矩阵通过前禁止发布。
 
 ## patch-v1.3.0 — 开发中
 

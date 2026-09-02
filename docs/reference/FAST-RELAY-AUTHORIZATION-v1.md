@@ -2,35 +2,34 @@
 
 **English** | [简体中文](FAST-RELAY-AUTHORIZATION-v1.zh-CN.md)
 
-Fast Relay authorization v1 is an additive Starry/Akari extension that lets
-HBBS authorize Akari's `FastCompat` mode only after connection authorization
-and Relay-quality selection have succeeded. The first patch-v1.3.0 release
-continues to carry media through the existing reliable HBBR stream. It never
-authorizes or advertises `FastMediaV1` Relay UDP.
+Fast Relay authorization v1 is an additive Starry/Akari extension. HBBS signs
+the Relay that HBBS selected; a client cannot select or substitute another
+Relay. Official RustDesk clients ignore the unknown high protobuf tag and keep
+using the ordinary `relay_server` path.
 
-Official RustDesk clients remain compatible. The extension uses an unknown
-high protobuf tag, does not change any official field or enum, and leaves the
-ordinary `relay_server` flow intact when the extension is absent or rejected.
+patch-v1.3.1 preserves the original six-field FastCompat payload and adds the
+role-bound fields needed by FastMediaV1 Relay UDP. Missing, malformed, expired,
+unsupported, or undeliverable authorization never invalidates the ordinary
+reliable HBBR session.
 
-## Wire binding
+## Outer signalling fields
 
-The following additive fields are injected into the upstream
-`rendezvous.proto` during the overlay build:
+The overlay adds the same opaque field to two official messages without
+renumbering an upstream field:
 
-| Official message | Added field |
-| --- | --- |
-| `RequestRelay` | `bytes fast_relay_authorization = 64` |
-| `RelayResponse` | `bytes fast_relay_authorization = 64` |
+| Official message | Additive field | Recipient |
+| --- | --- | --- |
+| `RequestRelay` | `bytes fast_relay_authorization = 64` | controlled/target endpoint |
+| `RelayResponse` | `bytes fast_relay_authorization = 64` | controller endpoint |
 
-The bytes contain a libsodium Ed25519 combined signed message:
+The value is a libsodium Ed25519 combined signed message:
 
 ```text
 signed_authorization = signature[64] || protobuf(FastRelayAuthorization)
 ```
 
-HBBS signs with its existing Ed25519 secret key. Akari verifies with the HBBS
-public key already distributed for normal RustDesk operation, opens the
-combined signed message, and then parses this payload:
+HBBS signs with its existing Ed25519 server key. Akari verifies with the HBBS
+public key already used by RustDesk. The canonical additive payload is:
 
 ```protobuf
 message FastRelayAuthorization {
@@ -40,82 +39,102 @@ message FastRelayAuthorization {
   bool allow_fast_compat = 4;
   bool allow_fast_media_v1 = 5;
   uint32 max_bitrate_kbps = 6;
+  uint32 relay_udp_protocol = 7;
+  string relay_server = 8;
+  uint32 relay_udp_port = 9;
+  bytes relay_allocation_id = 10;
+  uint32 relay_max_datagram = 11;
+  uint32 relay_endpoint_role = 12;
 }
 ```
 
-The machine-readable definitions are in
+The machine-readable definition is
 [`contracts/fast-relay/v1/rendezvous-extension.proto`](../../contracts/fast-relay/v1/rendezvous-extension.proto).
+Fields 1–6 retain their patch-v1.3.0 meaning. Old six-field FastCompat grants
+remain valid for compatible clients. New clients enforce `relay_server` when
+it is present.
 
-## Issuance order and invariants
+## Stable field contract
 
-HBBS issues a grant only when all of these checks succeed, in this order:
+| Field | Requirement |
+| --- | --- |
+| `version` | Exactly `1`. Appending fields does not change this value. |
+| `session_uuid` | Exact RustDesk session UUID; maximum 128 bytes at HBBS. |
+| `expires_at` | Unix seconds; HBBS policy permits a 30–300 second TTL. |
+| `allow_fast_compat` | Authorizes the reliable FastCompat media path. |
+| `allow_fast_media_v1` | Authorizes AKR1 only when all FastMedia gates pass. |
+| `max_bitrate_kbps` | Encoded source ceiling, `1000..=200000` Kbit/s. |
+| `relay_udp_protocol` | `1` for AKR1; zero for a compatibility-only grant. |
+| `relay_server` | Exact HBBS-selected Relay identity used in ordinary `relay_server`. |
+| `relay_udp_port` | Selected HBBR UDP port; non-zero only for FastMedia. |
+| `relay_allocation_id` | Fresh non-zero 16-byte identifier, unrelated to the public UUID. |
+| `relay_max_datagram` | Complete UDP payload including AKR1, `608..=1400`; default `1200`. |
+| `relay_endpoint_role` | `1` controller, `2` target; zero for a six-field-compatible grant. |
 
-1. Connection authentication returns the exact `allow` verdict. In audit mode,
-   a request that would be denied does not receive a grant.
-2. Signalling uses Secure TCP or the configured WebSocket signalling path.
-   Deployments terminating WSS at a reverse proxy must prevent direct public
-   access to HBBS's plaintext WebSocket listener.
-3. Relay quality protocol v1 has produced the final, source-bound selection
-   for the initiating IP, target IP, session UUID, allocation ID, and active
-   configuration generation.
-4. The active policy is valid: authorization TTL is `30..300` seconds and the
-   bitrate ceiling is `1000..200000` Kbit/s.
-5. The HBBS signing key and system clock are available and the per-source
-   signing rate limit permits a new signature.
+For FastMedia, HBBS signs two different byte strings. The target grant in
+`RequestRelay` has role 2 and the controller grant in `RelayResponse` has role
+1. Both share the UUID, expiry, Relay, UDP port, allocation ID, datagram bound,
+and bitrate ceiling. Swapping the grants must fail at HBBR.
 
-The signed payload always has `version = 1`, `allow_fast_compat = true`, and
-`allow_fast_media_v1 = false`. A grant is created only after the selected
-Relay has been copied into the official `relay_server` field. The exact same
-signed byte string is placed in the target's `RequestRelay` and the
-controller's `RelayResponse`.
+## Server-selected Relay and issuance gates
 
-Any failure yields an empty tag 64 field and increments a bounded runtime
-counter. It does not reject, delay, or rewrite the standard RustDesk Relay
-flow beyond the already-final Relay-quality decision.
+Relay Quality v1 remains authoritative whenever it has a final decision. HBBS
+copies that exact Relay into both ordinary `relay_server` and the signed grant.
+When quality is disabled, has too few compatible candidates, times out, or
+uses a legacy fallback, HBBS may sign only the ordinary GEO/failover Relay that
+HBBS itself already selected. A request-provided Relay is never trusted.
 
-## Replay, retry, and privacy controls
+HBBS issues any grant only after all of these conditions hold:
 
-- Cache keys bind the session UUID to the normalized initiator and target IPs.
-  A UUID cannot be reused by a different endpoint pair while its entry is
-  active.
-- Response lookup additionally binds the responding target IP and the final
-  Relay identity.
-- A valid retry reuses the original Relay-quality decision and the exact
-  signed authorization bytes; it does not extend expiry or consume another
-  signature.
-- Entries expire at the earlier practical boundary imposed by the signed
-  expiry and the Relay-quality allocation TTL. Maps are bounded by
-  `relay_quality.max_allocations`.
-- New signatures are limited to 120 per normalized source IP per minute.
-- Logs never contain the session UUID, signing key, token, or signed grant.
-  They may contain the selected Relay and a truncated opaque allocation label.
+1. connection authentication returns the exact `allow` verdict, including in
+   audit mode;
+2. signalling uses Secure TCP or the configured WebSocket path;
+3. the ordinary final Relay is fixed by HBBS and, when present, exactly matches
+   the Relay Quality decision;
+4. policy TTL, source bitrate, and datagram bounds are valid;
+5. the signing key, clock, bounded allocation cache, and per-source signing
+   budget are available.
 
-Akari must reject a grant if signature verification or protobuf parsing fails,
-the version is unsupported, the session UUID differs, `expires_at` has passed,
-or `allow_fast_compat` is false. Akari must never infer FastMedia support from
-the presence of this extension: `allow_fast_media_v1` is authoritative and is
-always false in patch-v1.3.0.
+FastMedia additionally requires the selected HBBR to have fresh authenticated
+telemetry schema 2, explicit capability `fast_media_relay_udp = 1`, a healthy
+UDP endpoint, and both role deliveries. HBBS does not infer capability from a
+Starry version string or from client-provided data. If these gates fail, HBBS
+may still issue FastCompat when enabled and always retains the reliable Relay.
 
-## Configuration and Kessoku contract
+Retries for the same live UUID and normalized endpoint pair reuse the original
+Relay and unexpired role grants. They do not extend expiry or spend another
+signature. A UUID conflict, endpoint-pair conflict, final-Relay conflict, or
+configuration-generation change fails closed.
 
-Schema v4 adds the default-off policy:
+## Configuration
+
+Schema v5 keeps both modes independent and default-off:
 
 ```yaml
+version: 5
 fast_mode:
   relay:
     fast_compat_enabled: false
+    fast_media_v1_enabled: false
     authorization_ttl_seconds: 90
     max_bitrate_kbps: 50000
+    relay_max_datagram: 1200
 ```
 
-Enabling it requires Relay quality, connection authentication in `audit` or
-`enforce`, and Secure TCP or WebSocket signalling. Kessoku discovers support
-through Control API capability `fast_relay_authorization: 1`, includes
-`fast_mode` in the normal schema/plan/apply workflow, and records only policy
-changes and aggregate runtime counters in audit data. Kessoku must not receive,
-store, or log HBBS secret keys, connection tokens, session UUIDs, or signed
-authorizations.
+FastMedia implies FastCompat for that authorized session, but enabling
+`fast_media_v1_enabled` does not rewrite the stored FastCompat switch. A Relay
+telemetry endpoint declares `fast_media_udp_port` only beside an authenticated
+`/ws/telemetry` secret-file reference. Secret values never appear in YAML.
 
-`GET /control/v1/relays` exposes bounded `fast_relay` counters for issuance,
-reuse, delivery, and fail-closed reasons. Their values are operational
-telemetry, not proof that a client entered FastCompat mode.
+## Privacy and observability
+
+Control API returns only bounded aggregate counters: grants by role, sessions
+by mode, reuse/delivery, unavailable capability, reliable fallback, invalid
+selection/configuration, rate limits, and expiry. It never returns a UUID,
+allocation ID, endpoint address, token, stage token, signed grant, or media
+payload. Logs follow the same rule.
+
+The authorization contract is release-candidate input for patch-v1.3.1. Its
+canonical protobuf digest is recorded in the release summary. The AKR1
+data-plane contract remains `RELEASE_CANDIDATE_BLOCKED` until the required real
+Akari↔HBBS↔HBBR fallback and automatic re-entry integration gate passes.

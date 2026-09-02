@@ -84,7 +84,11 @@ fn official_hbbr_bridges_websocket_and_native_streams() {
         assert_active_probe_and_public_headers(port).await;
         assert_telemetry_requires_authentication(port).await;
         let telemetry = authenticated_telemetry(port, telemetry_secret).await;
-        assert_eq!(telemetry["telemetry_schema"], 1);
+        assert_eq!(telemetry["telemetry_schema"], 2);
+        assert_eq!(telemetry["fast_media"]["protocol"], 1);
+        assert_eq!(telemetry["fast_media"]["enabled"], false);
+        assert_eq!(telemetry["fast_media"]["healthy"], false);
+        assert_eq!(telemetry["fast_media"]["udp_port"], 0);
         assert_eq!(telemetry["capacity_sessions"], 1);
         assert_eq!(telemetry["active_sessions"], 0);
         assert_eq!(telemetry["pending_pairs"], 0);
@@ -113,7 +117,7 @@ async fn assert_active_probe_and_public_headers(port: u16) {
     };
     assert!(header("x-starry-version")
         .as_deref()
-        .is_some_and(|value| value.ends_with("-patch-v1.3.0")));
+        .is_some_and(|value| value.ends_with("-patch-v1.3.1")));
     assert_eq!(
         header("x-starry-relay-probe-protocol").as_deref(),
         Some("1")
@@ -159,7 +163,7 @@ async fn assert_active_probe_and_public_headers(port: u16) {
     assert_eq!(response.protocol_version, 1);
     assert_eq!(response.nonce.as_ref(), nonce.as_slice());
     assert!(response.load.is_none());
-    assert!(response.starry_version.ends_with("-patch-v1.3.0"));
+    assert!(response.starry_version.ends_with("-patch-v1.3.1"));
     assert_eq!(response.relay_probe_protocol, 1);
     assert_eq!(response.relay_load_protocol, 1);
 }

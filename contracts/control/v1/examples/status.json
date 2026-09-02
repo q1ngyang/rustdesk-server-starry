@@ -3,7 +3,7 @@
   "config": {
     "status": "active",
     "generation": 42,
-    "schema_version": 4,
+    "schema_version": 5,
     "source_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "effective_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "activated_at": "2026-08-18T10:00:00Z",

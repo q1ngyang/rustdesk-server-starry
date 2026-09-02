@@ -20,6 +20,16 @@ def sha256(relative: str) -> str:
     return "sha256:" + hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
 
 
+def contract_candidate() -> dict[str, object]:
+    path = "contracts/patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+    manifest = json.loads((ROOT / path).read_text(encoding="utf-8"))
+    return {
+        "path": path,
+        "digest": sha256(path),
+        **manifest,
+    }
+
+
 def build_summary(
     *,
     release_tag: str,
@@ -67,20 +77,21 @@ def build_summary(
             "platforms": {"linux/amd64": image_linux_amd64_digest},
         },
         "contracts": {
+            "contract_candidate": contract_candidate(),
             "control_openapi": {
                 "id": "control/v1",
                 "path": "contracts/control/v1/openapi.yaml",
                 "digest": sha256("contracts/control/v1/openapi.yaml"),
             },
             "config_schema": {
-                "id": "config/v4",
-                "path": "contracts/config/v4/config.schema.json",
-                "digest": sha256("contracts/config/v4/config.schema.json"),
+                "id": "config/v5",
+                "path": "contracts/config/v5/config.schema.json",
+                "digest": sha256("contracts/config/v5/config.schema.json"),
             },
             "config_ui_schema": {
-                "id": "config/v4-ui",
-                "path": "contracts/config/v4/config.ui-schema.json",
-                "digest": sha256("contracts/config/v4/config.ui-schema.json"),
+                "id": "config/v5-ui",
+                "path": "contracts/config/v5/config.ui-schema.json",
+                "digest": sha256("contracts/config/v5/config.ui-schema.json"),
             },
             "relay_quality_protocol": {
                 "id": "relay-quality/v1",
@@ -91,10 +102,38 @@ def build_summary(
                 ),
             },
             "relay_telemetry_schema": {
-                "id": "relay-telemetry/v1",
-                "path": "contracts/relay-telemetry/v1/telemetry.schema.json",
+                "id": "relay-telemetry/v2",
+                "path": "contracts/relay-telemetry/v2/telemetry.schema.json",
                 "digest": sha256(
-                    "contracts/relay-telemetry/v1/telemetry.schema.json"
+                    "contracts/relay-telemetry/v2/telemetry.schema.json"
+                ),
+            },
+            "fast_relay_protocol": {
+                "id": "fast-relay/v1",
+                "path": "contracts/fast-relay/v1/rendezvous-extension.proto",
+                "digest": sha256(
+                    "contracts/fast-relay/v1/rendezvous-extension.proto"
+                ),
+            },
+            "fast_media_relay_udp": {
+                "id": "fast-media/v1",
+                "status": "FROZEN",
+                "runtime_release_status": "BLOCKED",
+                "path": "contracts/fast-media/v1/akr1-wire.json",
+                "digest": sha256("contracts/fast-media/v1/akr1-wire.json"),
+            },
+            "starry_pairing_protocol": {
+                "id": "starry-pairing/v1",
+                "path": "contracts/starry-pairing/v1/pairing.schema.json",
+                "digest": sha256(
+                    "contracts/starry-pairing/v1/pairing.schema.json"
+                ),
+            },
+            "downgrade_drain_state": {
+                "id": "config/v5-downgrade-drain-state/v1",
+                "path": "contracts/config/v5/downgrade-drain-state.schema.json",
+                "digest": sha256(
+                    "contracts/config/v5/downgrade-drain-state.schema.json"
                 ),
             },
         },

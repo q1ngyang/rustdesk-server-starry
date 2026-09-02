@@ -33,6 +33,16 @@ pub(super) async fn call(
             false,
         )
     })?;
+    call_with_token_file(address, request_id, method, params, token_path).await
+}
+
+pub(super) async fn call_with_token_file(
+    address: SocketAddr,
+    request_id: &str,
+    method: &str,
+    params: Value,
+    token_path: &std::path::Path,
+) -> Result<Value, AgentError> {
     let auth_token = crate::local_control::read_auth_token_file(token_path).map_err(|_| {
         AgentError::new(
             "LOCAL_CONTROL_UNAUTHORIZED",

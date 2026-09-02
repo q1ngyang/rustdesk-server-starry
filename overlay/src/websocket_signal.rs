@@ -453,6 +453,7 @@ mod tests {
             relay: "relay.example.test:21117".to_owned(),
             url: "wss://relay.example.test/ws/relay".to_owned(),
             telemetry_secret_file: None,
+            fast_media_udp_port: None,
         });
         assert!(!config.enabled);
         assert!(!prepare(&config, false).unwrap().health_enabled);

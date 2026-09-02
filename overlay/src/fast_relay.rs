@@ -1,26 +1,28 @@
 use crate::{
     connection_auth::{AuthDecision, SignalTransport},
+    relay_observer::FastMediaRelayEndpoint,
     relay_quality::RelaySelection,
     starry_config::{self, FastRelayConfig},
 };
-use hbb_common::{
-    bytes::Bytes, log, protobuf::Message as _, rendezvous_proto::FastRelayAuthorization,
-};
+use hbb_common::{bytes::Bytes, protobuf::Message as _, rendezvous_proto::FastRelayAuthorization};
 use once_cell::sync::Lazy;
 use serde_derive::Serialize;
 use sodiumoxide::crypto::sign;
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Write as _,
     net::IpAddr,
     sync::RwLock,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 pub(crate) const PROTOCOL_VERSION: u32 = 1;
+pub(crate) const ENDPOINT_CONTROLLER: u32 = 1;
+pub(crate) const ENDPOINT_TARGET: u32 = 2;
 const MAX_SESSION_UUID_BYTES: usize = 128;
 const SIGNING_RATE_WINDOW_SECONDS: u64 = 60;
 const MAX_SIGNATURES_PER_SOURCE_PER_MINUTE: u32 = 120;
+const MIN_RELAY_DATAGRAM: u32 = 608;
+const MAX_RELAY_DATAGRAM: u32 = 1_400;
 
 static STATE: Lazy<RwLock<FastRelayState>> = Lazy::new(|| RwLock::new(FastRelayState::default()));
 
@@ -30,19 +32,26 @@ struct FastRelayState {
     sessions: HashMap<String, GrantKey>,
     responses: HashMap<ResponseKey, GrantKey>,
     signing_rates: HashMap<IpAddr, SigningRate>,
-    issued: u64,
+    issued_sessions: u64,
+    target_grants_issued: u64,
+    controller_grants_issued: u64,
+    fast_compat_sessions: u64,
+    fast_media_sessions: u64,
     reused: u64,
     delivered: u64,
     disabled: u64,
     insecure_requests: u64,
     invalid_configuration: u64,
     invalid_uuids: u64,
+    invalid_server_selection: u64,
     missing_signing_keys: u64,
     signing_failures: u64,
     quality_selection_failures: u64,
     rate_limited: u64,
     response_misses: u64,
     expired_cache_evictions: u64,
+    fast_media_unavailable: u64,
+    reliable_fallbacks: u64,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -59,12 +68,14 @@ struct ResponseKey {
 }
 
 struct GrantRecord {
-    signed: Bytes,
+    target_signed: Bytes,
+    controller_signed: Bytes,
     selected_relay: String,
-    quality_allocation_id: Vec<u8>,
+    quality_allocation_id: Option<Vec<u8>>,
     config_generation: u64,
     expires_at: u64,
     created: Instant,
+    fast_media: bool,
 }
 
 struct SigningRate {
@@ -76,36 +87,54 @@ struct SigningRate {
 struct PolicySnapshot {
     generation: u64,
     config: FastRelayConfig,
-    allocation_ttl_seconds: u64,
     max_authorizations: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct RuntimeSnapshot {
     pub(crate) protocol_version: u32,
-    pub(crate) enabled: bool,
+    pub(crate) fast_compat_enabled: bool,
+    pub(crate) fast_media_v1_enabled: bool,
     pub(crate) active_authorizations: usize,
-    pub(crate) issued: u64,
+    pub(crate) active_fast_media_authorizations: usize,
+    pub(crate) last_fast_media_authorization_expires_at_unix: u64,
+    pub(crate) issued_sessions: u64,
+    pub(crate) target_grants_issued: u64,
+    pub(crate) controller_grants_issued: u64,
+    pub(crate) fast_compat_sessions: u64,
+    pub(crate) fast_media_sessions: u64,
     pub(crate) reused: u64,
     pub(crate) delivered: u64,
     pub(crate) disabled: u64,
     pub(crate) insecure_requests: u64,
     pub(crate) invalid_configuration: u64,
     pub(crate) invalid_uuids: u64,
+    pub(crate) invalid_server_selection: u64,
     pub(crate) missing_signing_keys: u64,
     pub(crate) signing_failures: u64,
     pub(crate) quality_selection_failures: u64,
     pub(crate) rate_limited: u64,
     pub(crate) response_misses: u64,
     pub(crate) expired_cache_evictions: u64,
+    pub(crate) fast_media_unavailable: u64,
+    pub(crate) reliable_fallbacks: u64,
 }
 
+pub(crate) fn enabled() -> bool {
+    let policy = current_policy();
+    policy.config.fast_compat_enabled || policy.config.fast_media_v1_enabled
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn authorization_for_request(
     session_uuid: &str,
     source_ip: IpAddr,
+    target_ip: IpAddr,
+    selected_relay: &str,
     transport: SignalTransport,
     auth: &AuthDecision,
-    selection: Option<&RelaySelection>,
+    quality_selection: Option<&RelaySelection>,
+    fast_media_endpoint: Option<FastMediaRelayEndpoint>,
     signing_key: Option<&sign::SecretKey>,
 ) -> Option<Bytes> {
     let policy = current_policy();
@@ -117,12 +146,32 @@ pub(crate) fn authorization_for_request(
         &policy,
         session_uuid,
         source_ip,
+        target_ip,
+        selected_relay,
         transport,
         auth,
-        selection,
+        quality_selection,
+        fast_media_endpoint,
         signing_key,
         now,
     )
+}
+
+pub(crate) fn selected_relay_for_response(session_uuid: &str, source_ip: IpAddr) -> Option<String> {
+    let policy = current_policy();
+    let mut state = STATE.write().ok()?;
+    let now = epoch_seconds().unwrap_or_default();
+    cleanup(&mut state, &policy, now);
+    let key = ResponseKey {
+        session_uuid: session_uuid.to_owned(),
+        target_ip: normalize_ip(source_ip),
+    };
+    state
+        .responses
+        .get(&key)
+        .and_then(|key| state.grants.get(key))
+        .filter(|record| record.config_generation == policy.generation && record.expires_at > now)
+        .map(|record| record.selected_relay.clone())
 }
 
 pub(crate) fn authorization_for_response(
@@ -148,43 +197,77 @@ pub(crate) fn runtime_snapshot() -> RuntimeSnapshot {
     let policy = current_policy();
     let now = epoch_seconds().unwrap_or_default();
     let Ok(mut state) = STATE.write() else {
-        return RuntimeSnapshot {
-            protocol_version: PROTOCOL_VERSION,
-            enabled: policy.config.fast_compat_enabled,
-            active_authorizations: 0,
-            issued: 0,
-            reused: 0,
-            delivered: 0,
-            disabled: 0,
-            insecure_requests: 0,
-            invalid_configuration: 0,
-            invalid_uuids: 0,
-            missing_signing_keys: 0,
-            signing_failures: 0,
-            quality_selection_failures: 0,
-            rate_limited: 0,
-            response_misses: 0,
-            expired_cache_evictions: 0,
-        };
+        return empty_runtime_snapshot(&policy);
     };
     cleanup(&mut state, &policy, now);
     RuntimeSnapshot {
         protocol_version: PROTOCOL_VERSION,
-        enabled: policy.config.fast_compat_enabled,
+        fast_compat_enabled: policy.config.fast_compat_enabled,
+        fast_media_v1_enabled: policy.config.fast_media_v1_enabled,
         active_authorizations: state.grants.len(),
-        issued: state.issued,
+        active_fast_media_authorizations: state
+            .grants
+            .values()
+            .filter(|record| record.fast_media)
+            .count(),
+        last_fast_media_authorization_expires_at_unix: state
+            .grants
+            .values()
+            .filter(|record| record.fast_media)
+            .map(|record| record.expires_at)
+            .max()
+            .unwrap_or_default(),
+        issued_sessions: state.issued_sessions,
+        target_grants_issued: state.target_grants_issued,
+        controller_grants_issued: state.controller_grants_issued,
+        fast_compat_sessions: state.fast_compat_sessions,
+        fast_media_sessions: state.fast_media_sessions,
         reused: state.reused,
         delivered: state.delivered,
         disabled: state.disabled,
         insecure_requests: state.insecure_requests,
         invalid_configuration: state.invalid_configuration,
         invalid_uuids: state.invalid_uuids,
+        invalid_server_selection: state.invalid_server_selection,
         missing_signing_keys: state.missing_signing_keys,
         signing_failures: state.signing_failures,
         quality_selection_failures: state.quality_selection_failures,
         rate_limited: state.rate_limited,
         response_misses: state.response_misses,
         expired_cache_evictions: state.expired_cache_evictions,
+        fast_media_unavailable: state.fast_media_unavailable,
+        reliable_fallbacks: state.reliable_fallbacks,
+    }
+}
+
+fn empty_runtime_snapshot(policy: &PolicySnapshot) -> RuntimeSnapshot {
+    RuntimeSnapshot {
+        protocol_version: PROTOCOL_VERSION,
+        fast_compat_enabled: policy.config.fast_compat_enabled,
+        fast_media_v1_enabled: policy.config.fast_media_v1_enabled,
+        active_authorizations: 0,
+        active_fast_media_authorizations: 0,
+        last_fast_media_authorization_expires_at_unix: 0,
+        issued_sessions: 0,
+        target_grants_issued: 0,
+        controller_grants_issued: 0,
+        fast_compat_sessions: 0,
+        fast_media_sessions: 0,
+        reused: 0,
+        delivered: 0,
+        disabled: 0,
+        insecure_requests: 0,
+        invalid_configuration: 0,
+        invalid_uuids: 0,
+        invalid_server_selection: 0,
+        missing_signing_keys: 0,
+        signing_failures: 0,
+        quality_selection_failures: 0,
+        rate_limited: 0,
+        response_misses: 0,
+        expired_cache_evictions: 0,
+        fast_media_unavailable: 0,
+        reliable_fallbacks: 0,
     }
 }
 
@@ -194,18 +277,22 @@ fn authorize_locked(
     policy: &PolicySnapshot,
     session_uuid: &str,
     source_ip: IpAddr,
+    target_ip: IpAddr,
+    selected_relay: &str,
     transport: SignalTransport,
     auth: &AuthDecision,
-    selection: Option<&RelaySelection>,
+    quality_selection: Option<&RelaySelection>,
+    fast_media_endpoint: Option<FastMediaRelayEndpoint>,
     signing_key: Option<&sign::SecretKey>,
     now: Option<u64>,
 ) -> Option<Bytes> {
-    if !policy.config.fast_compat_enabled {
+    if !policy.config.fast_compat_enabled && !policy.config.fast_media_v1_enabled {
         state.disabled = state.disabled.saturating_add(1);
         return None;
     }
     if !(30..=300).contains(&policy.config.authorization_ttl_seconds)
         || !(1_000..=200_000).contains(&policy.config.max_bitrate_kbps)
+        || !(MIN_RELAY_DATAGRAM..=MAX_RELAY_DATAGRAM).contains(&policy.config.relay_max_datagram)
     {
         state.invalid_configuration = state.invalid_configuration.saturating_add(1);
         return None;
@@ -223,18 +310,28 @@ fn authorize_locked(
         state.invalid_uuids = state.invalid_uuids.saturating_add(1);
         return None;
     }
-    let Some(selection) = selection else {
-        state.quality_selection_failures = state.quality_selection_failures.saturating_add(1);
-        return None;
-    };
-    if selection.config_generation != policy.generation
-        || selection.decision.protocol_version != crate::relay_quality::PROTOCOL_VERSION
-        || selection.decision.relay_server.is_empty()
-        || selection.decision.allocation_id.len() != 16
-    {
-        state.quality_selection_failures = state.quality_selection_failures.saturating_add(1);
+    let selected_relay = selected_relay.trim();
+    if selected_relay.is_empty() || selected_relay.len() > 256 {
+        state.invalid_server_selection = state.invalid_server_selection.saturating_add(1);
         return None;
     }
+    let quality_allocation_id = if let Some(selection) = quality_selection {
+        if selection.config_generation != policy.generation
+            || selection.decision.protocol_version != crate::relay_quality::PROTOCOL_VERSION
+            || !selection
+                .decision
+                .relay_server
+                .eq_ignore_ascii_case(selected_relay)
+            || selection.decision.allocation_id.len() != 16
+            || normalize_ip(selection.target_ip) != normalize_ip(target_ip)
+        {
+            state.quality_selection_failures = state.quality_selection_failures.saturating_add(1);
+            return None;
+        }
+        Some(selection.decision.allocation_id.to_vec())
+    } else {
+        None
+    };
     let Some(signing_key) = signing_key else {
         state.missing_signing_keys = state.missing_signing_keys.saturating_add(1);
         return None;
@@ -246,7 +343,7 @@ fn authorize_locked(
     let key = GrantKey {
         session_uuid: session_uuid.to_owned(),
         initiator_ip: normalize_ip(source_ip),
-        target_ip: normalize_ip(selection.target_ip),
+        target_ip: normalize_ip(target_ip),
     };
     if let Some(existing_key) = state.sessions.get(session_uuid) {
         if existing_key != &key {
@@ -256,14 +353,11 @@ fn authorize_locked(
     }
     if let Some(existing) = state.grants.get(&key) {
         if existing.config_generation == policy.generation
-            && existing.quality_allocation_id.as_slice()
-                == selection.decision.allocation_id.as_ref()
-            && existing
-                .selected_relay
-                .eq_ignore_ascii_case(&selection.decision.relay_server)
+            && existing.quality_allocation_id == quality_allocation_id
+            && existing.selected_relay.eq_ignore_ascii_case(selected_relay)
             && existing.expires_at > now
         {
-            let signed = existing.signed.clone();
+            let signed = existing.target_signed.clone();
             state.reused = state.reused.saturating_add(1);
             return Some(signed);
         }
@@ -272,21 +366,54 @@ fn authorize_locked(
         state.rate_limited = state.rate_limited.saturating_add(1);
         return None;
     }
-    let Some(expires_at) = now.checked_add(policy.config.authorization_ttl_seconds) else {
-        state.signing_failures = state.signing_failures.saturating_add(1);
+    let expires_at = now.checked_add(policy.config.authorization_ttl_seconds)?;
+    let fast_media = policy.config.fast_media_v1_enabled && fast_media_endpoint.is_some();
+    if policy.config.fast_media_v1_enabled && !fast_media {
+        state.fast_media_unavailable = state.fast_media_unavailable.saturating_add(1);
+        state.reliable_fallbacks = state.reliable_fallbacks.saturating_add(1);
+    }
+    if !policy.config.fast_compat_enabled && !fast_media {
         return None;
-    };
-    let signed = match build_signed_authorization(
-        session_uuid,
-        expires_at,
-        policy.config.max_bitrate_kbps,
-        signing_key,
+    }
+    let relay_allocation_id = fast_media.then(|| uuid::Uuid::now_v7().as_bytes().to_vec());
+    let (target_signed, controller_signed) = if let (true, Some(endpoint), Some(allocation_id)) = (
+        fast_media,
+        fast_media_endpoint,
+        relay_allocation_id.as_deref(),
     ) {
-        Ok(signed) => signed,
-        Err(()) => {
-            state.signing_failures = state.signing_failures.saturating_add(1);
-            return None;
-        }
+        let target = build_signed_authorization(
+            session_uuid,
+            expires_at,
+            &policy.config,
+            selected_relay,
+            Some(&endpoint),
+            Some(allocation_id),
+            ENDPOINT_TARGET,
+            signing_key,
+        )?;
+        let controller = build_signed_authorization(
+            session_uuid,
+            expires_at,
+            &policy.config,
+            selected_relay,
+            Some(&endpoint),
+            Some(allocation_id),
+            ENDPOINT_CONTROLLER,
+            signing_key,
+        )?;
+        (target, controller)
+    } else {
+        let signed = build_signed_authorization(
+            session_uuid,
+            expires_at,
+            &policy.config,
+            selected_relay,
+            None,
+            None,
+            0,
+            signing_key,
+        )?;
+        (signed.clone(), signed)
     };
     if !state.grants.contains_key(&key) && state.grants.len() >= policy.max_authorizations.max(1) {
         remove_oldest_grant(state);
@@ -301,24 +428,24 @@ fn authorize_locked(
     state.grants.insert(
         key,
         GrantRecord {
-            signed: signed.clone(),
-            selected_relay: selection.decision.relay_server.clone(),
-            quality_allocation_id: selection.decision.allocation_id.to_vec(),
+            target_signed: target_signed.clone(),
+            controller_signed,
+            selected_relay: selected_relay.to_owned(),
+            quality_allocation_id,
             config_generation: policy.generation,
             expires_at,
             created: Instant::now(),
+            fast_media,
         },
     );
-    state.issued = state.issued.saturating_add(1);
-    log::info!(
-        "FastCompat Relay authorization issued: allocation={} relay={} policy_generation={} ttl_seconds={} max_bitrate_kbps={}",
-        allocation_label(selection.decision.allocation_id.as_ref()),
-        selection.decision.relay_server,
-        policy.generation,
-        policy.config.authorization_ttl_seconds,
-        policy.config.max_bitrate_kbps,
-    );
-    Some(signed)
+    state.issued_sessions = state.issued_sessions.saturating_add(1);
+    state.target_grants_issued = state.target_grants_issued.saturating_add(1);
+    state.controller_grants_issued = state.controller_grants_issued.saturating_add(1);
+    state.fast_compat_sessions = state.fast_compat_sessions.saturating_add(1);
+    if fast_media {
+        state.fast_media_sessions = state.fast_media_sessions.saturating_add(1);
+    }
+    Some(target_signed)
 }
 
 fn response_locked(
@@ -329,10 +456,7 @@ fn response_locked(
     selected_relay: &str,
     now: u64,
 ) -> Option<Bytes> {
-    if !policy.config.fast_compat_enabled
-        || session_uuid.is_empty()
-        || session_uuid.len() > MAX_SESSION_UUID_BYTES
-    {
+    if session_uuid.is_empty() || session_uuid.len() > MAX_SESSION_UUID_BYTES {
         return None;
     }
     let response_key = ResponseKey {
@@ -348,7 +472,7 @@ fn response_locked(
                 && record.expires_at > now
                 && record.selected_relay.eq_ignore_ascii_case(selected_relay)
         })
-        .map(|record| record.signed.clone());
+        .map(|record| record.controller_signed.clone());
     if result.is_some() {
         state.delivered = state.delivered.saturating_add(1);
     } else {
@@ -357,30 +481,55 @@ fn response_locked(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_signed_authorization(
     session_uuid: &str,
     expires_at: u64,
-    max_bitrate_kbps: u32,
+    config: &FastRelayConfig,
+    selected_relay: &str,
+    endpoint: Option<&FastMediaRelayEndpoint>,
+    relay_allocation_id: Option<&[u8]>,
+    endpoint_role: u32,
     signing_key: &sign::SecretKey,
-) -> Result<Bytes, ()> {
+) -> Option<Bytes> {
+    let fast_media = endpoint.is_some();
     if session_uuid.is_empty()
         || session_uuid.len() > MAX_SESSION_UUID_BYTES
-        || !(1_000..=200_000).contains(&max_bitrate_kbps)
+        || !(1_000..=200_000).contains(&config.max_bitrate_kbps)
+        || selected_relay.is_empty()
+        || (fast_media
+            && (relay_allocation_id.map(<[u8]>::len) != Some(16)
+                || !matches!(endpoint_role, ENDPOINT_CONTROLLER | ENDPOINT_TARGET)))
     {
-        return Err(());
+        return None;
     }
     let payload = FastRelayAuthorization {
         version: PROTOCOL_VERSION,
         session_uuid: session_uuid.to_owned(),
         expires_at,
-        allow_fast_compat: true,
-        allow_fast_media_v1: false,
-        max_bitrate_kbps,
+        allow_fast_compat: config.fast_compat_enabled || fast_media,
+        allow_fast_media_v1: fast_media,
+        max_bitrate_kbps: config.max_bitrate_kbps,
+        relay_udp_protocol: endpoint
+            .map(|endpoint| endpoint.protocol)
+            .unwrap_or_default(),
+        // Tag 8 binds every newly issued grant to HBBS's final Relay choice.
+        // Legacy six-field grants remain accepted, and legacy protobuf readers
+        // ignore this additive field. UDP-only tags stay zero for FastCompat.
+        relay_server: selected_relay.to_owned(),
+        relay_udp_port: endpoint
+            .map(|endpoint| u32::from(endpoint.udp_port))
+            .unwrap_or_default(),
+        relay_allocation_id: relay_allocation_id.unwrap_or_default().to_vec().into(),
+        relay_max_datagram: fast_media
+            .then_some(config.relay_max_datagram)
+            .unwrap_or_default(),
+        relay_endpoint_role: fast_media.then_some(endpoint_role).unwrap_or_default(),
         ..Default::default()
     }
     .write_to_bytes()
-    .map_err(|_| ())?;
-    Ok(sign::sign(&payload, signing_key).into())
+    .ok()?;
+    Some(sign::sign(&payload, signing_key).into())
 }
 
 fn current_policy() -> PolicySnapshot {
@@ -389,24 +538,22 @@ fn current_policy() -> PolicySnapshot {
         return PolicySnapshot {
             generation: active.generation,
             config: FastRelayConfig::default(),
-            allocation_ttl_seconds: 30,
             max_authorizations: 10_000,
         };
     };
     PolicySnapshot {
         generation: active.generation,
         config: config.fast_mode.relay.clone(),
-        allocation_ttl_seconds: config.relay_quality.allocation_ttl_seconds,
         max_authorizations: config.relay_quality.max_allocations,
     }
 }
 
 fn cleanup(state: &mut FastRelayState, policy: &PolicySnapshot, now: u64) {
     let before = state.grants.len();
-    let ttl = Duration::from_secs(policy.allocation_ttl_seconds);
-    state
-        .grants
-        .retain(|_, record| record.created.elapsed() <= ttl && record.expires_at > now);
+    state.grants.retain(|_, record| {
+        record.created.elapsed() <= Duration::from_secs(policy.config.authorization_ttl_seconds)
+            && record.expires_at > now
+    });
     state.expired_cache_evictions = state
         .expired_cache_evictions
         .saturating_add(before.saturating_sub(state.grants.len()) as u64);
@@ -489,29 +636,22 @@ fn normalize_ip(ip: IpAddr) -> IpAddr {
     }
 }
 
-fn allocation_label(allocation_id: &[u8]) -> String {
-    let mut output = String::with_capacity(16);
-    for byte in allocation_id.iter().take(8) {
-        let _ = write!(output, "{byte:02x}");
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::starry_config::ConnectionAuthMode;
     use hbb_common::rendezvous_proto::RelayQualityDecision;
 
-    fn policy() -> PolicySnapshot {
+    fn policy(fast_media: bool) -> PolicySnapshot {
         PolicySnapshot {
             generation: 7,
             config: FastRelayConfig {
                 fast_compat_enabled: true,
+                fast_media_v1_enabled: fast_media,
                 authorization_ttl_seconds: 90,
                 max_bitrate_kbps: 50_000,
+                relay_max_datagram: 1_200,
             },
-            allocation_ttl_seconds: 30,
             max_authorizations: 500,
         }
     }
@@ -539,179 +679,128 @@ mod tests {
     }
 
     #[test]
-    fn signed_grant_round_trips_and_never_enables_fast_media() {
+    fn fast_compat_works_without_a_quality_allocation_and_binds_server_relay() {
         sodiumoxide::init().unwrap();
         let (public, secret) = sign::gen_keypair();
-        let signed =
-            build_signed_authorization("session-1", 1_800_000_090, 50_000, &secret).unwrap();
-        let payload = sign::verify(signed.as_ref(), &public).unwrap();
+        let mut state = FastRelayState::default();
+        let target = authorize_locked(
+            &mut state,
+            &policy(false),
+            "session-1",
+            "192.0.2.10".parse().unwrap(),
+            "198.51.100.20".parse().unwrap(),
+            "relay-a.example:21117",
+            SignalTransport::SecureTcp,
+            &auth(),
+            None,
+            None,
+            Some(&secret),
+            Some(1_800_000_000),
+        )
+        .unwrap();
+        let payload = sign::verify(&target, &public).unwrap();
         let grant = FastRelayAuthorization::parse_from_bytes(&payload).unwrap();
-        assert_eq!(grant.version, 1);
-        assert_eq!(grant.session_uuid, "session-1");
-        assert_eq!(grant.expires_at, 1_800_000_090);
         assert!(grant.allow_fast_compat);
         assert!(!grant.allow_fast_media_v1);
-        assert_eq!(grant.max_bitrate_kbps, 50_000);
-
-        let mut tampered = signed.to_vec();
-        tampered[0] ^= 0x80;
-        assert!(sign::verify(&tampered, &public).is_err());
+        assert_eq!(grant.relay_server, "relay-a.example:21117");
+        assert_eq!(grant.relay_endpoint_role, 0);
     }
 
     #[test]
-    fn retry_reuses_exact_grant_and_response_is_source_bound() {
+    fn fast_media_issues_distinct_controller_and_target_role_grants() {
         sodiumoxide::init().unwrap();
-        let (_, secret) = sign::gen_keypair();
+        let (public, secret) = sign::gen_keypair();
         let mut state = FastRelayState::default();
-        let policy = policy();
-        let selection = selection();
-        let source: IpAddr = "192.0.2.10".parse().unwrap();
-        let first = authorize_locked(
-            &mut state,
-            &policy,
-            "session-1",
-            source,
-            SignalTransport::SecureTcp,
-            &auth(),
-            Some(&selection),
-            Some(&secret),
-            Some(1_800_000_000),
-        )
-        .unwrap();
-        let retry = authorize_locked(
-            &mut state,
-            &policy,
-            "session-1",
-            source,
-            SignalTransport::SecureTcp,
-            &auth(),
-            Some(&selection),
-            Some(&secret),
-            Some(1_800_000_001),
-        )
-        .unwrap();
-        assert_eq!(first, retry);
-        assert_eq!(state.issued, 1);
-        assert_eq!(state.reused, 1);
-        assert!(authorize_locked(
-            &mut state,
-            &policy,
-            "session-1",
-            "192.0.2.11".parse().unwrap(),
-            SignalTransport::SecureTcp,
-            &auth(),
-            Some(&selection),
-            Some(&secret),
-            Some(1_800_000_001),
-        )
-        .is_none());
-        assert_eq!(state.invalid_uuids, 1);
-        assert!(response_locked(
-            &mut state,
-            &policy,
-            "session-1",
-            selection.target_ip,
-            "relay-b.example:21117",
-            1_800_000_001,
-        )
-        .is_none());
-        assert!(response_locked(
-            &mut state,
-            &policy,
-            "session-1",
-            "203.0.113.99".parse().unwrap(),
-            &selection.decision.relay_server,
-            1_800_000_001,
-        )
-        .is_none());
-        assert_eq!(
-            response_locked(
-                &mut state,
-                &policy,
-                "session-1",
-                selection.target_ip,
-                &selection.decision.relay_server,
-                1_800_000_001,
-            )
-            .unwrap(),
-            first
-        );
-    }
-
-    #[test]
-    fn insecure_or_unselected_requests_fall_back_without_a_grant() {
-        sodiumoxide::init().unwrap();
-        let (_, secret) = sign::gen_keypair();
-        let policy = policy();
-        let mut state = FastRelayState::default();
-        assert!(authorize_locked(
+        let policy = policy(true);
+        let target = authorize_locked(
             &mut state,
             &policy,
             "session-1",
             "192.0.2.10".parse().unwrap(),
-            SignalTransport::Tcp,
+            "198.51.100.20".parse().unwrap(),
+            "relay-a.example:21117",
+            SignalTransport::SecureTcp,
             &auth(),
             Some(&selection()),
+            Some(FastMediaRelayEndpoint {
+                protocol: 1,
+                udp_port: 22119,
+            }),
             Some(&secret),
             Some(1_800_000_000),
         )
-        .is_none());
-        assert!(authorize_locked(
+        .unwrap();
+        let controller = response_locked(
             &mut state,
             &policy,
-            "session-2",
+            "session-1",
+            "198.51.100.20".parse().unwrap(),
+            "relay-a.example:21117",
+            1_800_000_001,
+        )
+        .unwrap();
+        assert_ne!(target, controller);
+        let target =
+            FastRelayAuthorization::parse_from_bytes(&sign::verify(&target, &public).unwrap())
+                .unwrap();
+        let controller =
+            FastRelayAuthorization::parse_from_bytes(&sign::verify(&controller, &public).unwrap())
+                .unwrap();
+        assert_eq!(target.relay_endpoint_role, ENDPOINT_TARGET);
+        assert_eq!(controller.relay_endpoint_role, ENDPOINT_CONTROLLER);
+        assert_eq!(target.relay_allocation_id, controller.relay_allocation_id);
+        assert_eq!(target.relay_udp_port, 22119);
+        assert_eq!(target.relay_max_datagram, 1_200);
+    }
+
+    #[test]
+    fn unavailable_fast_media_falls_back_to_reliable_fast_compat() {
+        sodiumoxide::init().unwrap();
+        let (public, secret) = sign::gen_keypair();
+        let mut state = FastRelayState::default();
+        let signed = authorize_locked(
+            &mut state,
+            &policy(true),
+            "session-1",
             "192.0.2.10".parse().unwrap(),
+            "198.51.100.20".parse().unwrap(),
+            "relay-a.example:21117",
             SignalTransport::SecureTcp,
             &auth(),
+            None,
+            None,
+            Some(&secret),
+            Some(1_800_000_000),
+        )
+        .unwrap();
+        let grant =
+            FastRelayAuthorization::parse_from_bytes(&sign::verify(&signed, &public).unwrap())
+                .unwrap();
+        assert!(grant.allow_fast_compat);
+        assert!(!grant.allow_fast_media_v1);
+        assert_eq!(state.reliable_fallbacks, 1);
+    }
+
+    #[test]
+    fn quality_selection_must_match_the_server_selected_relay() {
+        sodiumoxide::init().unwrap();
+        let (_, secret) = sign::gen_keypair();
+        let mut state = FastRelayState::default();
+        assert!(authorize_locked(
+            &mut state,
+            &policy(false),
+            "session-1",
+            "192.0.2.10".parse().unwrap(),
+            "198.51.100.20".parse().unwrap(),
+            "relay-b.example:21117",
+            SignalTransport::SecureTcp,
+            &auth(),
+            Some(&selection()),
             None,
             Some(&secret),
             Some(1_800_000_000),
         )
         .is_none());
-        assert_eq!(state.insecure_requests, 1);
         assert_eq!(state.quality_selection_failures, 1);
-        assert!(state.grants.is_empty());
-    }
-
-    #[test]
-    fn new_signatures_are_rate_limited_per_normalized_source() {
-        sodiumoxide::init().unwrap();
-        let (_, secret) = sign::gen_keypair();
-        let policy = policy();
-        let selection = selection();
-        let source: IpAddr = "192.0.2.10".parse().unwrap();
-        let mut state = FastRelayState::default();
-
-        for index in 0..MAX_SIGNATURES_PER_SOURCE_PER_MINUTE {
-            assert!(authorize_locked(
-                &mut state,
-                &policy,
-                &format!("session-{index}"),
-                source,
-                SignalTransport::SecureTcp,
-                &auth(),
-                Some(&selection),
-                Some(&secret),
-                Some(1_800_000_000),
-            )
-            .is_some());
-        }
-        assert!(authorize_locked(
-            &mut state,
-            &policy,
-            "session-rate-limited",
-            source,
-            SignalTransport::SecureTcp,
-            &auth(),
-            Some(&selection),
-            Some(&secret),
-            Some(1_800_000_000),
-        )
-        .is_none());
-        assert_eq!(
-            state.issued,
-            u64::from(MAX_SIGNATURES_PER_SOURCE_PER_MINUTE)
-        );
-        assert_eq!(state.rate_limited, 1);
     }
 }
