@@ -3,10 +3,11 @@
   "instance": {
     "id": "0191f6a0-0000-7000-8000-000000000001",
     "role": "hbbs",
-    "starry_version": "1.1.16-patch-v1.3.0",
+    "starry_version": "1.1.16-patch-v1.3.1",
     "upstream_version": "1.1.16"
   },
   "capabilities": {
+    "config_schema": 5,
     "relay_inventory": 1,
     "allocation_simulation": 1,
     "config_transaction": 1,
@@ -16,15 +17,21 @@
     "relay_active_probe": 1,
     "relay_probe_protocol": 1,
     "relay_load_protocol": 1,
-    "relay_telemetry_schema": 1,
+    "relay_telemetry_schema": 2,
     "fast_relay_authorization": 1,
+    "fast_media_relay_udp": 1,
+    "starry_pairing": 1,
+    "config_downgrade_preview": 1,
+    "relay_enrollment": 1,
+    "relay_enrollment_write": 1,
+    "relay_enrollment_health_activation": 1,
     "profile_activation_lease": 1,
     "peer_registry": 2
   },
   "config": {
-    "supported_schema_versions": [1, 2, 3, 4],
-    "active_schema_version": 4,
-    "schema_digest": "sha256:ef14cfde96ac514af9076fdd6e251acde63c7ea75f7275ea50720b55a83d1ec9"
+    "supported_schema_versions": [1, 2, 3, 4, 5],
+    "active_schema_version": 5,
+    "schema_digest": "sha256:0c2ae9eed359aa4d615ee948d9c0a81f285f4b948cc54ef500cee3dca7238d8a"
   },
   "limits": {
     "max_config_bytes": 1048576,

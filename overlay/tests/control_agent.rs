@@ -10,7 +10,7 @@ use hbb_common::{
 };
 use rcgen::{
     BasicConstraints, Certificate as GeneratedCertificate, CertificateParams, DistinguishedName,
-    DnType, ExtendedKeyUsagePurpose, IsCa, SanType, PKCS_ECDSA_P256_SHA256,
+    DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, SanType, PKCS_ECDSA_P256_SHA256,
 };
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName},
@@ -333,6 +333,7 @@ fn control_agent_enforces_dual_auth_and_atomic_config_transactions() {
                 Some(REQUEST_ID)
             );
             assert_eq!(capabilities.body["instance"]["id"], instance_id);
+            assert_eq!(capabilities.body["capabilities"]["config_schema"], 5);
             assert_eq!(capabilities.body["capabilities"]["config_transaction"], 1);
             assert_eq!(capabilities.body["capabilities"]["peer_registry"], 2);
             assert_eq!(capabilities.body["capabilities"]["relay_probe_protocol"], 1);
@@ -1199,61 +1200,43 @@ fn write_managed_config(root: &Path, bytes: &[u8]) {
 }
 
 fn write_tls_identity(root: &Path) -> TestIdentity {
-    let mut ca_params = CertificateParams::new(Vec::new());
-    ca_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     let mut ca_name = DistinguishedName::new();
     ca_name.push(DnType::CommonName, "Starry Control integration CA");
     ca_params.distinguished_name = ca_name;
-    let ca = GeneratedCertificate::from_params(ca_params).unwrap();
+    let ca = ca_params.self_signed(&ca_key).unwrap();
 
-    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]);
-    server_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let server_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
     server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let server = GeneratedCertificate::from_params(server_params).unwrap();
+    let server = server_params.signed_by(&server_key, &ca, &ca_key).unwrap();
 
-    let client = client_certificate(CLIENT_URI);
-    let wrong_client = client_certificate(WRONG_CLIENT_URI);
-    let mut untrusted_ca_params = CertificateParams::new(Vec::new());
-    untrusted_ca_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let client = client_certificate(CLIENT_URI, &ca, &ca_key);
+    let wrong_client = client_certificate(WRONG_CLIENT_URI, &ca, &ca_key);
+    let untrusted_ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut untrusted_ca_params = CertificateParams::new(Vec::new()).unwrap();
     untrusted_ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    let untrusted_ca = GeneratedCertificate::from_params(untrusted_ca_params).unwrap();
-    let untrusted_client = client_certificate(CLIENT_URI);
-    let ca_der = ca.serialize_der().unwrap();
-    let client_der = client.serialize_der_with_signer(&ca).unwrap();
-    let wrong_client_der = wrong_client.serialize_der_with_signer(&ca).unwrap();
-    let untrusted_client_der = untrusted_client
-        .serialize_der_with_signer(&untrusted_ca)
-        .unwrap();
-    fs::write(root.join("tls/ca.pem"), ca.serialize_pem().unwrap()).unwrap();
-    fs::write(
-        root.join("tls/server.pem"),
-        server.serialize_pem_with_signer(&ca).unwrap(),
-    )
-    .unwrap();
-    fs::write(
-        root.join("tls/server-key.pem"),
-        server.serialize_private_key_pem(),
-    )
-    .unwrap();
-    fs::write(
-        root.join("tls/client.pem"),
-        client.serialize_pem_with_signer(&ca).unwrap(),
-    )
-    .unwrap();
-    fs::write(
-        root.join("tls/client-key.pem"),
-        client.serialize_private_key_pem(),
-    )
-    .unwrap();
+    let untrusted_ca = untrusted_ca_params.self_signed(&untrusted_ca_key).unwrap();
+    let untrusted_client = client_certificate(CLIENT_URI, &untrusted_ca, &untrusted_ca_key);
+    let ca_der = ca.der().to_vec();
+    let client_der = client.certificate.der().to_vec();
+    let wrong_client_der = wrong_client.certificate.der().to_vec();
+    let untrusted_client_der = untrusted_client.certificate.der().to_vec();
+    fs::write(root.join("tls/ca.pem"), ca.pem()).unwrap();
+    fs::write(root.join("tls/server.pem"), server.pem()).unwrap();
+    fs::write(root.join("tls/server-key.pem"), server_key.serialize_pem()).unwrap();
+    fs::write(root.join("tls/client.pem"), client.certificate.pem()).unwrap();
+    fs::write(root.join("tls/client-key.pem"), client.key.serialize_pem()).unwrap();
     TestIdentity {
         ca_der,
         client_der,
-        client_key: client.serialize_private_key_der(),
+        client_key: client.key.serialize_der(),
         wrong_client_der,
-        wrong_client_key: wrong_client.serialize_private_key_der(),
+        wrong_client_key: wrong_client.key.serialize_der(),
         untrusted_client_der,
-        untrusted_client_key: untrusted_client.serialize_private_key_der(),
+        untrusted_client_key: untrusted_client.key.serialize_der(),
     }
 }
 
@@ -1292,12 +1275,22 @@ fn run_kessoku_provider_e2e(root: &Path, agent_port: u16, instance_id: &str) {
     assert!(status.success(), "Kessoku provider E2E failed: {status}");
 }
 
-fn client_certificate(uri: &str) -> GeneratedCertificate {
-    let mut params = CertificateParams::new(Vec::new());
-    params.alg = &PKCS_ECDSA_P256_SHA256;
-    params.subject_alt_names = vec![SanType::URI(uri.to_owned())];
+struct GeneratedIdentity {
+    certificate: GeneratedCertificate,
+    key: KeyPair,
+}
+
+fn client_certificate(
+    uri: &str,
+    issuer: &GeneratedCertificate,
+    issuer_key: &KeyPair,
+) -> GeneratedIdentity {
+    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut params = CertificateParams::new(Vec::new()).unwrap();
+    params.subject_alt_names = vec![SanType::URI(uri.try_into().unwrap())];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-    GeneratedCertificate::from_params(params).unwrap()
+    let certificate = params.signed_by(&key, issuer, issuer_key).unwrap();
+    GeneratedIdentity { certificate, key }
 }
 
 fn client_config(ca_der: &[u8], identity: Option<(&[u8], &[u8])>) -> Arc<ClientConfig> {

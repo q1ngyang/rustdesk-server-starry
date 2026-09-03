@@ -16,9 +16,9 @@ Deployment links:
 
 ## What the image contains
 
-The patch-v1.3.0 candidate image is built and runtime-tested for `linux/amd64`
+The patch-v1.3.1 development image is built and runtime-tested for `linux/amd64`
 from one pinned official RustDesk Server revision plus the Starry HBBS overlay.
-ARM remains best-effort source compatibility and is not a promised v1.3.0
+ARM remains best-effort source compatibility and is not a promised v1.3.1
 image platform.
 
 | Command | Origin | Intended use |
@@ -27,6 +27,7 @@ image platform.
 | `hbbr` | Upstream data path plus public probe/authenticated telemetry | Built from the same pinned upstream revision as HBBS. It answers Akari quality probes without load details and exposes bounded load/version telemetry only to authenticated HBBS pulls; all supplied examples use the same image tag. |
 | `rustdesk-utils` | Unmodified upstream utility | Key and database maintenance utilities. |
 | `starry-control-agent` | Starry optional Linux management component | Fixed Control API for one local HBBS. It requires mTLS and scoped service JWTs and starts with configuration writes disabled. |
+| `starry-relayctl` | Starry enrollment utility | Creates a Relay node key/CSR locally and installs one SP1 result below `RELAY_DATA_DIR`; it does not change the upstream-compatible `hbbr` CLI. |
 
 The image does **not** contain an account/API server or any GeoLite2/MMDB
 database. The Control Agent is not an account API. Compatible third-party APIs
@@ -45,7 +46,7 @@ Available release tags use this form:
 For example:
 
 ```text
-1.1.16-patch-v1.3.0
+1.1.16-patch-v1.3.1
 ```
 
 - Use an immutable release tag for normal production deployments.
@@ -57,7 +58,7 @@ For example:
 Pull the current documented release:
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1
 ```
 
 Public GHCR images can be pulled anonymously. Inspect the resolved digest and
@@ -65,11 +66,11 @@ platforms before rollout:
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1
 ```
 
 ## Recommended quick start
@@ -114,14 +115,17 @@ a Docker Desktop example.
 
 ## Persistent data and first start
 
-Both services mount the same host data directory at `/root`. It contains the
-server identity, SQLite state, logs, downloaded MMDB files, and Starry
-configuration. Back it up as one unit.
+The examples use one absolute `STARRY_PERSIST_ROOT` on the host, but mount
+separate children for HBBS, Control state, configuration, and Relay state.
+HBBS still sees its child at `/root`; HBBR sees its dedicated child at
+`/var/lib/rustdesk-server-starry/relay` through `RELAY_DATA_DIR`. Pairing and
+enrollment reject overlay/tmpfs state, unsafe permissions, and identity paths
+outside these explicit roots. The image has no anonymous `VOLUME` fallback.
 
 The first Starry HBBS start creates:
 
 ```text
-data/
+persist/hbbs/
 ├── id_ed25519
 ├── id_ed25519.pub
 └── starry/
@@ -148,6 +152,7 @@ Never copy `id_ed25519` to a Relay-only node or into documentation. The public
 | `21117` | TCP | HBBR | Native Relay data. |
 | `21118` | TCP | HBBS | Plain WebSocket backend for `/ws/id`; restrict it to the trusted reverse proxy. |
 | `21119` | TCP | HBBR | Plain WebSocket backend for `/ws/relay`; restrict it to the trusted reverse proxy. |
+| configured, commonly `21119` | UDP | HBBR | Optional AKR1 FastMedia data plane; expose only when schema v5 FastMedia is explicitly enabled and authenticated telemetry reports it healthy. |
 | `21120` | TCP | optional Control Agent | Private mTLS management API. It is not exposed by the image metadata or normal Compose example; keep it on loopback/private management networking. |
 | `443` | TCP | Nginx | Public TLS/WSS endpoint when WebSocket or an HTTPS API is used. |
 
@@ -208,7 +213,7 @@ testing:
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
   hbbs --help
 ```
 
@@ -222,21 +227,24 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
-Start the bundled HBBR from the same Starry image tag and with the
-same persistent directory on a single host:
+Start bundled HBBR from the same Starry image tag, but give it a dedicated
+Relay persistent directory:
 
 ```sh
 docker run -d \
   --name rustdesk-hbbr \
   --network host \
   --restart unless-stopped \
-  -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
-  hbbr -k _
+  -e RELAY_DATA_DIR=/var/lib/rustdesk-server-starry/relay \
+  -e STARRY_REQUIRE_PERSISTENT_STATE=1 \
+  -v /opt/rustdesk-server-starry/relay:/var/lib/rustdesk-server-starry/relay \
+  -v /etc/machine-id:/etc/machine-id:ro \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
+  starry-relay-entrypoint -k _
 ```
 
 ## Verify the deployment
@@ -276,6 +284,13 @@ WSS-to-WSS, and both mixed WSS/native directions as applicable. See
 5. Recreate the services, inspect logs, run management checks, and complete a
    real client session.
 6. Keep the previous images and backup until acceptance is complete.
+
+For patch-v1.3.1 to patch-v1.3.0, disable FastMedia, obtain the matching apply
+ACK, wait for grants/allocations/streams to drain, ensure every paired
+certificate has at least 90 days remaining, and export schema v4 with
+`starry-control-agent config downgrade --to-schema 4 --output ...`. Preserve
+all pairing/enrollment files; v1.3.0 ignores them and consumes only the
+non-secret `relay-compat.env` inputs for ordinary Relay and telemetry.
 
 When rolling back from patch-v1.3.0 to patch-v1.2.0, first restore a schema
 `version: 3` (or earlier) configuration without `fast_mode` or

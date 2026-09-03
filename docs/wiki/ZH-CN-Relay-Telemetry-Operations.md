@@ -14,6 +14,8 @@ STARRY_RELAY_MAX_SESSIONS=10000
 STARRY_RELAY_PROBE_PER_IP_PER_MINUTE=120
 STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE=10000
 STARRY_RELAY_DRAINING_FILE=/run/starry/hbbr.draining
+STARRY_RELAY_PUBLIC_ENDPOINT=relay.example.com:21117
+STARRY_RELAY_FAST_MEDIA_UDP_PORT=21119
 ```
 
 轮换密钥时，先临时把相关 Relay 作为 legacy fallback，挂载新文件并滚动 HBBR，再滚动或 reload HBBS endpoint。v1 只有一个活动 HMAC key，未协调的原地文件替换可能产生短暂但安全的 fail-closed 遥测空窗。
@@ -38,16 +40,33 @@ adaptive 流程计数在没有关联失败时也只用于诊断：
 `estimated_probe_attempts_saved` 衡量分阶段策略节省的探测工作量。
 `p2p_cancellations` 通常是健康信号，不应单独触发告警。
 
+telemetry schema 2 中，已启用 FastMedia listener 连续超过两个 interval 不健康、
+`listener_failures` 持续增长，或在有实际 active 负载时 `rate_limited`、
+`replay_rejected`、`grant_rejected` 持续增长，适合告警。HBBS 声明 UDP port 与新鲜
+telemetry 端口不一致也应告警。`hello_accepted`、单次 cookie/bind 失败、rebind、累计
+forwarded packet/byte、active allocation/stream 和偶发 drop 主要用于诊断/容量规划，除非
+同时出现 fallback 或用户故障。AP 迁移测试中 rebind 上升是预期行为；listener 重启不
+代表可靠 HBBR 会话失败。
+
 所有 Control 维度都有界：offer/fallback reason 是固定字段；每 Relay selection 最多 256 个配置 Relay key，另有 overflow 计数。API 不返回客户端 IP、session/allocation 标识、nonce 或原始 report。
 
 ## 滚动升级与回滚
 
-升级顺序：
+patch-v1.3.1 升级顺序：
 
 1. 先部署 TLS/mTLS 策略和 secret file，不改变流量。
-2. 滚动 HBBR patch-v1.3.0；已有数据会话与官方客户端保持兼容。验证公开 probe 不含 load、受认证遥测为 schema 1。
-3. 滚动 HBBS patch-v1.3.0；先关闭质量功能，或把相关 Relay 明确列为 legacy fallback。验证 fresh、实例/sequence 稳定以及 Control inventory。
-4. 逐步启用质量候选，再删除临时 legacy 声明。
-5. 最后滚动 Control Agent；它只读取 HBBS local control，不连接 HBBR。
+2. FastMedia 策略保持关闭，先滚动 HBBR patch-v1.3.1。验证可靠会话与官方客户端、
+   公开 probe 不含 load、认证 telemetry schema 2、稳定 instance/sequence，以及配置处
+   UDP listener 健康。
+3. 以 schema v4 或两个 Fast 开关均 false 滚动 HBBS patch-v1.3.1，先验证普通
+   Native/WSS/mixed Relay 和新鲜 typed telemetry。
+4. 滚动 Control Agent 并验证 schema-v5/OpenAPI fixtures；Agent 不直接抓取 HBBR。
+5. 先 canary FastCompat，再在 allowlist Relay/Akari pair 上 canary FastMedia；官方客户端
+   和可靠回退测试始终是门禁。
 
-回滚时先关闭 `relay_quality`，把 HBBS endpoint 恢复为 `/ws/relay` 并删除 `telemetry_secret_file`，再回滚 HBBS。随后可独立回滚 HBBR；普通 `relay_server`、native TCP、WS/WSS 配对和官方客户端始终可用。不要让旧 HBBS 读取含新遥测字段的 schema-v4 配置。
+v1.3.1→v1.3.0 回滚先关闭 FastMedia，等待 active authorization、allocation、stream 和
+最后 grant expiry 全部 drain。使用 schema-v4 downgrade 预览/导出，并要求 Agent/Relay
+证书至少剩余九十天。HBBS 使用兼容 schema v4 回滚，再让 HBBR 使用
+`relay-compat.env` 回滚，最后 Control Agent。普通 `relay_server`、native TCP、WS/WSS、
+schema-1 telemetry 和官方客户端保持可用；配对/enrollment 状态必须保留，旧二进制不得
+改写。

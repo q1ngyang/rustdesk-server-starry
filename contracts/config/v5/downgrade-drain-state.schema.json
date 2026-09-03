@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starry.invalid/contracts/config/v5/downgrade-drain-state.schema.json",
+  "title": "Starry schema v5 to v4 downgrade drain state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "observed_at_unix",
+    "fast_media_runtime_enabled",
+    "fast_media_active_allocations",
+    "fast_media_active_authorizations",
+    "fast_media_active_streams",
+    "last_fast_media_authorization_expires_at_unix"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "observed_at_unix": {"type": "integer", "minimum": 1},
+    "fast_media_runtime_enabled": {"type": "boolean"},
+    "fast_media_active_allocations": {"type": "integer", "minimum": 0},
+    "fast_media_active_authorizations": {"type": "integer", "minimum": 0},
+    "fast_media_active_streams": {"type": "integer", "minimum": 0},
+    "last_fast_media_authorization_expires_at_unix": {"type": "integer", "minimum": 0}
+  }
+}

@@ -19,13 +19,15 @@ ignore logs or activation acknowledgements.
 
 | Field | Required | Accepted values | Meaning |
 | --- | --- | --- | --- |
-| `version` | Yes | `1`, `2`, `3`, `4` | Configuration schema. Use `4` for new deployments. |
+| `version` | Yes | `1`, `2`, `3`, `4`, `5` | Configuration schema. Use `5` only for patch-v1.3.1 FastMedia policy. |
 
 Schema `1` supports Relay, Secure TCP, MMDB, and Geo settings and rejects
 `websocket_signal` and `connection_auth`. Schema `2` adds optional WebSocket
 Signal and rejects `connection_auth`. Schema `3` adds connection
 authentication and rejects `relay_quality`. Schema `4` adds opt-in Akari Relay
-quality selection and FastCompat Relay authorization.
+quality selection and FastCompat Relay authorization. Schema `5` adds
+FastMediaV1 policy and a declared Relay UDP endpoint without changing schema-4
+or Relay Quality v1 semantics.
 Unknown top-level and nested keys are rejected so that
 misspellings cannot silently change a deployment.
 
@@ -148,7 +150,7 @@ and [GEO Rules: Advanced](https://github.com/q1ngyang/rustdesk-server-starry/wik
 
 ## `websocket_signal`
 
-This section requires `version: 2`, `3`, or `4` and is opt-in.
+This section requires `version: 2`, `3`, `4`, or `5` and is opt-in.
 
 ```yaml
 websocket_signal:
@@ -174,6 +176,7 @@ websocket_signal:
       - relay: relay-asia-1.example.com:21117
         url: wss://relay-asia-1.example.com/ws/telemetry
         telemetry_secret_file: /run/secrets/starry-relay-telemetry
+        fast_media_udp_port: 21119
 ```
 
 ### Session and resource limits
@@ -217,6 +220,7 @@ item exactly; an empty list rejects every Origin-bearing request.
 | `endpoints[].relay` | None | Required, unique, and equal to one `relay_servers` item. |
 | `endpoints[].url` | None | Required unique URL: `wss://` plus a DNS hostname and exact `/ws/relay` (legacy health only) or `/ws/telemetry` path; no credentials, query, or fragment. |
 | `endpoints[].telemetry_secret_file` | None | Absolute secret-file path; required only for `/ws/telemetry` and forbidden for `/ws/relay`. The file value is never serialized. |
+| `endpoints[].fast_media_udp_port` | None | Schema v5 only, `1..65535`; permitted only with authenticated `/ws/telemetry`. It declares an endpoint but does not prove listener health. |
 
 When `enabled: true`, endpoint Relay names must cover `relay_servers` exactly.
 The health probe verifies the WSS/TLS path used for allocation; it does not
@@ -225,7 +229,7 @@ replace a two-client remote-control test. See
 
 ## `connection_auth`
 
-This section requires `version: 3` or `4`. It gates controller-side
+This section requires `version: 3`, `4`, or `5`. It gates controller-side
 `PunchHoleRequest` and direct `RequestRelay` on native TCP, Secure TCP, and WSS.
 UDP initiation remains unsupported and does not allocate.
 
@@ -289,7 +293,7 @@ before enabling audit or enforce.
 
 ## `relay_quality`
 
-This Akari-only extension requires `version: 4` and is disabled by default.
+This frozen Akari extension requires `version: 4` or `5` and is disabled by default.
 Official clients never opt in and keep the ordinary single-Relay allocation.
 
 ```yaml
@@ -370,35 +374,42 @@ continue. See [Relay Telemetry v1](../../reference/RELAY-TELEMETRY-v1.md).
 
 ## `fast_mode.relay`
 
-This Akari-only schema v4 policy authorizes P2P fast mode's `FastCompat` path
-over the existing reliable HBBR stream. It is disabled by default and does not
-enable a new Relay transport.
+Schema v4 supports only FastCompat. Schema v5 retains that reliable path and
+adds independent FastMediaV1 Relay UDP policy. Both switches default to false.
+The client never chooses the signed Relay, and every UDP failure leaves the
+ordinary HBBR session available.
 
 ```yaml
 fast_mode:
   relay:
     fast_compat_enabled: false
+    fast_media_v1_enabled: false
     authorization_ttl_seconds: 90
     max_bitrate_kbps: 50000
+    relay_max_datagram: 1200
 ```
 
 | Field | Default | Valid range or rule |
 | --- | ---: | --- |
-| `fast_compat_enabled` | `false` | `true` requires `relay_quality.enabled`, connection authentication in `audit` or `enforce`, and either `secure_tcp.mode: auto` or enabled WebSocket signalling. |
+| `fast_compat_enabled` | `false` | Requires connection authentication in `audit` or `enforce` and either `secure_tcp.mode: auto` or enabled WebSocket signalling. Relay Quality is authoritative when it decides; otherwise HBBS signs only its ordinary GEO/failover selection. |
+| `fast_media_v1_enabled` | `false` | Schema v5 only. Requires the FastCompat security gates plus at least one selectable Relay with authenticated fresh telemetry schema 2, explicit capability `fast_media_relay_udp = 1`, declared UDP port, and healthy listener. |
 | `authorization_ttl_seconds` | `90` | `30..300`; checked even while the feature is disabled. Retries do not extend expiry. |
-| `max_bitrate_kbps` | `50000` | `1000..200000`; a signed ceiling for Akari, not an HBBR bandwidth reservation. |
+| `max_bitrate_kbps` | `50000` | `1000..200000`; signed encoded-source ceiling. HBBR wire allowance is at most `ceil(source × 1.45)`. |
+| `relay_max_datagram` | `1200` | Schema v5 only, `608..1400`; complete UDP payload including the 32-byte AKR1 header. |
 
-HBBS signs only after authentication returns the exact `allow` verdict and a
-final source-bound Relay-quality decision exists. It overwrites untrusted
-client-provided authorization bytes and sends the same signed grant to both
-endpoints. Any missing prerequisite produces no grant and preserves the
-ordinary Relay flow. Official clients ignore the additive field.
+HBBS signs only after authentication returns exact `allow` and the ordinary
+final Relay is fixed. A Relay Quality decision, when present, must exactly
+match that Relay; otherwise the server-selected GEO/failover Relay is used.
+FastMedia produces role 1 controller and role 2 target grants and begins only
+after both bind at HBBR. FastCompat-only six-field grants remain compatible.
+Any missing prerequisite produces no FastMedia grant and preserves the
+ordinary Relay flow. Official clients ignore tag 64.
 
-patch-v1.3.0 authorizes only `FastCompat`: every grant sets
-`allow_fast_media_v1` to false. If WSS terminates at a reverse proxy, deny
-direct public access to HBBS's plaintext WebSocket listener. See the
+If WSS terminates at a reverse proxy, deny direct public access to HBBS's
+plaintext WebSocket listener. See the
 [Fast Relay Authorization v1 contract](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/FAST-RELAY-AUTHORIZATION-v1.md)
-for wire, replay, retry, and privacy requirements.
+and [FastMedia Relay UDP v1](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/FAST-MEDIA-RELAY-UDP-v1.md)
+for wire, replay, retry, resource, and privacy requirements.
 
 ## Reload behaviour
 

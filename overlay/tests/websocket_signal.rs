@@ -21,7 +21,7 @@ use hbb_common::{
     udp::FramedSocket,
 };
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
     PKCS_ECDSA_P256_SHA256,
 };
 use sha2::{Digest, Sha256};
@@ -367,6 +367,195 @@ fn hbbs_signs_one_fast_compat_grant_after_final_quality_selection() {
                 }
             }
             assert!(cancel_started.elapsed() < Duration::from_secs(1));
+        });
+}
+
+#[test]
+fn hbbs_authorizes_its_single_relay_after_ordinary_p2p_fallback_without_quality() {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            sodiumoxide::init().unwrap();
+            let hbbs_port = reserve_hbbs_ports();
+            let root = std::env::temp_dir().join(format!(
+                "starry-fast-relay-fallback-{}-{hbbs_port}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&root);
+            let hbbs_dir = root.join("hbbs");
+            fs::create_dir_all(hbbs_dir.join("auth")).unwrap();
+
+            let (probe_port, _, ca_path, _, probe_count, probe_task) = start_wss_probe(&root).await;
+            let (auth_public, auth_secret) = sign::gen_keypair();
+            fs::write(
+                hbbs_dir.join("auth/jwks.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "keys": [{
+                        "kty": "OKP",
+                        "crv": "Ed25519",
+                        "use": "sig",
+                        "alg": "EdDSA",
+                        "kid": "persistent-wss-test-key",
+                        "x": encode_config(auth_public.0, URL_SAFE_NO_PAD)
+                    }]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let token = connection_token(&auth_secret);
+            let relay = "localhost:21117";
+            let config_path = hbbs_dir.join("config.yaml");
+            fs::write(&config_path, fast_relay_fallback_config(relay, probe_port)).unwrap();
+            let hbbs = Command::new(env!("CARGO_BIN_EXE_hbbs"))
+                .arg("--port")
+                .arg(hbbs_port.to_string())
+                .arg(format!("--starry-config={}", config_path.display()))
+                .env("SSL_CERT_FILE", &ca_path)
+                .env("RUST_LOG", "warn")
+                .current_dir(&hbbs_dir)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            let _environment = TestEnvironment {
+                children: vec![hbbs],
+                tasks: vec![probe_task],
+                root,
+            };
+
+            wait_until_listening(SocketAddr::from(([127, 0, 0, 1], hbbs_port + 2))).await;
+            wait_for_wss_probe_count(&probe_count, 2).await;
+            let server_key = wait_for_server_key(&hbbs_dir).await;
+            let server_public = sign::PublicKey::from_slice(&base64::decode(&server_key).unwrap())
+                .expect("HBBS signing public key");
+            let controller_id = "fallback-controller-001";
+            let target_id = "fallback-target-000001";
+            let session_uuid = "fast-relay-fallback-session-0001";
+            let mut controller = connect_registered_websocket(hbbs_port, controller_id, 0x81).await;
+            let mut target = connect_registered_websocket(hbbs_port, target_id, 0x82).await;
+
+            // Exercise the ordinary direct-attempt path first. Neither peer opts
+            // into Relay Quality, so no allocation or decision may be created.
+            controller
+                .send(Message::Binary(
+                    punch_request(target_id, &server_key, &token)
+                        .write_to_bytes()
+                        .unwrap()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            let punch = expect_punch(receive_protocol(&mut target, 5_000).await.unwrap(), relay);
+            let mut punch_sent = RendezvousMessage::new();
+            punch_sent.set_punch_hole_sent(PunchHoleSent {
+                socket_addr: punch.socket_addr,
+                id: target_id.to_owned(),
+                relay_server: punch.relay_server,
+                nat_type: NatType::SYMMETRIC.into(),
+                ..Default::default()
+            });
+            target
+                .send(Message::Binary(punch_sent.write_to_bytes().unwrap().into()))
+                .await
+                .unwrap();
+            let p2p_response = receive_protocol(&mut controller, 5_000).await.unwrap();
+            assert!(matches!(
+                p2p_response.union,
+                Some(rendezvous_message::Union::PunchHoleResponse(_))
+            ));
+
+            let send_fallback = |authorization: &'static [u8]| {
+                let mut message = RendezvousMessage::new();
+                message.set_request_relay(RequestRelay {
+                    id: target_id.to_owned(),
+                    uuid: session_uuid.to_owned(),
+                    relay_server: "client-selected.invalid:29999".to_owned(),
+                    token: token.clone(),
+                    fast_relay_authorization: Bytes::from_static(authorization),
+                    ..Default::default()
+                });
+                message
+            };
+            controller
+                .send(Message::Binary(
+                    send_fallback(b"client-supplied-grant")
+                        .write_to_bytes()
+                        .unwrap()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            let first_request = match receive_protocol(&mut target, 5_000).await.unwrap().union {
+                Some(rendezvous_message::Union::RequestRelay(request)) => request,
+                other => panic!("expected fallback RequestRelay, got {other:?}"),
+            };
+            assert_eq!(first_request.uuid, session_uuid);
+            assert_eq!(first_request.relay_server, relay);
+            assert!(first_request.relay_quality_decision.is_none());
+            assert!(first_request.relay_quality_allocation_id.is_empty());
+            assert_ne!(
+                first_request.fast_relay_authorization.as_ref(),
+                b"client-supplied-grant"
+            );
+            let signed = first_request.fast_relay_authorization.clone();
+            let payload = sign::verify(signed.as_ref(), &server_public)
+                .expect("fallback FastCompat authorization must verify");
+            let authorization = FastRelayAuthorization::parse_from_bytes(&payload).unwrap();
+            assert_eq!(authorization.version, 1);
+            assert_eq!(authorization.session_uuid, session_uuid);
+            assert!(authorization.allow_fast_compat);
+            assert!(!authorization.allow_fast_media_v1);
+            assert_eq!(authorization.relay_server, relay);
+            assert_eq!(authorization.relay_udp_protocol, 0);
+            assert_eq!(authorization.relay_udp_port, 0);
+            assert!(authorization.relay_allocation_id.is_empty());
+            assert_eq!(authorization.relay_max_datagram, 0);
+            assert_eq!(authorization.relay_endpoint_role, 0);
+
+            let mut untrusted_response = RendezvousMessage::new();
+            untrusted_response.set_relay_response(RelayResponse {
+                socket_addr: first_request.socket_addr.clone(),
+                uuid: session_uuid.to_owned(),
+                relay_server: "target-selected.invalid:29998".to_owned(),
+                fast_relay_authorization: Bytes::from_static(b"target-supplied-grant"),
+                ..Default::default()
+            });
+            target
+                .send(Message::Binary(
+                    untrusted_response.write_to_bytes().unwrap().into(),
+                ))
+                .await
+                .unwrap();
+            let first_response = match receive_protocol(&mut controller, 5_000)
+                .await
+                .unwrap()
+                .union
+            {
+                Some(rendezvous_message::Union::RelayResponse(response)) => response,
+                other => panic!("expected fallback RelayResponse, got {other:?}"),
+            };
+            assert_eq!(first_response.relay_server, relay);
+            assert!(first_response.relay_quality_decision.is_none());
+            assert_eq!(first_response.fast_relay_authorization, signed);
+
+            controller
+                .send(Message::Binary(
+                    send_fallback(b"different-client-grant")
+                        .write_to_bytes()
+                        .unwrap()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            let retry = match receive_protocol(&mut target, 5_000).await.unwrap().union {
+                Some(rendezvous_message::Union::RequestRelay(request)) => request,
+                other => panic!("expected retry RequestRelay, got {other:?}"),
+            };
+            assert_eq!(retry.relay_server, relay);
+            assert!(retry.relay_quality_decision.is_none());
+            assert_eq!(retry.fast_relay_authorization, signed);
         });
 }
 
@@ -915,30 +1104,30 @@ fn ensure_websocket_load_nofile_limit() {}
 async fn start_wss_probe(
     root: &Path,
 ) -> (u16, u16, PathBuf, PathBuf, Arc<AtomicUsize>, JoinHandle<()>) {
-    let mut ca_params = CertificateParams::new(Vec::new());
-    ca_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     let mut ca_name = DistinguishedName::new();
     ca_name.push(DnType::CommonName, "Starry integration test CA");
     ca_params.distinguished_name = ca_name;
-    let ca = Certificate::from_params(ca_params).unwrap();
+    let ca = ca_params.self_signed(&ca_key).unwrap();
 
-    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]);
-    server_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let server_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
     let mut server_name = DistinguishedName::new();
     server_name.push(DnType::CommonName, "localhost");
     server_params.distinguished_name = server_name;
-    let server = Certificate::from_params(server_params).unwrap();
+    let server = server_params.signed_by(&server_key, &ca, &ca_key).unwrap();
 
     let ca_path = root.join("test-ca.pem");
-    fs::write(&ca_path, ca.serialize_pem().unwrap()).unwrap();
+    fs::write(&ca_path, ca.pem()).unwrap();
     let telemetry_secret_path = root.join("test-relay-telemetry.secret");
     let telemetry_secret = b"starry-test-telemetry-secret-32-bytes-minimum";
     fs::write(&telemetry_secret_path, telemetry_secret).unwrap();
     let telemetry_key =
         auth::Key::from_slice(&Sha256::digest(telemetry_secret)).expect("test HMAC key");
-    let certificate = server.serialize_der_with_signer(&ca).unwrap();
-    let private_key = server.serialize_private_key_der();
+    let certificate = server.der().to_vec();
+    let private_key = server_key.serialize_der();
     let tls = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(
@@ -1294,6 +1483,51 @@ fast_mode:
     max_bitrate_kbps: 50000
 "#,
         telemetry_secret = telemetry_secret.display()
+    )
+}
+
+fn fast_relay_fallback_config(relay: &str, probe_port: u16) -> String {
+    format!(
+        r#"version: 5
+relay_servers:
+  - {relay}
+websocket_signal:
+  enabled: true
+  registration_timeout_ms: 3000
+  keepalive_interval_ms: 1000
+  idle_timeout_ms: 15000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 100
+  max_sessions_per_effective_ip: 100
+  registration_rate_per_minute: 100
+  trusted_proxies:
+    - 127.0.0.1/32
+    - ::1/128
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 5
+    timeout_ms: 2000
+    success_threshold: 1
+    failure_threshold: 1
+    endpoints:
+      - relay: {relay}
+        url: wss://localhost:{probe_port}/ws/relay
+connection_auth:
+  mode: enforce
+  issuer: https://api.example.test
+  audience: rustdesk-connect
+  token_use: access
+  required_scope: connect:initiate
+  jwks:
+    file: auth/jwks.json
+fast_mode:
+  relay:
+    fast_compat_enabled: true
+    fast_media_v1_enabled: false
+    authorization_ttl_seconds: 90
+    max_bitrate_kbps: 50000
+"#
     )
 }
 

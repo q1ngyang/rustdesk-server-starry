@@ -1,5 +1,5 @@
 [Unit]
-Description=Unmodified RustDesk HBBR bundled by Starry
+Description=RustDesk HBBR with Starry telemetry and optional FastMedia UDP
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,10 @@ Wants=network-online.target
 Type=simple
 User=rustdesk-starry
 Group=rustdesk-starry
-WorkingDirectory=/var/lib/rustdesk-server-starry
+WorkingDirectory=/var/lib/rustdesk-server-starry/relay
+Environment=RELAY_DATA_DIR=/var/lib/rustdesk-server-starry/relay
+Environment=STARRY_REQUIRE_PERSISTENT_STATE=1
+EnvironmentFile=-/var/lib/rustdesk-server-starry/relay/starry/enrollment/relay-compat.env
 ExecStart=/usr/bin/hbbr
 Restart=on-failure
 RestartSec=5

@@ -1,13 +1,13 @@
 # Starry Control Agent v1. Keep this listener on a Kessoku-only private
 # interface. HBBS itself is reached exclusively through loopback local control.
 version: 1
-instance_id_file: /var/lib/rustdesk-server-starry/control-agent-instance-id
+instance_id_file: /var/lib/rustdesk-server-starry/control/state/instance-id
 listen: 127.0.0.1:21120
 
 tls:
-  ca_file: /etc/rustdesk-server-starry/control-tls/client-ca.pem
-  cert_file: /etc/rustdesk-server-starry/control-tls/server.pem
-  key_file: /etc/rustdesk-server-starry/control-tls/server-key.pem
+  ca_file: /etc/rustdesk-server-starry/control-identity/client-ca.pem
+  cert_file: /etc/rustdesk-server-starry/control-identity/server-cert.pem
+  key_file: /etc/rustdesk-server-starry/control-identity/server-key.pem
   allowed_client_uri_sans:
     - spiffe://kessoku.example/starry-control
 
@@ -15,12 +15,12 @@ tls:
 # Kessoku service tokens, never RustDesk client connection tokens.
 service_jwt:
   issuer: https://kessoku.example
-  jwks_file: /etc/rustdesk-server-starry/control-auth/jwks.json
+  jwks_file: /etc/rustdesk-server-starry/control-identity/service-jwks.json
   audience_prefix: "urn:starry-control:"
 
 local_control:
   address: 127.0.0.1:21115
-  token_file: /etc/rustdesk-server-starry/local-control.token
+  token_file: /var/lib/rustdesk-server-starry/control/shared/local-control.token
 
 config:
   # Safe default. Set true only after apply/rollback recovery has been tested.

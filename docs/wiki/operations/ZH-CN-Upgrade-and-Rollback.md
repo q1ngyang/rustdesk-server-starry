@@ -3,7 +3,7 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback) | **简体中文**
 
 升级同时涉及两个版本：官方 RustDesk Server 基线和 Starry patch。例如
-`1.1.16-patch-v1.3.0` 表示官方服务端 `1.1.16` 加 Starry patch `1.3.0`。生产环境
+`1.1.16-patch-v1.3.1` 表示官方服务端 `1.1.16` 加 Starry patch `1.3.1`。生产环境
 应锁定完整标签，并记录实际镜像摘要。
 
 ## 升级原则
@@ -18,13 +18,77 @@
 
 ## 当前 patch 说明
 
-- [patch-v1.3.0 中文发布说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.0.zh-CN.md)
+- [patch-v1.3.1 发布候选说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.1.zh-CN.md)
 - [中文更新日志](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.zh-CN.md)
 
-patch v1.3.0 为兼容 Akari/Kessoku 的部署新增可选候选 Relay 探测、双端
-RTT/jitter/loss 评分、可信 HBBR 负载遥测，以及签名 FastCompat 授权；同时新增匹配 ACK
-的 Profile Activation Lease，只有 capable Akari 主动声明时才进入该路径。官方客户端与
-schema v1-v3 继续使用原有注册和单 Relay 流程。
+patch v1.3.1 在冻结 v1.3.0 的候选 Relay 探测、双端 RTT/jitter/loss 评分、可信 HBBR
+负载遥测、签名 FastCompat 授权和匹配 ACK Profile Activation Lease 之上，增加角色授权
+FastMedia Relay UDP、telemetry schema 2、schema v5 和 SP1 pairing。
+官方客户端与 schema v1-v4 保持原注册和可靠 Relay；FastMedia/pairing 独立且默认关闭。
+真实回退/重入门禁通过前候选继续 BLOCKED。
+
+## patch-v1.3.1 升级与降级
+
+更换容器前，把完整 Control 状态绑定到同一绝对 `STARRY_PERSIST_ROOT`，每个 Relay 绑定到
+自己的绝对 `RELAY_DATA_DIR`。把 `hbbs`、`config`、`control/state`、
+`control/identity`、`control/generated`、`control/shared`、`relay-secrets` 及每个 Relay
+`starry/enrollment` 作为一套保留权限备份，并在隔离主机验证。原 Relay 与身份副本绝不能
+同时上线。只有显式挂载相同目录时 `pull`、`force-recreate`、`down`/`up` 才保持身份；
+`down -v`、相对路径改变、overlay/tmpfs 状态或 host identity 不匹配都必须预检失败。
+
+升级顺序：
+
+1. FastMedia 策略保持关闭，先滚动 HBBR v1.3.1，保持可靠 TCP/WS 路径不变。验证认证
+   telemetry schema 2、UDP listener 健康、普通 Native/WSS/mixed Relay 和官方客户端。
+2. 使用原 schema v4 或两个 Fast 开关均 false 的 schema v5 滚动 HBBS；验证精确 Relay
+   Quality v1 digest 和普通 GEO/failover。
+3. 滚动 Control Agent，验证 schema/OpenAPI fixtures、SP1 capability 和只读 inventory。
+   既有身份只能通过显式审核的 pair/adopt 操作接入，`pair` 不得覆盖。证书通过 DNS 使用时，
+   用 `--tls-server-name` 传入 Kessoku allowlist 中完全相同的名字；rotate 必须保留既有
+   Agent listen、local-control address、大小上限与写策略。
+4. 先 canary FastCompat，再在有界 Relay/Akari 群组 canary FastMedia；bind 失败、UDP
+   block、listener restart 或限流都必须保留可靠桌面会话。
+
+schema v5 只新增：
+
+```yaml
+version: 5
+fast_mode:
+  relay:
+    fast_compat_enabled: false
+    fast_media_v1_enabled: false
+    authorization_ttl_seconds: 90
+    max_bitrate_kbps: 50000
+    relay_max_datagram: 1200
+```
+
+每个 eligible Relay 还要在认证 `/ws/telemetry` endpoint 旁声明
+`fast_media_udp_port`。新鲜 telemetry 未报告同端口 protocol 1 且 healthy 前不得启用。
+
+v1.3.1→v1.3.0 时，先设置 `fast_media_v1_enabled: false` 并取得同步 activation ACK，再
+预览/导出：
+
+```console
+starry-control-agent config downgrade --to-schema 4 --preview
+starry-control-agent config downgrade --to-schema 4 \
+  --output /safe/config-v4.yaml
+```
+
+存在 FastMedia authorization、allocation、active stream、尚未过期的最后 grant，或任一
+Agent/Relay 证书剩余不足九十天时，命令拒绝。进入回退窗口前先轮换证书。导出 no-clobber，
+只删除 v5 字段。审核 digest 并激活 schema v4 后，依次回滚 HBBS、使用非 secret
+`relay-compat.env` 的 HBBR、Control Agent。patch-v1.3.0 继续读取 Agent v1 YAML/PEM/JWKS
+和普通 telemetry secret-file，只忽略、不能删除 pairing/enrollment 状态。重新升级 v1.3.1
+会复用同一身份，并在恢复 FastMedia 前重新检查 UDP 健康。
+兼容解析器会保留公开 `KEY` 末尾的 Base64 padding。
+
+Kessoku 降级必须作为协调兼容变更执行。Kessoku v3.0.7 冻结 config schema ≤4 和
+telemetry schema 1，不能直接读取 schema-v5/telemetry-v2 Starry v1.3.1 inventory。
+启动 Kessoku v3.0.7 前，先激活导出的 schema-v4 配置并把 Starry 回滚到 v1.3.0；升级时
+反向执行，恢复 Kessoku v3.0.8 与 Starry v1.3.1、验证新鲜 telemetry-v2 inventory 后，
+才重新启用 FastMedia。
+
+以下编号步骤是原 v1.3.0 commissioning 流程，仍适用于 Relay Quality/Profile activation。
 
 ## 1. 盘点和备份
 

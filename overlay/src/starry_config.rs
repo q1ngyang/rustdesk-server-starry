@@ -12,7 +12,7 @@ use std::{
 pub const DEFAULT_CONFIG_PATH: &str = "starry/config.yaml";
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const MIN_CONFIG_VERSION: u8 = 1;
-pub const CONFIG_VERSION: u8 = 4;
+pub const CONFIG_VERSION: u8 = 5;
 const EXAMPLE_CONFIG: &str = include_str!("starry_config.example.yaml");
 
 static STATE: Lazy<RwLock<ConfigState>> = Lazy::new(|| {
@@ -172,7 +172,53 @@ struct StarryConfigWire {
     #[serde(default)]
     relay_quality: Option<RelayQualityConfig>,
     #[serde(default)]
-    fast_mode: Option<FastModeConfig>,
+    fast_mode: Option<FastModeConfigWire>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct FastModeConfigWire {
+    relay: FastRelayConfigWire,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct FastRelayConfigWire {
+    fast_compat_enabled: bool,
+    fast_media_v1_enabled: Option<bool>,
+    authorization_ttl_seconds: u64,
+    max_bitrate_kbps: u32,
+    relay_max_datagram: Option<u32>,
+}
+
+impl Default for FastRelayConfigWire {
+    fn default() -> Self {
+        Self {
+            fast_compat_enabled: false,
+            fast_media_v1_enabled: None,
+            authorization_ttl_seconds: 90,
+            max_bitrate_kbps: 50_000,
+            relay_max_datagram: None,
+        }
+    }
+}
+
+impl FastModeConfigWire {
+    fn has_schema_v5_fields(&self) -> bool {
+        self.relay.fast_media_v1_enabled.is_some() || self.relay.relay_max_datagram.is_some()
+    }
+
+    fn into_config(self) -> FastModeConfig {
+        FastModeConfig {
+            relay: FastRelayConfig {
+                fast_compat_enabled: self.relay.fast_compat_enabled,
+                fast_media_v1_enabled: self.relay.fast_media_v1_enabled.unwrap_or(false),
+                authorization_ttl_seconds: self.relay.authorization_ttl_seconds,
+                max_bitrate_kbps: self.relay.max_bitrate_kbps,
+                relay_max_datagram: self.relay.relay_max_datagram.unwrap_or(1_200),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -267,6 +313,8 @@ pub struct RelayEndpointConfig {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telemetry_secret_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_media_udp_port: Option<u16>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -361,16 +409,20 @@ pub struct FastModeConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct FastRelayConfig {
     pub fast_compat_enabled: bool,
+    pub fast_media_v1_enabled: bool,
     pub authorization_ttl_seconds: u64,
     pub max_bitrate_kbps: u32,
+    pub relay_max_datagram: u32,
 }
 
 impl Default for FastRelayConfig {
     fn default() -> Self {
         Self {
             fast_compat_enabled: false,
+            fast_media_v1_enabled: false,
             authorization_ttl_seconds: 90,
             max_bitrate_kbps: 50_000,
+            relay_max_datagram: 1_200,
         }
     }
 }
@@ -1056,7 +1108,7 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
             "SCHEMA_UNSUPPORTED",
             "/version",
             format!(
-                "unsupported version {}; expected 1, 2, 3, or {CONFIG_VERSION}",
+                "unsupported version {}; expected 1, 2, 3, 4, or {CONFIG_VERSION}",
                 wire.version
             ),
         ));
@@ -1098,6 +1150,30 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
             ),
         ));
     }
+    let has_v5_endpoint_fields = wire.websocket_signal.as_ref().is_some_and(|signal| {
+        signal
+            .relay_health
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.fast_media_udp_port.is_some())
+    });
+    if wire.version < 5
+        && (wire
+            .fast_mode
+            .as_ref()
+            .map(FastModeConfigWire::has_schema_v5_fields)
+            .unwrap_or(false)
+            || has_v5_endpoint_fields)
+    {
+        return Err(Diagnostics::single(
+            "FIELD_REQUIRES_SCHEMA_V5",
+            "/fast_mode/relay",
+            format!(
+                "version {} does not allow FastMedia Relay fields; upgrade the document to version 5",
+                wire.version
+            ),
+        ));
+    }
     let config = StarryConfig {
         version: wire.version,
         relay_servers: wire.relay_servers,
@@ -1107,7 +1183,7 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
         websocket_signal: wire.websocket_signal.unwrap_or_default(),
         connection_auth: wire.connection_auth.unwrap_or_default(),
         relay_quality: wire.relay_quality.unwrap_or_default(),
-        fast_mode: wire.fast_mode.unwrap_or_default(),
+        fast_mode: wire.fast_mode.unwrap_or_default().into_config(),
     };
     let config = validate(config)
         .map_err(|err| Diagnostics::single("CONFIG_INVALID", diagnostic_pointer(&err), err))?;
@@ -1158,25 +1234,58 @@ fn validate_fast_mode(config: &StarryConfig) -> Result<(), String> {
     if !(1_000..=200_000).contains(&relay.max_bitrate_kbps) {
         return Err("fast_mode.relay.max_bitrate_kbps must be between 1000 and 200000".to_owned());
     }
-    if relay.fast_compat_enabled && !config.relay_quality.enabled {
-        return Err(
-            "fast_mode.relay.fast_compat_enabled requires relay_quality.enabled".to_owned(),
-        );
+    if !(608..=1_400).contains(&relay.relay_max_datagram) {
+        return Err("fast_mode.relay.relay_max_datagram must be between 608 and 1400".to_owned());
     }
-    if relay.fast_compat_enabled && config.connection_auth.mode == ConnectionAuthMode::Off {
+    let enabled = relay.fast_compat_enabled || relay.fast_media_v1_enabled;
+    if config.version < 5 && relay.fast_compat_enabled && !config.relay_quality.enabled {
         return Err(
-            "fast_mode.relay.fast_compat_enabled requires connection_auth.mode audit or enforce"
+            "schema v4 fast_mode.relay.fast_compat_enabled requires relay_quality.enabled"
                 .to_owned(),
         );
     }
-    if relay.fast_compat_enabled
-        && config.secure_tcp.mode == SecureTcpMode::Off
-        && !config.websocket_signal.enabled
-    {
+    if relay.fast_media_v1_enabled && config.version < 5 {
+        return Err("fast_mode.relay.fast_media_v1_enabled requires schema version 5".to_owned());
+    }
+    if enabled && config.connection_auth.mode == ConnectionAuthMode::Off {
         return Err(
-            "fast_mode.relay.fast_compat_enabled requires Secure TCP or WebSocket signalling"
-                .to_owned(),
+            "enabled Fast Relay modes require connection_auth.mode audit or enforce".to_owned(),
         );
+    }
+    if enabled && config.secure_tcp.mode == SecureTcpMode::Off && !config.websocket_signal.enabled {
+        return Err(
+            "enabled Fast Relay mode requires Secure TCP or WebSocket signalling".to_owned(),
+        );
+    }
+    if relay.fast_media_v1_enabled {
+        if config.relay_servers.is_empty() {
+            return Err(
+                "fast_mode.relay.fast_media_v1_enabled requires at least one Relay server"
+                    .to_owned(),
+            );
+        }
+        let configured = config
+            .relay_servers
+            .iter()
+            .map(|relay| relay.to_ascii_lowercase())
+            .collect::<HashSet<_>>();
+        let capable = config
+            .websocket_signal
+            .relay_health
+            .endpoints
+            .iter()
+            .filter(|endpoint| {
+                endpoint.telemetry_secret_file.is_some()
+                    && endpoint.fast_media_udp_port.unwrap_or_default() > 0
+            })
+            .map(|endpoint| endpoint.relay.to_ascii_lowercase())
+            .collect::<HashSet<_>>();
+        if configured.is_disjoint(&capable) {
+            return Err(
+                "fast_mode.relay.fast_media_v1_enabled requires at least one selectable Relay with authenticated telemetry and a declared fast_media_udp_port"
+                    .to_owned(),
+            );
+        }
     }
     Ok(())
 }
@@ -1771,6 +1880,20 @@ fn validate_websocket_signal(
                 ));
             }
             (None, false) => {}
+        }
+        if endpoint.fast_media_udp_port == Some(0) {
+            return Err(format!(
+                "websocket_signal.relay_health endpoint '{}' fast_media_udp_port must be between 1 and 65535",
+                endpoint.relay
+            ));
+        }
+        if endpoint.fast_media_udp_port.is_some()
+            && (!telemetry_endpoint || endpoint.telemetry_secret_file.is_none())
+        {
+            return Err(format!(
+                "websocket_signal.relay_health endpoint '{}' may declare fast_media_udp_port only on an authenticated /ws/telemetry endpoint",
+                endpoint.relay
+            ));
         }
     }
 
@@ -2403,7 +2526,10 @@ fast_mode:
   relay: { fast_compat_enabled: true }
 "#;
         let insecure = parse_config(insecure).unwrap_err();
-        assert!(insecure.contains("requires Secure TCP or WebSocket signalling"));
+        assert!(
+            insecure.contains("requires Secure TCP or WebSocket signalling"),
+            "unexpected validation error: {insecure}"
+        );
 
         let enabled = r#"
 version: 4
@@ -2431,6 +2557,82 @@ fast_mode:
         assert!(config.fast_mode.relay.fast_compat_enabled);
         assert_eq!(config.fast_mode.relay.authorization_ttl_seconds, 120);
         assert_eq!(config.fast_mode.relay.max_bitrate_kbps, 80_000);
+    }
+
+    #[test]
+    fn schema_v5_separates_fast_compat_and_fast_media_with_default_off() {
+        let defaults = parse_config("version: 5\n").unwrap();
+        assert!(!defaults.fast_mode.relay.fast_compat_enabled);
+        assert!(!defaults.fast_mode.relay.fast_media_v1_enabled);
+        assert_eq!(defaults.fast_mode.relay.relay_max_datagram, 1_200);
+
+        let compat = r#"
+version: 5
+relay_servers: [relay-a.example:21117]
+secure_tcp: { mode: auto }
+connection_auth:
+  mode: audit
+  issuer: https://api.example.com
+  audience: rustdesk-connect
+  jwks: { file: auth/jwks.json }
+fast_mode:
+  relay:
+    fast_compat_enabled: true
+    fast_media_v1_enabled: false
+"#;
+        let compat = parse_config(compat).unwrap();
+        assert!(compat.fast_mode.relay.fast_compat_enabled);
+        assert!(!compat.fast_mode.relay.fast_media_v1_enabled);
+        assert!(!compat.relay_quality.enabled);
+
+        let v4_field =
+            parse_config("version: 4\nfast_mode:\n  relay:\n    fast_media_v1_enabled: false\n")
+                .unwrap_err();
+        assert!(v4_field.contains("version 5"));
+    }
+
+    #[test]
+    fn schema_v5_fast_media_requires_authenticated_declared_udp_endpoint() {
+        let valid = r#"
+version: 5
+relay_servers: [relay-a.example:21117]
+secure_tcp: { mode: auto }
+websocket_signal:
+  relay_health:
+    endpoints:
+      - relay: relay-a.example:21117
+        url: wss://relay-a.example/ws/telemetry
+        telemetry_secret_file: /run/secrets/relay-a
+        fast_media_udp_port: 22119
+connection_auth:
+  mode: audit
+  issuer: https://api.example.com
+  audience: rustdesk-connect
+  jwks: { file: auth/jwks.json }
+fast_mode:
+  relay:
+    fast_compat_enabled: false
+    fast_media_v1_enabled: true
+    relay_max_datagram: 1200
+"#;
+        let parsed = parse_config(valid).unwrap();
+        assert!(!parsed.fast_mode.relay.fast_compat_enabled);
+        assert!(parsed.fast_mode.relay.fast_media_v1_enabled);
+        assert_eq!(parsed.fast_mode.relay.relay_max_datagram, 1_200);
+
+        let missing_port = valid.replace("        fast_media_udp_port: 22119\n", "");
+        assert!(parse_config(&missing_port)
+            .unwrap_err()
+            .contains("declared fast_media_udp_port"));
+        let unauthenticated =
+            valid.replace("        telemetry_secret_file: /run/secrets/relay-a\n", "");
+        assert!(parse_config(&unauthenticated)
+            .unwrap_err()
+            .contains("requires telemetry_secret_file"));
+        let too_large = valid.replace("relay_max_datagram: 1200", "relay_max_datagram: 1401");
+        assert!(parse_config(&too_large)
+            .unwrap_err()
+            .contains("between 608 and 1400"));
     }
 
     #[test]

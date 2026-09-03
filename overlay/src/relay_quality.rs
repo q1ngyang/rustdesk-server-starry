@@ -567,6 +567,7 @@ pub(crate) fn response_context(
     initiator_route: SocketAddr,
     target_route: SocketAddr,
     target_ip: IpAddr,
+    target_id: &str,
     report: Option<RelayProbeReport>,
 ) -> ResponseContext {
     let active = starry_config::active_snapshot();
@@ -603,11 +604,11 @@ pub(crate) fn response_context(
             return empty_response_context();
         };
         if allocation.config_generation != active.generation
-            || !source_matches(
+            || !initial_response_source_matches(
                 allocation,
                 normalize_socket(target_route),
                 normalize_ip(target_ip),
-                EndpointRole::Target,
+                target_id,
             )
         {
             if report.is_some() {
@@ -1957,6 +1958,25 @@ fn source_matches(
     }
 }
 
+fn initial_response_source_matches(
+    allocation: &Allocation,
+    route: SocketAddr,
+    ip: IpAddr,
+    target_id: &str,
+) -> bool {
+    let route = normalize_socket(route);
+    let ip = normalize_ip(ip);
+    if allocation.target_id != target_id {
+        return false;
+    }
+    if source_matches(allocation, route, ip, EndpointRole::Target) {
+        return true;
+    }
+    !allocation.target_websocket
+        && allocation.target_ip == ip
+        && normalize_ip(route.ip()) == normalize_ip(allocation.target_route.ip())
+}
+
 fn finalized_source_matches(
     allocation: &FinalizedAllocation,
     route: SocketAddr,
@@ -2495,6 +2515,56 @@ mod tests {
             store_report(&mut slot, conflict),
             StoreReportResult::Conflict
         );
+    }
+
+    #[test]
+    fn native_initial_response_allows_only_a_same_ip_port_change() {
+        let mut allocation = allocation(
+            RelayQualityStrategyConfig::Adaptive,
+            Stage::Primary,
+            vec![candidate("relay-a", 500), candidate("relay-b", 1_000)],
+        );
+        allocation.target_websocket = false;
+        let changed_port: SocketAddr = "198.51.100.20:50123".parse().unwrap();
+
+        assert!(initial_response_source_matches(
+            &allocation,
+            changed_port,
+            allocation.target_ip,
+            &allocation.target_id,
+        ));
+        assert!(!source_matches(
+            &allocation,
+            changed_port,
+            allocation.target_ip,
+            EndpointRole::Target,
+        ));
+        assert!(!initial_response_source_matches(
+            &allocation,
+            changed_port,
+            allocation.target_ip,
+            "another-target",
+        ));
+        assert!(!initial_response_source_matches(
+            &allocation,
+            "203.0.113.20:50123".parse().unwrap(),
+            "203.0.113.20".parse().unwrap(),
+            &allocation.target_id,
+        ));
+
+        allocation.target_websocket = true;
+        assert!(!initial_response_source_matches(
+            &allocation,
+            changed_port,
+            allocation.target_ip,
+            &allocation.target_id,
+        ));
+        assert!(initial_response_source_matches(
+            &allocation,
+            allocation.target_route,
+            allocation.target_ip,
+            &allocation.target_id,
+        ));
     }
 
     #[test]

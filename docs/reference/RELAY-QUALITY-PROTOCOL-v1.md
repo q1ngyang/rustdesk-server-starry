@@ -102,6 +102,13 @@ conflicting duplicates, old-stage tokens, reversed roles, unknown candidates,
 and replay from another route or address are rejected. A finalized-stage
 duplicate receives the already final decision and never changes it.
 
+The only route exception is the native target's initial `PunchHoleSent` or
+`LocalAddr` response: its source port may differ from the registered target
+route when the original controller route, target IP and exact target ID still
+match. The report itself must still match allocation, generation, stage/token,
+target role and the complete candidate set. WSS, controller and top-level
+stage-report routes remain exact, and a conflicting duplicate is rejected.
+
 Each attempt has the offer's `probe_timeout_ms`. `stage_deadline_unix_ms` is
 the stage limit and `total_deadline_unix_ms` is the allocation limit. HBBS
 checks its monotonic server deadlines; client clocks are advisory only. A

@@ -3,8 +3,8 @@
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Upgrade-and-Rollback)
 
 An upgrade changes two versions: the official RustDesk Server base and the
-Starry patch. A tag such as `1.1.16-patch-v1.3.0` means official server
-`1.1.16` plus Starry patch `1.3.0`. Pin that complete tag, and record the image
+Starry patch. A tag such as `1.1.16-patch-v1.3.1` means official server
+`1.1.16` plus Starry patch `1.3.1`. Pin that complete tag, and record the image
 digest used in production.
 
 ## Upgrade rules
@@ -21,15 +21,95 @@ digest used in production.
 
 ## Read the current patch notes
 
-- [patch-v1.3.0 release notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.0.md)
+- [patch-v1.3.1 release-candidate notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.1.md)
 - [Changelog](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.md)
 
-Patch v1.3.0 adds optional candidate Relay probes, two-endpoint RTT/jitter/loss
-scoring, trusted HBBR load telemetry, and signed FastCompat authorization for
-compatible Akari/Kessoku deployments. It also adds matching-ACK Profile
-Activation Leases; that path remains dormant until a capable Akari opts in.
-Official clients and schema v1-v3 keep the legacy registration and single-Relay
-flow.
+Patch v1.3.1 adds role-authorized FastMedia Relay UDP, telemetry schema 2,
+schema v5, and SP1 pairing on top of the frozen v1.3.0 candidate Relay probes,
+two-endpoint RTT/jitter/loss scoring, trusted HBBR load telemetry, and signed FastCompat authorization for
+compatible Akari/Kessoku deployments. Official clients and schema v1-v4 keep
+their prior registration and reliable Relay flow. FastMedia and pairing are
+independent and default-off; this candidate remains blocked until the real
+fallback/re-entry release gate passes.
+
+## patch-v1.3.1 upgrade and downgrade
+
+Before changing containers, bind the complete Control state below one absolute
+`STARRY_PERSIST_ROOT` and each Relay below its absolute `RELAY_DATA_DIR`.
+Back up `hbbs`, `config`, `control/state`, `control/identity`,
+`control/generated`, `control/shared`, `relay-secrets`, and every Relay
+`starry/enrollment` directory as one permission-preserving set. Verify the
+backup on an isolated host; never start the original and a cloned Relay
+identity together. `pull`, `force-recreate`, and `down`/`up` preserve identity
+only with the same explicit mounts. Treat `down -v`, a different relative path,
+overlay/tmpfs state, or a host-identity mismatch as a failed preflight.
+
+Upgrade in this order:
+
+1. Roll HBBR v1.3.1 first with its reliable TCP/WS path unchanged and FastMedia
+   policy disabled. Verify authenticated telemetry schema 2, UDP listener
+   health, ordinary Native/WSS/mixed Relay, and official clients.
+2. Roll HBBS with the existing schema v4 or a schema-v5 document whose two
+   Fast switches are false. Verify the exact Relay Quality v1 digest and
+   ordinary GEO/failover decisions.
+3. Roll Control Agent, verify the schema/OpenAPI fixtures, SP1 capability, and
+   read-only inventory. Pair/adopt existing identity only through an explicit
+   reviewed command; never allow `pair` to overwrite it. For certificates
+   addressed by DNS, pass the exact Kessoku-allowlisted name with
+   `--tls-server-name`; a rotate must preserve the installed Agent listen,
+   local-control address, size limit, and write policy.
+4. Canary FastCompat, then FastMedia on a bounded Relay/Akari cohort. Every
+   failed bind, UDP block, listener restart, or rate limit must leave the
+   reliable desktop session alive.
+
+Schema v5 adds only:
+
+```yaml
+version: 5
+fast_mode:
+  relay:
+    fast_compat_enabled: false
+    fast_media_v1_enabled: false
+    authorization_ttl_seconds: 90
+    max_bitrate_kbps: 50000
+    relay_max_datagram: 1200
+```
+
+Each eligible Relay also declares `fast_media_udp_port` beside its authenticated
+`/ws/telemetry` endpoint. Do not enable FastMedia until fresh telemetry reports
+protocol 1 and healthy on the same port.
+
+For v1.3.1→v1.3.0, first set `fast_media_v1_enabled: false` and obtain a
+synchronous activation ACK. Then preview and export:
+
+```console
+starry-control-agent config downgrade --to-schema 4 --preview
+starry-control-agent config downgrade --to-schema 4 \
+  --output /safe/config-v4.yaml
+```
+
+The command fails while any FastMedia authorization, allocation, active stream,
+or unexpired last grant remains, and while any Agent/Relay certificate has less
+than ninety days remaining. Rotate certificates before entering the rollback
+window. Export is no-clobber and removes only v5 fields. Review its digest,
+activate the schema-v4 output, roll HBBS, then HBBR using the generated
+non-secret `relay-compat.env`, then Control Agent. patch-v1.3.0 continues to
+read Agent v1 YAML/PEM/JWKS and ordinary telemetry secret files; it ignores but
+must not delete pairing/enrollment state. Upgrading back to v1.3.1 reuses the
+same identity and requires fresh UDP health before reenabling FastMedia.
+The compatibility parser preserves any trailing Base64 padding in public
+`KEY` values.
+
+Treat the Kessoku downgrade as a coordinated compatibility change. Kessoku
+v3.0.7 freezes config schema ≤4 and telemetry schema 1, so it must not be
+pointed directly at a schema-v5/telemetry-v2 Starry v1.3.1 inventory. Activate
+the exported schema-v4 configuration and roll Starry to v1.3.0 before starting
+Kessoku v3.0.7. Reverse the sequence on upgrade: restore Kessoku v3.0.8 and
+Starry v1.3.1, verify fresh telemetry-v2 inventory, and only then re-enable
+FastMedia.
+
+The remaining numbered workflow below documents the original v1.3.0
+commissioning sequence and still applies to Relay Quality/Profile activation.
 
 ## 1. Inventory and backup
 

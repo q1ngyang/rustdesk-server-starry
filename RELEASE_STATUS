@@ -1,7 +1,10 @@
-# patch-v1.3.0 was approved for publication on 2026-09-02 after the reviewed
-# candidate passed every blocking compatibility, security, and release gate.
-status: APPROVED
-patch_version: 1.3.0
+# The frozen wire/Control contract remains bound to commit
+# 6f5a31008ab7761d8557c8cf9fefcb5be11c49e6. Source and protocol-level
+# validation permit an opt-in preview release. Stable publication remains
+# blocked until the real two-client/device/network and production PKI matrices
+# pass. PREVIEW_APPROVED publishes a GitHub prerelease and the rolling
+# `preview` image only; it never replaces `latest`.
+status: PREVIEW_APPROVED
+patch_version: 1.3.1
 
-# Publication remains fail-closed until every required workflow job succeeds
-# again for the exact source commit that receives the immutable release tag.
+# Do not change this to APPROVED from preview or diagnostic validation alone.

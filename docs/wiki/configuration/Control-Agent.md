@@ -34,7 +34,7 @@ the public RustDesk or reverse-proxy listener.
 
 The Linux archive/container and `rustdesk-server-starry-control-agent` DEB
 contain the Agent. The DEB installs but does not automatically enable its
-systemd service. No Windows Agent artifact is published in v1.3.0 because the
+systemd service. No Windows Agent artifact is published in v1.3.1 because the
 atomic transaction implementation is release-supported only on Unix filesystems.
 
 Start from [`config/control-agent.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/control-agent.example.yaml):
@@ -86,6 +86,59 @@ remains local. It shares the Starry config volume read/write while HBBS mounts
 the same volume read-only. The example Agent binds host loopback and starts in
 read-only mode.
 
+## SP1 pairing and Relay enrollment
+
+Manual YAML, mTLS, service JWKS, and local-token setup above remains fully
+supported. patch-v1.3.1 optionally bootstraps the same Agent v1 fields through
+a short-lived `SP1` code:
+
+```console
+starry-control-agent pair
+starry-control-agent adopt
+starry-control-agent rotate
+```
+
+The code is read only from stdin or a mode-0600 file. The Agent generates its
+server key and CSR locally, pins the exact HTTPS Broker SPKI, validates the
+returned CA signature and key binding, and never overwrites a different
+identity. Use `pair` for empty state, explicit `adopt` for an existing instance,
+and `rotate` for a reviewed certificate rotation. Pairing-generated YAML
+contains only fields already accepted by patch-v1.3.0 Agent v1. When Kessoku
+connects to the Agent by DNS, pass the exact allowlisted name as
+`--tls-server-name` (or `STARRY_CONTROL_AGENT_TLS_SERVER_NAME`) so the locally
+generated CSR contains the matching DNS SAN. Interrupted first pairing reuses
+its durable pending instance UUID. Rotation validates the existing generated
+path bindings and preserves the installed listen/local-control addresses,
+managed-config size limit, and write policy.
+
+All container identity and runtime state must remain under
+`STARRY_PERSIST_ROOT/control/{state,identity,generated,shared}` plus
+`STARRY_PERSIST_ROOT/{config,relay-secrets}`. Pairing and service startup reject
+overlay/tmpfs container layers, absent explicit mounts, unsafe types/modes, and
+drift. Native/DEB uses `/etc/rustdesk-server-starry` for configuration/identity
+and `/var/lib/rustdesk-server-starry` for state. See
+[Starry Pairing v1](../../reference/STARRY-PAIRING-v1.md).
+
+When Relay enrollment CA material is configured, the API adds list/get and
+write-enabled `prepare`, `complete`, health-gated `activate`, and `revoke` operations under
+`/control/v1/relay-enrollments`. Mutations require scope
+`starry.relay.enroll`; the Agent, not Kessoku/Broker, fixes the Relay endpoint,
+pool, profile, limits, and digest. The registry is bounded and exact retries
+are idempotent. No list/get response contains an SP1 secret, telemetry secret,
+private key, or CSR.
+
+Revocation records the terminal state before removing the exact current
+certificate, telemetry secret, and claim marker. Partial cleanup is retryable,
+and a same-node replacement can retire only a matching `revoked` or `expired`
+predecessor. Active, unknown, mismatched, or concurrently changed claims fail
+closed.
+
+`activate` does not trust caller-supplied health. It requires a succeeded
+`config_apply` operation with a complete HBBS activation ACK, then rereads the
+current `/relays` snapshot and binds the exact config generation and health
+snapshot ID. Native, WSS, authenticated telemetry, capacity/draining and
+FastMedia UDP checks are enforced according to the immutable enrolled profile.
+
 ## Read-only commissioning
 
 Leave `write_enabled: false` for initial deployment. The Agent authenticates
@@ -109,10 +162,18 @@ Verify in order:
 6. the listener is unreachable from public networks and HBBS `21115` remains
    loopback-only.
 
-For patch-v1.3.0, capability discovery includes `relay_quality: 1`,
+For patch-v1.3.1, schema support has one canonical machine expression:
+`capabilities.config_schema: 5`. The `config` object separately reports
+`supported_schema_versions: [1,2,3,4,5]`, the currently active version, and
+the exact schema digest; Kessoku must not infer schema support from a Starry
+version string. Capability discovery also includes `relay_quality: 1`,
 `relay_active_probe: 1`, `relay_probe_protocol: 1`,
 `relay_load_protocol: 1`, `fast_relay_authorization: 1`,
-`profile_activation_lease: 1`, and `peer_registry: 2`.
+`fast_media_relay_udp: 1`, `relay_telemetry_schema: 2`,
+`starry_pairing: 1`, `relay_enrollment: 1`, `config_downgrade_preview: 1`,
+`profile_activation_lease: 1`, and `peer_registry: 2`. Enrollment write
+capability and `relay_enrollment_health_activation: 1` appear only when the
+Agent is write-enabled and has its Relay CA.
 The `/relays` response includes `quality`, `fast_relay`, and
 `profile_activation` aggregate runtime objects. Each Relay reports explicit
 probe/load capability versions, telemetry observation time/age/stale state,
@@ -127,9 +188,24 @@ reasons; they never include a token, session UUID, or signed authorization.
 Profile activation counters identify lease/ACK/renewal/deactivation/cleanup,
 stale, rate, TTL, and bounded-capacity outcomes; they never include a peer ID,
 UUID, public key, activation ID, or route lease.
-Kessoku should gate its FastCompat controls on the capability and the schema v4
-digest, then use the same validate/plan/apply/audit transaction as every other
-configuration change.
+Kessoku should gate FastCompat on the authorization capability and gate
+FastMedia separately on schema v5, telemetry schema 2, typed Relay capability,
+and fresh UDP health. It then uses the same validate/plan/apply/audit
+transaction as every other configuration change.
+
+The Agent can preview/export a v1.3.0-compatible schema-v4 document without
+side effects:
+
+```console
+starry-control-agent config downgrade --to-schema 4 --preview
+starry-control-agent config downgrade --to-schema 4 --output /safe/config-v4.yaml
+```
+
+It queries local HBBS/Relay telemetry and refuses until FastMedia policy is
+off, active authorizations/allocations/streams are zero, the latest grant has
+expired, and every supplied Agent/Relay certificate has at least ninety days
+remaining. Output never overwrites an existing path. `--runtime-state` is an
+explicit audited offline override, not the normal path.
 
 Kessoku should separately gate Profile switching on
 `profile_activation_lease: 1`. It must retain leases by HBBS `instance.id` and

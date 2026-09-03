@@ -28,7 +28,8 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 static WAKE: Lazy<Notify> = Lazy::new(Notify::new);
 static STATE: Lazy<RwLock<HealthState>> = Lazy::new(|| RwLock::new(HealthState::default()));
 const MAX_CONCURRENT_HEALTH_PROBES: usize = 8;
-const TELEMETRY_SCHEMA_VERSION: u32 = 1;
+const TELEMETRY_SCHEMA_V1: u32 = 1;
+const TELEMETRY_SCHEMA_V2: u32 = 2;
 const TELEMETRY_CLOCK_SKEW_MILLIS: u64 = 30_000;
 const MIN_TELEMETRY_SECRET_BYTES: usize = 32;
 const MAX_TELEMETRY_SECRET_BYTES: usize = 1_024;
@@ -126,6 +127,28 @@ pub(crate) struct RelayLoadTelemetry {
     pub(crate) probe_rate_limited: u64,
     pub(crate) probe_successful: u64,
     pub(crate) telemetry_auth_failures: u64,
+    pub(crate) fast_media_relay_udp: Option<u32>,
+    pub(crate) fast_media_udp_enabled: Option<bool>,
+    pub(crate) fast_media_udp_healthy: Option<bool>,
+    pub(crate) fast_media_udp_port: Option<u16>,
+    pub(crate) fast_media_active_allocations: Option<u64>,
+    pub(crate) fast_media_active_streams: Option<u64>,
+    pub(crate) fast_media_hello_accepted: Option<u64>,
+    pub(crate) fast_media_cookie_rejected: Option<u64>,
+    pub(crate) fast_media_bind_succeeded: Option<u64>,
+    pub(crate) fast_media_bind_rejected: Option<u64>,
+    pub(crate) fast_media_grant_rejected: Option<u64>,
+    pub(crate) fast_media_role_mismatch: Option<u64>,
+    pub(crate) fast_media_session_mismatch: Option<u64>,
+    pub(crate) fast_media_allocation_mismatch: Option<u64>,
+    pub(crate) fast_media_rebinds: Option<u64>,
+    pub(crate) fast_media_forwarded_packets: Option<u64>,
+    pub(crate) fast_media_forwarded_bytes: Option<u64>,
+    pub(crate) fast_media_dropped_packets: Option<u64>,
+    pub(crate) fast_media_rate_limited: Option<u64>,
+    pub(crate) fast_media_replay_rejected: Option<u64>,
+    pub(crate) fast_media_expired_allocations: Option<u64>,
+    pub(crate) fast_media_listener_failures: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +177,35 @@ struct TelemetryEnvelope {
     probe_rate_limited: u64,
     probe_successful: u64,
     telemetry_auth_failures: u64,
+    #[serde(default)]
+    fast_media: Option<FastMediaTelemetryEnvelope>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FastMediaTelemetryEnvelope {
+    protocol: u32,
+    enabled: bool,
+    healthy: bool,
+    udp_port: u16,
+    active_allocations: u64,
+    active_streams: u64,
+    hello_accepted: u64,
+    cookie_rejected: u64,
+    bind_succeeded: u64,
+    bind_rejected: u64,
+    grant_rejected: u64,
+    role_mismatch: u64,
+    session_mismatch: u64,
+    allocation_mismatch: u64,
+    rebinds: u64,
+    forwarded_packets: u64,
+    forwarded_bytes: u64,
+    dropped_packets: u64,
+    rate_limited: u64,
+    replay_rejected: u64,
+    expired_allocations: u64,
+    listener_failures: u64,
 }
 
 struct TelemetryRequestContext {
@@ -530,6 +582,7 @@ fn relay_telemetry<T>(
     })?;
     let probe_protocol = envelope.relay_probe_protocol;
     let load_protocol = envelope.relay_load_protocol;
+    let fast_media = envelope.fast_media;
     Ok((
         version,
         probe_protocol,
@@ -555,6 +608,34 @@ fn relay_telemetry<T>(
             probe_rate_limited: envelope.probe_rate_limited,
             probe_successful: envelope.probe_successful,
             telemetry_auth_failures: envelope.telemetry_auth_failures,
+            fast_media_relay_udp: fast_media.as_ref().map(|value| value.protocol),
+            fast_media_udp_enabled: fast_media.as_ref().map(|value| value.enabled),
+            fast_media_udp_healthy: fast_media.as_ref().map(|value| value.healthy),
+            fast_media_udp_port: fast_media.as_ref().map(|value| value.udp_port),
+            fast_media_active_allocations: fast_media
+                .as_ref()
+                .map(|value| value.active_allocations),
+            fast_media_active_streams: fast_media.as_ref().map(|value| value.active_streams),
+            fast_media_hello_accepted: fast_media.as_ref().map(|value| value.hello_accepted),
+            fast_media_cookie_rejected: fast_media.as_ref().map(|value| value.cookie_rejected),
+            fast_media_bind_succeeded: fast_media.as_ref().map(|value| value.bind_succeeded),
+            fast_media_bind_rejected: fast_media.as_ref().map(|value| value.bind_rejected),
+            fast_media_grant_rejected: fast_media.as_ref().map(|value| value.grant_rejected),
+            fast_media_role_mismatch: fast_media.as_ref().map(|value| value.role_mismatch),
+            fast_media_session_mismatch: fast_media.as_ref().map(|value| value.session_mismatch),
+            fast_media_allocation_mismatch: fast_media
+                .as_ref()
+                .map(|value| value.allocation_mismatch),
+            fast_media_rebinds: fast_media.as_ref().map(|value| value.rebinds),
+            fast_media_forwarded_packets: fast_media.as_ref().map(|value| value.forwarded_packets),
+            fast_media_forwarded_bytes: fast_media.as_ref().map(|value| value.forwarded_bytes),
+            fast_media_dropped_packets: fast_media.as_ref().map(|value| value.dropped_packets),
+            fast_media_rate_limited: fast_media.as_ref().map(|value| value.rate_limited),
+            fast_media_replay_rejected: fast_media.as_ref().map(|value| value.replay_rejected),
+            fast_media_expired_allocations: fast_media
+                .as_ref()
+                .map(|value| value.expired_allocations),
+            fast_media_listener_failures: fast_media.as_ref().map(|value| value.listener_failures),
         },
     ))
 }
@@ -567,7 +648,16 @@ fn validate_telemetry(envelope: &TelemetryEnvelope) -> Result<(), ProbeFailure> 
             .process_instance_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
-    let structurally_valid = envelope.telemetry_schema == TELEMETRY_SCHEMA_VERSION
+    let schema_valid = match envelope.telemetry_schema {
+        TELEMETRY_SCHEMA_V1 => envelope.fast_media.is_none(),
+        TELEMETRY_SCHEMA_V2 => envelope.fast_media.as_ref().is_some_and(|fast_media| {
+            fast_media.protocol == 1
+                && (!fast_media.healthy || (fast_media.enabled && fast_media.udp_port > 0))
+                && (!fast_media.enabled || fast_media.udp_port > 0)
+        }),
+        _ => false,
+    };
+    let structurally_valid = schema_valid
         && instance_valid
         && envelope.sequence > 0
         && envelope.observed_at_unix_ms <= now.saturating_add(TELEMETRY_CLOCK_SKEW_MILLIS)
@@ -585,7 +675,7 @@ fn validate_telemetry(envelope: &TelemetryEnvelope) -> Result<(), ProbeFailure> 
     } else {
         Err(ProbeFailure::new(
             "telemetry_payload_invalid",
-            "telemetry fields violate schema v1 bounds or invariants",
+            "telemetry fields violate supported schema bounds or invariants",
         ))
     }
 }
@@ -1007,6 +1097,7 @@ mod tests {
                 relay: relay.clone(),
                 url: "wss://relay-a.example.com/ws/relay".to_owned(),
                 telemetry_secret_file: None,
+                fast_media_udp_port: None,
             }],
             ..Default::default()
         };
@@ -1139,6 +1230,7 @@ mod tests {
                 probe_rate_limited: 0,
                 probe_successful: 1,
                 telemetry_auth_failures: 0,
+                ..Default::default()
             }),
         })
     }
@@ -1226,6 +1318,88 @@ mod tests {
     }
 
     #[test]
+    fn telemetry_v2_exposes_authenticated_fast_media_state_only() {
+        sodiumoxide::init().unwrap();
+        let context = TelemetryRequestContext {
+            nonce: "102132435465768798a9bacbdcedfe0f".to_owned(),
+            key: auth::Key::from_slice(&[6_u8; auth::KEYBYTES]).unwrap(),
+        };
+        // Keep the nested counter object separate so serde_json's recursive
+        // macro expansion stays below rustc's default recursion limit.
+        let fast_media = serde_json::json!({
+            "protocol": 1,
+            "enabled": true,
+            "healthy": true,
+            "udp_port": 22119,
+            "active_allocations": 2,
+            "active_streams": 1,
+            "hello_accepted": 3,
+            "cookie_rejected": 4,
+            "bind_succeeded": 5,
+            "bind_rejected": 6,
+            "grant_rejected": 7,
+            "role_mismatch": 8,
+            "session_mismatch": 9,
+            "allocation_mismatch": 10,
+            "rebinds": 11,
+            "forwarded_packets": 12,
+            "forwarded_bytes": 13,
+            "dropped_packets": 14,
+            "rate_limited": 15,
+            "replay_rejected": 16,
+            "expired_allocations": 17,
+            "listener_failures": 18
+        });
+        let envelope = serde_json::json!({
+            "telemetry_schema": 2,
+            "process_instance_id": "test-instance-v2",
+            "sequence": 10,
+            "observed_at_unix_ms": unix_millis(),
+            "uptime_seconds": 60,
+            "version": "1.1.16-patch-v1.3.1",
+            "relay_probe_protocol": 1,
+            "relay_load_protocol": 1,
+            "load_basis_points": 100,
+            "active_sessions": 1,
+            "pending_pairs": 0,
+            "capacity_sessions": 100,
+            "bandwidth_bps": 1000,
+            "bandwidth_ema_alpha_basis_points": 2500,
+            "capacity_bandwidth_bps": 1000000,
+            "draining": false,
+            "admission_open": true,
+            "admission_rejections": 0,
+            "probe_malformed": 0,
+            "probe_unsupported": 0,
+            "probe_rate_limited": 0,
+            "probe_successful": 1,
+            "telemetry_auth_failures": 0,
+            "fast_media": fast_media
+        });
+        let payload = base64::encode_config(
+            serde_json::to_vec(&envelope).unwrap(),
+            base64::URL_SAFE_NO_PAD,
+        );
+        let canonical = format!(
+            "starry-telemetry-response-v1\n{}\n{}",
+            context.nonce, payload
+        );
+        let signature = hex_encode(auth::authenticate(canonical.as_bytes(), &context.key).as_ref());
+        let response = http::Response::builder()
+            .header("x-starry-telemetry", payload)
+            .header("x-starry-telemetry-auth", signature)
+            .body(())
+            .unwrap();
+        let (_, _, _, telemetry) = relay_telemetry(&response, &context).unwrap();
+        assert_eq!(telemetry.telemetry_schema, 2);
+        assert_eq!(telemetry.fast_media_relay_udp, Some(1));
+        assert_eq!(telemetry.fast_media_udp_port, Some(22119));
+        assert_eq!(telemetry.fast_media_active_allocations, Some(2));
+        assert_eq!(telemetry.fast_media_active_streams, Some(1));
+        assert_eq!(telemetry.fast_media_replay_rejected, Some(16));
+    }
+
+    #[test]
     fn capability_headers_are_explicit_and_not_inferred_from_version() {
         let capable = http::Response::builder()
             .header("x-starry-version", "1.1.16-patch-v1.3.0")
@@ -1282,6 +1456,7 @@ mod tests {
             probe_rate_limited: 0,
             probe_successful: 0,
             telemetry_auth_failures: 0,
+            ..Default::default()
         });
         *STATE.write().unwrap() = HealthState {
             enabled: true,
@@ -1293,6 +1468,7 @@ mod tests {
                     relay: relay.clone(),
                     url: "wss://relay-stale.example.com/ws/relay".to_owned(),
                     telemetry_secret_file: None,
+                    fast_media_udp_port: None,
                 }],
                 ..Default::default()
             },
@@ -1320,6 +1496,7 @@ mod tests {
                     relay: relay.clone(),
                     url: "wss://relay-restart.example.com/ws/telemetry".to_owned(),
                     telemetry_secret_file: Some("/run/secrets/test".to_owned()),
+                    fast_media_udp_port: None,
                 }],
                 ..Default::default()
             },

@@ -34,12 +34,13 @@ Starry 从 HBBS 数据目录下的 `starry/config.yaml` 读取配置。容器中
 
 | 字段 | 必填 | 可用值 | 含义 |
 | --- | --- | --- | --- |
-| `version` | 是 | `1`、`2`、`3`、`4` | 配置结构版本。新部署使用 `4`。 |
+| `version` | 是 | `1`、`2`、`3`、`4`、`5` | 配置结构版本。只有 patch-v1.3.1 FastMedia 策略使用 `5`。 |
 
 结构版本 `1` 支持 Relay、Secure TCP、MMDB 和 Geo，并拒绝 `websocket_signal` 与
 `connection_auth`；版本 `2` 增加可选 WebSocket Signal，但仍拒绝 `connection_auth`；
 版本 `3` 新增连接认证并拒绝 `relay_quality`；版本 `4` 新增可选的 Akari Relay
-质量选择与 FastCompat Relay 授权。顶层和嵌套未知字段均会被拒绝，避免拼写错误悄悄
+质量选择与 FastCompat Relay 授权；版本 `5` 新增 FastMediaV1 策略与 Relay UDP endpoint，
+不改变 schema 4 或 Relay Quality v1 语义。顶层和嵌套未知字段均会被拒绝，避免拼写错误悄悄
 改变部署结果。
 
 ## 中继服务器列表：`relay_servers`
@@ -158,7 +159,7 @@ geo:
 
 ## WebSocket 信令：`websocket_signal`
 
-此部分要求 `version: 2`、`3` 或 `4`，并且必须显式启用。
+此部分要求 `version: 2`、`3`、`4` 或 `5`，并且必须显式启用。
 
 ```yaml
 websocket_signal:
@@ -184,6 +185,7 @@ websocket_signal:
       - relay: relay-asia-1.example.com:21117
         url: wss://relay-asia-1.example.com/ws/telemetry
         telemetry_secret_file: /run/secrets/starry-relay-telemetry
+        fast_media_udp_port: 21119
 ```
 
 ### 会话和资源限制
@@ -224,6 +226,7 @@ HBBS 实际看到的源地址后，才能加入 Docker 网桥或外部代理网�
 | `endpoints[].relay` | 无 | 必填、唯一，并等于某个 `relay_servers` 条目。 |
 | `endpoints[].url` | 无 | 必填且唯一；必须是 `wss://`、DNS 主机名和精确 `/ws/relay`（仅 legacy health）或 `/ws/telemetry` 路径，不得有凭据、查询或片段。 |
 | `endpoints[].telemetry_secret_file` | 无 | 绝对 secret-file 路径；`/ws/telemetry` 必填，`/ws/relay` 禁止；文件内容不会序列化。 |
+| `endpoints[].fast_media_udp_port` | 无 | 仅 schema v5，`1..65535`；只能与认证 `/ws/telemetry` 一起使用。声明 endpoint 不等于 listener 已健康。 |
 
 当 `enabled: true` 时，端点的 Relay 名称必须恰好覆盖 `relay_servers`。健康探测验证
 分配所需的 WSS/TLS 路径，但不能替代两台客户端的实际远控测试。参见
@@ -231,7 +234,7 @@ HBBS 实际看到的源地址后，才能加入 Docker 网桥或外部代理网�
 
 ## 连接认证：`connection_auth`
 
-本节要求 `version: 3` 或 `4`，用于控制原生 TCP、安全 TCP、WSS 上控制端发出的
+本节要求 `version: 3`、`4` 或 `5`，用于控制原生 TCP、安全 TCP、WSS 上控制端发出的
 `PunchHoleRequest` 与直接 `RequestRelay`。UDP 不支持发起这种已认证连接，也不会分配
 中继服务器。
 
@@ -293,7 +296,7 @@ raw token 不会作为 cache key 或 status label。进入 audit/enforce 前先�
 
 ## Relay 质量：`relay_quality`
 
-此 Akari 专用扩展要求 `version: 4`，默认关闭。官方客户端不会声明能力，仍使用传统的
+此冻结 Akari 扩展要求 `version: 4` 或 `5`，默认关闭。官方客户端不会声明能力，仍使用传统的
 单 Relay 分配。
 
 ```yaml
@@ -366,31 +369,38 @@ probe/load protocol v1，不能从版本字符串推断；遥测缺失、不完�
 
 ## 极速模式：`fast_mode.relay`
 
-这个 Akari 专用 schema v4 策略通过现有可靠 HBBR 数据流授权 P2P 极速模式的
-`FastCompat` 路径。功能默认关闭，不会开启新的 Relay 传输。
+schema v4 只支持 FastCompat。schema v5 保留该可靠路径，并增加独立 FastMediaV1
+Relay UDP 策略。两个开关都默认 false；客户端不能选择签名 Relay，任一 UDP 故障都保留
+普通 HBBR 会话。
 
 ```yaml
 fast_mode:
   relay:
     fast_compat_enabled: false
+    fast_media_v1_enabled: false
     authorization_ttl_seconds: 90
     max_bitrate_kbps: 50000
+    relay_max_datagram: 1200
 ```
 
 | 字段 | 默认值 | 有效范围或规则 |
 | --- | ---: | --- |
-| `fast_compat_enabled` | `false` | 设为 `true` 必须启用 `relay_quality`，把连接鉴权设为 `audit` 或 `enforce`，并启用 `secure_tcp.mode: auto` 或 WebSocket 信令。 |
+| `fast_compat_enabled` | `false` | 要求连接鉴权为 `audit` 或 `enforce`，并启用 `secure_tcp.mode: auto` 或 WebSocket 信令。Relay Quality 有 decision 时保持权威，否则 HBBS 只签普通 GEO/failover 最终选择。 |
+| `fast_media_v1_enabled` | `false` | 仅 schema v5。除 FastCompat 安全门禁外，还要求至少一个可选 Relay 具有新鲜认证 telemetry schema 2、明确 `fast_media_relay_udp = 1`、声明 UDP port 且 listener 健康。 |
 | `authorization_ttl_seconds` | `90` | `30..300`；功能关闭时也会校验，重试不延长有效期。 |
-| `max_bitrate_kbps` | `50000` | `1000..200000`；这是给 Akari 的签名上限，不是 HBBR 带宽预留。 |
+| `max_bitrate_kbps` | `50000` | `1000..200000`；签名编码源上限，HBBR wire allowance 不超过 `ceil(source × 1.45)`。 |
+| `relay_max_datagram` | `1200` | 仅 schema v5，`608..1400`；含 32 字节 AKR1 header 的完整 UDP payload。 |
 
-HBBS 只在鉴权返回严格 `allow` 且存在最终、来源绑定的 Relay 质量决定后签名。服务端会
-覆盖客户端提供的不可信授权字节，并向两端发送同一签名授权。任一前置条件缺失都只是不
-签发，普通 Relay 流程继续。官方客户端会忽略增量字段。
+HBBS 只在鉴权返回严格 `allow` 且普通最终 Relay 已固定后签名；存在 Relay Quality
+decision 时，两者必须完全一致，否则使用服务端普通 GEO/failover 选择。FastMedia 分别
+签发角色 1 controller 与角色 2 target，双端在 HBBR 绑定后才开始；旧六字段
+FastCompat 继续兼容。任一门禁缺失都不签 FastMedia，普通 Relay 继续。官方客户端忽略
+tag 64。
 
-patch-v1.3.0 只授权 `FastCompat`，所有授权的 `allow_fast_media_v1` 均为 false。若 WSS
-在反向代理终止 TLS，必须禁止公网直接访问 HBBS 明文 WebSocket 监听端口。线协议、重放、
-重试和隐私要求见
-[极速 Relay 授权协议 v1](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/FAST-RELAY-AUTHORIZATION-v1.zh-CN.md)。
+若 WSS 在反向代理终止 TLS，必须禁止公网直接访问 HBBS 明文 WebSocket 监听端口。线协议、
+重放、资源和隐私要求见
+[极速 Relay 授权协议 v1](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/FAST-RELAY-AUTHORIZATION-v1.zh-CN.md)和
+[FastMedia Relay UDP v1](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/reference/FAST-MEDIA-RELAY-UDP-v1.zh-CN.md)。
 
 ## 重新加载配置时的行为
 

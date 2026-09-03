@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starry.invalid/contracts/starry-pairing/v1/pairing.schema.json",
+  "title": "Starry Pairing v1 canonical documents",
+  "oneOf": [
+    {"$ref": "#/$defs/pairingCode"},
+    {"$ref": "#/$defs/claimRequest"},
+    {"$ref": "#/$defs/claimResponse"}
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "pairingCode": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^SP1\\.[A-Za-z0-9_-]+$",
+      "description": "SP1.<base64url-no-pad canonical PairingCodePayload JSON>. It is short-lived and single-use."
+    },
+    "pairingCodePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "purpose", "broker_origin", "broker_spki_sha256", "enrollment_id", "configuration_digest", "expires_at_unix", "secret"],
+      "properties": {
+        "version": {"const": 1},
+        "purpose": {"type": "string", "enum": ["control-agent", "relay"]},
+        "broker_origin": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "broker_spki_sha256": {"$ref": "#/$defs/sha256"},
+        "enrollment_id": {"$ref": "#/$defs/uuid"},
+        "configuration_digest": {"$ref": "#/$defs/sha256"},
+        "expires_at_unix": {"type": "integer", "minimum": 1},
+        "secret": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$", "x-sensitive": true}
+      }
+    },
+    "claimRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "purpose", "action", "enrollment_id", "configuration_digest", "secret", "request_digest", "key_fingerprint", "csr_pem"],
+      "properties": {
+        "version": {"const": 1},
+        "purpose": {"type": "string", "enum": ["control-agent", "relay"]},
+        "action": {"type": "string", "enum": ["pair", "adopt", "rotate", "enroll"]},
+        "enrollment_id": {"$ref": "#/$defs/uuid"},
+        "configuration_digest": {"$ref": "#/$defs/sha256"},
+        "secret": {"type": "string", "minLength": 43, "maxLength": 43, "x-sensitive": true},
+        "request_digest": {"$ref": "#/$defs/sha256"},
+        "key_fingerprint": {"$ref": "#/$defs/sha256"},
+        "csr_pem": {"type": "string", "minLength": 1, "maxLength": 32768, "x-sensitive": true},
+        "instance_id": {"oneOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]}
+      }
+    },
+    "claimResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "purpose", "enrollment_id", "configuration_digest", "request_digest", "key_fingerprint", "bundle"],
+      "properties": {
+        "version": {"const": 1},
+        "purpose": {"type": "string", "enum": ["control-agent", "relay"]},
+        "enrollment_id": {"$ref": "#/$defs/uuid"},
+        "configuration_digest": {"$ref": "#/$defs/sha256"},
+        "request_digest": {"$ref": "#/$defs/sha256"},
+        "key_fingerprint": {"$ref": "#/$defs/sha256"},
+        "bundle": {"oneOf": [{"$ref": "#/$defs/controlAgentBundle"}, {"$ref": "#/$defs/relayBundle"}]}
+      }
+    },
+    "controlAgentBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instance_id", "agent_origin", "server_certificate_pem", "client_ca_pem", "allowed_client_uri_sans", "service_jwks", "service_jwt_issuer", "service_jwt_audience_prefix", "center_public_key"],
+      "properties": {
+        "instance_id": {"$ref": "#/$defs/uuid"},
+        "agent_origin": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "server_certificate_pem": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "client_ca_pem": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "allowed_client_uri_sans": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "format": "uri", "pattern": "^spiffe://", "maxLength": 256}},
+        "service_jwks": {"type": "object"},
+        "service_jwt_issuer": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "service_jwt_audience_prefix": {"type": "string", "minLength": 1, "maxLength": 128},
+        "center_public_key": {"type": "string", "minLength": 43, "maxLength": 128}
+      }
+    },
+    "relayBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "relay_server", "public_endpoint", "node_certificate_pem", "relay_ca_pem", "center_public_key", "telemetry_secret", "max_sessions", "capacity_bandwidth_bps", "draining", "relay_pool", "profile", "activate_after_health"],
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "relay_server": {"type": "string", "minLength": 1, "maxLength": 256},
+        "public_endpoint": {"type": "string", "minLength": 1, "maxLength": 256},
+        "node_certificate_pem": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "relay_ca_pem": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "center_public_key": {"type": "string", "minLength": 43, "maxLength": 128},
+        "telemetry_secret": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$", "x-sensitive": true},
+        "max_sessions": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "capacity_bandwidth_bps": {"type": "integer", "minimum": 1},
+        "draining": {"type": "boolean"},
+        "relay_pool": {"type": "string", "minLength": 1, "maxLength": 128},
+        "profile": {"type": "string", "enum": ["native", "native-wss", "native-wss-fastmedia"]},
+        "wss_endpoint": {"type": ["string", "null"], "maxLength": 512, "pattern": "^wss://[^/?#]+(?:\\:[0-9]+)?/ws/telemetry$"},
+        "activate_after_health": {"type": "boolean"},
+        "fast_media_udp_port": {"type": ["integer", "null"], "minimum": 1, "maximum": 65535}
+      }
+    }
+  }
+}

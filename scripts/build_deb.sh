@@ -2,8 +2,8 @@
 set -eu
 umask 022
 
-if [ "$#" -ne 5 ]; then
-    echo "usage: $0 <hbbs|hbbr|utils|agent> <binary> <amd64|arm64> <debian-version> <output-dir>" >&2
+if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
+    echo "usage: $0 <hbbs|hbbr|utils|agent> <binary> <amd64|arm64> <debian-version> <output-dir> [hbbr-relayctl-binary]" >&2
     exit 64
 fi
 
@@ -12,6 +12,7 @@ binary="$2"
 architecture="$3"
 version="$4"
 output_dir="$5"
+companion_binary="${6:-}"
 
 case "$component" in
     hbbs)
@@ -23,8 +24,8 @@ case "$component" in
     hbbr)
         package="rustdesk-server-starry-hbbr"
         installed_binary="hbbr"
-        description="Unmodified RustDesk HBBR bundled by Starry"
-        details="Unmodified official RustDesk Server HBBR built from the same pinned upstream revision as the Starry HBBS release."
+        description="RustDesk HBBR with Starry telemetry and optional FastMedia UDP"
+        details="Compatible RustDesk Server HBBR with authenticated telemetry, bounded probes, SP1 enrollment tooling, and an optional AKR1 UDP media relay."
         ;;
     utils)
         package="rustdesk-server-starry-utils"
@@ -69,6 +70,16 @@ trap 'rm -rf "$build_root"' EXIT INT TERM
 package_root="$build_root/$package"
 mkdir -p "$package_root/DEBIAN" "$package_root/usr/bin" "$output_dir"
 install -m 0755 "$binary" "$package_root/usr/bin/$installed_binary"
+if [ "$component" = "hbbr" ]; then
+    if [ -z "$companion_binary" ] || [ ! -f "$companion_binary" ] || [ -L "$companion_binary" ]; then
+        echo "hbbr package requires the starry-relayctl companion binary" >&2
+        exit 66
+    fi
+    install -m 0755 "$companion_binary" "$package_root/usr/bin/starry-relayctl"
+elif [ -n "$companion_binary" ]; then
+    echo "a companion binary is valid only for the hbbr package" >&2
+    exit 64
+fi
 
 cat > "$package_root/DEBIAN/control" <<EOF
 Package: $package
@@ -107,6 +118,12 @@ if ! getent passwd rustdesk-starry >/dev/null 2>&1; then
 fi
 install -d -o rustdesk-starry -g rustdesk-starry -m 0750 /var/lib/rustdesk-server-starry
 EOF
+    if [ "$component" = "hbbr" ]; then
+        cat >> "$package_root/DEBIAN/postinst" <<'EOF'
+install -d -o rustdesk-starry -g rustdesk-starry -m 0750 \
+    /var/lib/rustdesk-server-starry/relay
+EOF
+    fi
     if [ "$component" = "hbbs" ] || [ "$component" = "agent" ]; then
         cat >> "$package_root/DEBIAN/postinst" <<'EOF'
 install -d -o root -g rustdesk-starry -m 0770 \
@@ -115,18 +132,34 @@ if [ -f /etc/rustdesk-server-starry/managed/config.yaml ]; then
     chown rustdesk-starry:rustdesk-starry /etc/rustdesk-server-starry/managed/config.yaml
     chmod 0640 /etc/rustdesk-server-starry/managed/config.yaml
 fi
-if [ ! -e /etc/rustdesk-server-starry/local-control.token ]; then
+install -d -o rustdesk-starry -g rustdesk-starry -m 0700 \
+    /var/lib/rustdesk-server-starry/control \
+    /var/lib/rustdesk-server-starry/control/shared
+if [ ! -e /var/lib/rustdesk-server-starry/control/shared/local-control.token ]; then
     umask 077
-    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > \
-        /etc/rustdesk-server-starry/local-control.token
+    if [ -f /etc/rustdesk-server-starry/local-control.token ]; then
+        cp -p /etc/rustdesk-server-starry/local-control.token \
+            /var/lib/rustdesk-server-starry/control/shared/local-control.token
+    else
+        od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > \
+            /var/lib/rustdesk-server-starry/control/shared/local-control.token
+    fi
 fi
 chown rustdesk-starry:rustdesk-starry \
-    /etc/rustdesk-server-starry/local-control.token
-chmod 0600 /etc/rustdesk-server-starry/local-control.token
+    /var/lib/rustdesk-server-starry/control/shared/local-control.token
+chmod 0600 /var/lib/rustdesk-server-starry/control/shared/local-control.token
 EOF
     fi
     if [ "$component" = "agent" ]; then
         cat >> "$package_root/DEBIAN/postinst" <<'EOF'
+install -d -o rustdesk-starry -g rustdesk-starry -m 0700 \
+    /var/lib/rustdesk-server-starry/control \
+    /var/lib/rustdesk-server-starry/control/state \
+    /var/lib/rustdesk-server-starry/control/shared \
+    /var/lib/rustdesk-server-starry/config-history \
+    /var/lib/rustdesk-server-starry/relay-secrets
+install -d -o root -g rustdesk-starry -m 0750 \
+    /etc/rustdesk-server-starry/control-identity
 chown root:rustdesk-starry /etc/rustdesk-server-starry/control-agent.yaml
 chmod 0640 /etc/rustdesk-server-starry/control-agent.yaml
 EOF

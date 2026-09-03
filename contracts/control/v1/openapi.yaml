@@ -83,6 +83,116 @@ paths:
                   profile_activation: {$ref: "#/components/schemas/ProfileActivationRuntime"}
                   warning: {type: string}
         default: {$ref: "#/components/responses/Problem"}
+  /relay-enrollments:
+    get:
+      tags: [Relay]
+      operationId: listRelayEnrollments
+      x-required-scope: starry.relay.read
+      responses:
+        "200":
+          description: Bounded enrollment summaries; no SP1 secret, telemetry secret, private key, or CSR is returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version, items]
+                properties:
+                  version: {const: 1}
+                  items: {type: array, maxItems: 2048, items: {$ref: "#/components/schemas/RelayEnrollmentSummary"}}
+        default: {$ref: "#/components/responses/Problem"}
+  /relay-enrollments/{id}:
+    get:
+      tags: [Relay]
+      operationId: getRelayEnrollment
+      x-required-scope: starry.relay.read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {$ref: "#/components/schemas/Uuid"}
+      responses:
+        "200":
+          description: One non-sensitive enrollment summary.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RelayEnrollmentSummary"}
+        default: {$ref: "#/components/responses/Problem"}
+  /relay-enrollments:prepare:
+    post:
+      tags: [Relay]
+      operationId: prepareRelayEnrollment
+      x-required-scope: starry.relay.enroll
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RelayEnrollmentPrepareRequest"}
+      responses:
+        "200":
+          description: Prepared short-lived enrollment bound to an approved Relay configuration.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RelayEnrollmentPrepareResponse"}
+        default: {$ref: "#/components/responses/Problem"}
+  /relay-enrollments:complete:
+    post:
+      tags: [Relay]
+      operationId: completeRelayEnrollment
+      x-required-scope: starry.relay.enroll
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RelayEnrollmentCompleteRequest"}
+      responses:
+        "200":
+          description: One-time key-bound Relay bundle. The caller must durably install and then redact the telemetry secret.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RelayEnrollmentCompleteResponse"}
+        default: {$ref: "#/components/responses/Problem"}
+  /relay-enrollments:activate:
+    post:
+      tags: [Relay]
+      operationId: activateRelayEnrollment
+      x-required-scope: starry.relay.enroll
+      description: >-
+        Attests a health-gated Relay activation after the referenced config_apply
+        operation has a successful HBBS activation ACK. The Agent independently
+        reads the current Relay inventory and requires the exact generation,
+        health snapshot, endpoint, capacity, telemetry and profile capabilities.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RelayEnrollmentActivateRequest"}
+      responses:
+        "200":
+          description: Active enrollment summary. Repeating the exact evidence is idempotent.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RelayEnrollmentSummary"}
+        default: {$ref: "#/components/responses/Problem"}
+  /relay-enrollments:revoke:
+    post:
+      tags: [Relay]
+      operationId: revokeRelayEnrollment
+      x-required-scope: starry.relay.enroll
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RelayEnrollmentRevokeRequest"}
+      responses:
+        "200":
+          description: Revoked enrollment summary.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RelayEnrollmentSummary"}
+        default: {$ref: "#/components/responses/Problem"}
   /allocations:simulate:
     post:
       tags: [Relay]
@@ -383,6 +493,12 @@ components:
             upstream_version: {type: string}
         capabilities:
           type: object
+          required: [config_schema]
+          properties:
+            config_schema:
+              type: integer
+              const: 5
+              description: Maximum Starry configuration schema understood by this contract candidate.
           additionalProperties: {type: integer, minimum: 1}
         config:
           type: object
@@ -391,8 +507,8 @@ components:
           properties:
             supported_schema_versions:
               type: array
-              items: {type: integer, enum: [1, 2, 3, 4]}
-            active_schema_version: {type: integer, enum: [1, 2, 3, 4]}
+              items: {type: integer, enum: [1, 2, 3, 4, 5]}
+            active_schema_version: {type: integer, enum: [1, 2, 3, 4, 5]}
             schema_digest: {$ref: "#/components/schemas/Sha256"}
         limits:
           type: object
@@ -434,17 +550,18 @@ components:
     Relay:
       type: object
       additionalProperties: false
-      required: [id, version, capabilities, quality_candidate, configured_order, native, websocket, eligible_for, referenced_by_rules]
+      required: [id, version, capabilities, quality_candidate, configured_order, native, websocket, fast_media_udp, eligible_for, referenced_by_rules]
       properties:
         id: {type: string}
         version: {type: [string, "null"], description: Exact Starry HBBR version observed in the most recent successful WSS handshake; null for legacy or unprobed Relays.}
         capabilities:
           type: object
           additionalProperties: false
-          required: [relay_probe_protocol, relay_load_protocol]
+          required: [relay_probe_protocol, relay_load_protocol, fast_media_relay_udp]
           properties:
             relay_probe_protocol: {type: [integer, "null"], minimum: 1, description: Explicit HBBR active-probe protocol version; null means legacy/unsupported.}
             relay_load_protocol: {type: [integer, "null"], minimum: 1, description: Explicit HBBR load-telemetry protocol version; null means legacy/unsupported.}
+            fast_media_relay_udp: {type: [integer, "null"], minimum: 1, description: Explicit authenticated HBBR AKR1 UDP capability; null means unavailable.}
         quality_candidate: {type: boolean, description: True only when explicitly non-legacy, capability-compatible, healthy, and telemetry-fresh.}
         configured_order: {type: integer, minimum: 0}
         native:
@@ -470,7 +587,7 @@ components:
             latency_ms: {type: [integer, "null"], minimum: 0}
             telemetry_schema:
               oneOf:
-                - {type: integer, const: 1}
+                - {type: integer, enum: [1, 2]}
                 - {type: "null"}
             process_instance_id: {type: [string, "null"], maxLength: 64}
             telemetry_sequence: {type: [integer, "null"], format: int64, minimum: 1}
@@ -494,6 +611,8 @@ components:
             telemetry_auth_failures: {type: [integer, "null"], format: int64, minimum: 0}
             error_code: {type: [string, "null"]}
             error_message: {type: [string, "null"], maxLength: 256}
+        fast_media_udp:
+          $ref: "#/components/schemas/FastMediaUdpRuntime"
         eligible_for:
           type: array
           items: {type: string, enum: [native, wss, mixed]}
@@ -561,24 +680,179 @@ components:
     FastRelayRuntime:
       type: object
       additionalProperties: false
-      required: [protocol_version, enabled, active_authorizations, issued, reused, delivered, disabled, insecure_requests, invalid_configuration, invalid_uuids, missing_signing_keys, signing_failures, quality_selection_failures, rate_limited, response_misses, expired_cache_evictions]
+      required: [protocol_version, fast_compat_enabled, fast_media_v1_enabled, active_authorizations, active_fast_media_authorizations, last_fast_media_authorization_expires_at_unix, issued_sessions, target_grants_issued, controller_grants_issued, fast_compat_sessions, fast_media_sessions, reused, delivered, disabled, insecure_requests, invalid_configuration, invalid_uuids, invalid_server_selection, missing_signing_keys, signing_failures, quality_selection_failures, rate_limited, response_misses, expired_cache_evictions, fast_media_unavailable, reliable_fallbacks]
       properties:
         protocol_version: {const: 1}
-        enabled: {type: boolean}
+        fast_compat_enabled: {type: boolean}
+        fast_media_v1_enabled: {type: boolean}
         active_authorizations: {type: integer, minimum: 0}
-        issued: {type: integer, format: int64, minimum: 0}
+        active_fast_media_authorizations: {type: integer, minimum: 0}
+        last_fast_media_authorization_expires_at_unix: {type: integer, format: int64, minimum: 0}
+        issued_sessions: {type: integer, format: int64, minimum: 0}
+        target_grants_issued: {type: integer, format: int64, minimum: 0}
+        controller_grants_issued: {type: integer, format: int64, minimum: 0}
+        fast_compat_sessions: {type: integer, format: int64, minimum: 0}
+        fast_media_sessions: {type: integer, format: int64, minimum: 0}
         reused: {type: integer, format: int64, minimum: 0}
         delivered: {type: integer, format: int64, minimum: 0}
         disabled: {type: integer, format: int64, minimum: 0}
         insecure_requests: {type: integer, format: int64, minimum: 0}
         invalid_configuration: {type: integer, format: int64, minimum: 0}
         invalid_uuids: {type: integer, format: int64, minimum: 0}
+        invalid_server_selection: {type: integer, format: int64, minimum: 0}
         missing_signing_keys: {type: integer, format: int64, minimum: 0}
         signing_failures: {type: integer, format: int64, minimum: 0}
         quality_selection_failures: {type: integer, format: int64, minimum: 0}
         rate_limited: {type: integer, format: int64, minimum: 0}
         response_misses: {type: integer, format: int64, minimum: 0}
         expired_cache_evictions: {type: integer, format: int64, minimum: 0}
+        fast_media_unavailable: {type: integer, format: int64, minimum: 0}
+        reliable_fallbacks: {type: integer, format: int64, minimum: 0}
+    FastMediaUdpRuntime:
+      type: object
+      additionalProperties: false
+      required: [configured_port, reported_port, enabled, healthy, active_allocations, active_streams, hello_accepted, cookie_rejected, bind_succeeded, bind_rejected, grant_rejected, role_mismatch, session_mismatch, allocation_mismatch, rebinds, forwarded_packets, forwarded_bytes, dropped_packets, rate_limited, replay_rejected, expired_allocations, listener_failures]
+      properties:
+        configured_port: {type: [integer, "null"], minimum: 1, maximum: 65535}
+        reported_port: {type: [integer, "null"], minimum: 1, maximum: 65535}
+        enabled: {type: [boolean, "null"]}
+        healthy: {type: [boolean, "null"]}
+        active_allocations: {type: [integer, "null"], minimum: 0}
+        active_streams: {type: [integer, "null"], minimum: 0}
+        hello_accepted: {type: [integer, "null"], format: int64, minimum: 0}
+        cookie_rejected: {type: [integer, "null"], format: int64, minimum: 0}
+        bind_succeeded: {type: [integer, "null"], format: int64, minimum: 0}
+        bind_rejected: {type: [integer, "null"], format: int64, minimum: 0}
+        grant_rejected: {type: [integer, "null"], format: int64, minimum: 0}
+        role_mismatch: {type: [integer, "null"], format: int64, minimum: 0}
+        session_mismatch: {type: [integer, "null"], format: int64, minimum: 0}
+        allocation_mismatch: {type: [integer, "null"], format: int64, minimum: 0}
+        rebinds: {type: [integer, "null"], format: int64, minimum: 0}
+        forwarded_packets: {type: [integer, "null"], format: int64, minimum: 0}
+        forwarded_bytes: {type: [integer, "null"], format: int64, minimum: 0}
+        dropped_packets: {type: [integer, "null"], format: int64, minimum: 0}
+        rate_limited: {type: [integer, "null"], format: int64, minimum: 0}
+        replay_rejected: {type: [integer, "null"], format: int64, minimum: 0}
+        expired_allocations: {type: [integer, "null"], format: int64, minimum: 0}
+        listener_failures: {type: [integer, "null"], format: int64, minimum: 0}
+    RelayEnrollmentPrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [version, node_id, relay_server, public_endpoint, relay_pool, profile, max_sessions, capacity_bandwidth_bps]
+      properties:
+        version: {const: 1}
+        node_id: {type: string, minLength: 1, maxLength: 128}
+        relay_server: {type: string, minLength: 1, maxLength: 256}
+        public_endpoint: {type: string, minLength: 1, maxLength: 256}
+        relay_pool: {type: string, minLength: 1, maxLength: 128}
+        profile: {type: string, enum: [native, native-wss, native-wss-fastmedia]}
+        wss_endpoint: {type: [string, "null"], maxLength: 512, pattern: '^wss://[^/?#]+(?::[0-9]+)?/ws/telemetry$'}
+        activate_after_health: {type: boolean, default: false}
+        max_sessions: {type: integer, minimum: 1, maximum: 1000000}
+        capacity_bandwidth_bps: {type: integer, format: int64, minimum: 1}
+        draining: {type: boolean, default: false}
+        fast_media_udp_port: {type: [integer, "null"], minimum: 1, maximum: 65535}
+        expires_in_seconds: {type: integer, minimum: 1, maximum: 3600, default: 600}
+    RelayEnrollmentPrepareResponse:
+      type: object
+      additionalProperties: false
+      required: [version, enrollment_id, configuration_digest, expires_at_unix, state, reused]
+      properties:
+        version: {const: 1}
+        enrollment_id: {$ref: "#/components/schemas/Uuid"}
+        configuration_digest: {$ref: "#/components/schemas/Sha256"}
+        expires_at_unix: {type: integer, format: int64, minimum: 1}
+        state: {const: pending_claim}
+        reused: {type: boolean}
+    RelayEnrollmentCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [version, enrollment_id, configuration_digest, request_digest, key_fingerprint, csr_pem]
+      properties:
+        version: {const: 1}
+        enrollment_id: {$ref: "#/components/schemas/Uuid"}
+        configuration_digest: {$ref: "#/components/schemas/Sha256"}
+        request_digest: {$ref: "#/components/schemas/Sha256"}
+        key_fingerprint: {$ref: "#/components/schemas/Sha256"}
+        csr_pem: {type: string, minLength: 1, maxLength: 32768}
+    RelayEnrollmentRevokeRequest:
+      type: object
+      additionalProperties: false
+      required: [version, enrollment_id, configuration_digest]
+      properties:
+        version: {const: 1}
+        enrollment_id: {$ref: "#/components/schemas/Uuid"}
+        configuration_digest: {$ref: "#/components/schemas/Sha256"}
+    RelayEnrollmentActivateRequest:
+      type: object
+      additionalProperties: false
+      required: [version, enrollment_id, configuration_digest, operation_id, config_generation, health_snapshot_id]
+      properties:
+        version: {const: 1}
+        enrollment_id: {$ref: "#/components/schemas/Uuid"}
+        configuration_digest: {$ref: "#/components/schemas/Sha256"}
+        operation_id: {$ref: "#/components/schemas/Uuid"}
+        config_generation: {type: integer, format: int64, minimum: 1}
+        health_snapshot_id: {type: string, pattern: '^health-[A-Za-z0-9_.-]+$', minLength: 8, maxLength: 128}
+    RelayEnrollmentCompleteResponse:
+      type: object
+      additionalProperties: false
+      required: [version, enrollment_id, configuration_digest, request_digest, key_fingerprint, state, bundle, reused]
+      properties:
+        version: {const: 1}
+        enrollment_id: {$ref: "#/components/schemas/Uuid"}
+        configuration_digest: {$ref: "#/components/schemas/Sha256"}
+        request_digest: {$ref: "#/components/schemas/Sha256"}
+        key_fingerprint: {$ref: "#/components/schemas/Sha256"}
+        state: {type: string, enum: [claimed_pending_health, pending_approval, active]}
+        bundle: {$ref: "#/components/schemas/RelayEnrollmentBundle"}
+        reused: {type: boolean}
+    RelayEnrollmentBundle:
+      type: object
+      additionalProperties: false
+      required: [node_id, relay_server, public_endpoint, node_certificate_pem, relay_ca_pem, center_public_key, telemetry_secret, max_sessions, capacity_bandwidth_bps, draining, relay_pool, profile, wss_endpoint, activate_after_health, fast_media_udp_port]
+      properties:
+        node_id: {type: string, minLength: 1, maxLength: 128}
+        relay_server: {type: string, minLength: 1, maxLength: 256}
+        public_endpoint: {type: string, minLength: 1, maxLength: 256}
+        node_certificate_pem: {type: string, minLength: 1, maxLength: 65536, writeOnly: true}
+        relay_ca_pem: {type: string, minLength: 1, maxLength: 65536}
+        center_public_key: {type: string, minLength: 43, maxLength: 128}
+        telemetry_secret: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+        max_sessions: {type: integer, minimum: 1, maximum: 1000000}
+        capacity_bandwidth_bps: {type: integer, format: int64, minimum: 1}
+        draining: {type: boolean}
+        relay_pool: {type: string, minLength: 1, maxLength: 128}
+        profile: {type: string, enum: [native, native-wss, native-wss-fastmedia]}
+        wss_endpoint: {type: [string, "null"], maxLength: 512}
+        activate_after_health: {type: boolean}
+        fast_media_udp_port: {type: [integer, "null"], minimum: 1, maximum: 65535}
+    RelayEnrollmentSummary:
+      type: object
+      additionalProperties: false
+      required: [version, enrollment_id, node_id, relay_server, relay_pool, profile, configuration_digest, expires_at_unix, state, activate_after_health, key_fingerprint, activation_operation_id, activation_config_generation, activation_health_snapshot_id, activated_at_unix]
+      properties:
+        version: {const: 1}
+        enrollment_id: {$ref: "#/components/schemas/Uuid"}
+        node_id: {type: string, minLength: 1, maxLength: 128}
+        relay_server: {type: string, minLength: 1, maxLength: 256}
+        relay_pool: {type: string, minLength: 1, maxLength: 128}
+        profile: {type: string, enum: [native, native-wss, native-wss-fastmedia]}
+        configuration_digest: {$ref: "#/components/schemas/Sha256"}
+        expires_at_unix: {type: integer, format: int64, minimum: 1}
+        state: {type: string, enum: [pending_claim, claimed_pending_health, pending_approval, active, revoked, expired]}
+        activate_after_health: {type: boolean}
+        key_fingerprint:
+          oneOf:
+            - {$ref: "#/components/schemas/Sha256"}
+            - {type: "null"}
+        activation_operation_id:
+          oneOf:
+            - {$ref: "#/components/schemas/Uuid"}
+            - {type: "null"}
+        activation_config_generation: {type: [integer, "null"], format: int64, minimum: 1}
+        activation_health_snapshot_id: {type: [string, "null"], pattern: '^health-[A-Za-z0-9_.-]+$', maxLength: 128}
+        activated_at_unix: {type: [integer, "null"], format: int64, minimum: 1}
     ProfileActivationRuntime:
       type: object
       additionalProperties: false
@@ -719,7 +993,7 @@ components:
       properties:
         status: {type: string, enum: [disabled_no_config, active, unavailable]}
         generation: {type: integer, format: int64, minimum: 0}
-        schema_version: {type: [integer, "null"], enum: [1, 2, 3, 4, null]}
+        schema_version: {type: [integer, "null"], enum: [1, 2, 3, 4, 5, null]}
         source_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
         effective_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
         activated_at: {oneOf: [{$ref: "#/components/schemas/DateTime"}, {type: "null"}]}
@@ -734,7 +1008,7 @@ components:
       properties:
         status: {type: string, enum: [disabled_no_config, active, unavailable]}
         generation: {type: integer, format: int64, minimum: 0}
-        schema_version: {type: [integer, "null"], enum: [1, 2, 3, 4, null]}
+        schema_version: {type: [integer, "null"], enum: [1, 2, 3, 4, 5, null]}
         source_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
         effective_digest: {oneOf: [{$ref: "#/components/schemas/Sha256"}, {type: "null"}]}
         activated_at: {oneOf: [{$ref: "#/components/schemas/DateTime"}, {type: "null"}]}
@@ -755,7 +1029,7 @@ components:
       required: [generation, schema_version, source_digest, effective_digest, activated_at, subsystem_acks]
       properties:
         generation: {type: integer, format: int64, minimum: 1}
-        schema_version: {type: integer, enum: [1, 2, 3, 4]}
+        schema_version: {type: integer, enum: [1, 2, 3, 4, 5]}
         source_digest: {$ref: "#/components/schemas/Sha256"}
         effective_digest: {$ref: "#/components/schemas/Sha256"}
         activated_at: {$ref: "#/components/schemas/DateTime"}

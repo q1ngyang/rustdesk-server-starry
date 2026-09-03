@@ -1,8 +1,8 @@
 {
   "status": "active",
   "generation": 42,
-  "schema_version": 4,
-  "source_digest": "sha256:bcde041f948a26132d69d94f5a40a99fec76519a9a069b4208d90b1abd747060",
+  "schema_version": 5,
+  "source_digest": "sha256:5c6643a47546ed7676303b21292371b4c7dbcf69b411533872ac933d99e3111e",
   "effective_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "activated_at": "2026-08-18T10:00:00Z",
   "subsystem_acks": [
@@ -12,8 +12,8 @@
     {"subsystem": "connection_auth", "accepted": true, "detail": "audit verifier ready"}
   ],
   "last_error": null,
-  "etag": "\"sha256:bcde041f948a26132d69d94f5a40a99fec76519a9a069b4208d90b1abd747060\"",
+  "etag": "\"sha256:5c6643a47546ed7676303b21292371b4c7dbcf69b411533872ac933d99e3111e\"",
   "drift": false,
-  "document": "version: 4\nrelay_servers:\n  - relay-asia-1.example.com:21117\n  - relay-asia-2.example.com:21117\nwebsocket_signal:\n  relay_health:\n    endpoints:\n      - {relay: relay-asia-1.example.com:21117, url: wss://relay-asia-1.example.com/ws/telemetry, telemetry_secret_file: /run/secrets/starry-relay-telemetry}\n      - {relay: relay-asia-2.example.com:21117, url: wss://relay-asia-2.example.com/ws/telemetry, telemetry_secret_file: /run/secrets/starry-relay-telemetry}\nrelay_quality:\n  enabled: true\n  probe_timeout_ms: 1000\n  report_timeout_ms: 15000\n  max_telemetry_age_seconds: 180\n",
+  "document": "version: 5\nrelay_servers:\n  - relay-asia-1.example.com:21117\n  - relay-asia-2.example.com:21117\nwebsocket_signal:\n  relay_health:\n    endpoints:\n      - {relay: relay-asia-1.example.com:21117, url: wss://relay-asia-1.example.com/ws/telemetry, telemetry_secret_file: /run/secrets/starry-relay-telemetry}\n      - {relay: relay-asia-2.example.com:21117, url: wss://relay-asia-2.example.com/ws/telemetry, telemetry_secret_file: /run/secrets/starry-relay-telemetry}\nrelay_quality:\n  enabled: true\n  probe_timeout_ms: 1000\n  report_timeout_ms: 15000\n  max_telemetry_age_seconds: 180\n",
   "format": "yaml"
 }

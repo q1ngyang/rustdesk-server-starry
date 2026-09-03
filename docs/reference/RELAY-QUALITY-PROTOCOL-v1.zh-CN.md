@@ -82,6 +82,11 @@ eager-all-candidates 流程，并复用相同 allocation、绑定、评分、dec
 重复包幂等；冲突重复、旧 stage/token、角色颠倒、未知候选及其他 route/IP 的重放均拒绝。
 最终阶段的精确重复只重发既有最终 decision，绝不重新选择。
 
+唯一 route 例外是 native target 的初始 `PunchHoleSent` 或 `LocalAddr`：当原 controller
+route、target IP 与精确 target ID 仍匹配时，其来源端口可不同于注册 target route；report
+本身仍须完整匹配 allocation、generation、stage/token、target role 与全部候选集合。WSS、
+controller 与 top-level stage report 继续精确绑定，冲突重复仍拒绝。
+
 单次尝试硬超时为 `probe_timeout_ms`；`stage_deadline_unix_ms` 是阶段上限，
 `total_deadline_unix_ms` 是 allocation 上限。HBBS 以服务端单调时钟判定，客户端墙钟只供
 参考。HBBS 每 100 ms 的有界 tick 最多完成 64 个已到期且请求 Relay 的 allocation。

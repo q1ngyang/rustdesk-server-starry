@@ -7,12 +7,14 @@ COPY --chmod=755 ${TARGETARCH}/hbbs /usr/bin/hbbs
 COPY --chmod=755 ${TARGETARCH}/hbbr /usr/bin/hbbr
 COPY --chmod=755 ${TARGETARCH}/rustdesk-utils /usr/bin/rustdesk-utils
 COPY --chmod=755 ${TARGETARCH}/starry-control-agent /usr/bin/starry-control-agent
+COPY --chmod=755 ${TARGETARCH}/starry-relayctl /usr/bin/starry-relayctl
+COPY --chmod=755 starry-relay-entrypoint.sh /usr/bin/starry-relay-entrypoint
 
 ENV HOME=/root
 
 WORKDIR /root
-VOLUME ["/root"]
-
-EXPOSE 21115 21116 21116/udp 21117 21118 21119
+# Deliberately no VOLUME instruction: an omitted bind mount must not silently
+# create an anonymous volume carrying identity or enrollment state.
+EXPOSE 21115 21116 21116/udp 21117 21118 21119 21119/udp
 
 CMD ["hbbs", "--starry-config=/root/starry/config.yaml"]

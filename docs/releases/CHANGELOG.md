@@ -4,7 +4,48 @@
 
 This file records Starry overlay changes. The full artifact version combines
 the official RustDesk Server version with the Starry patch version, for example
-`1.1.16-patch-v1.3.0`.
+`1.1.16-patch-v1.3.1`.
+
+## patch-v1.3.1 — preview
+
+Release notes: [`RELEASE-NOTES-patch-v1.3.1.md`](RELEASE-NOTES-patch-v1.3.1.md)
+
+### Added
+
+- Role-bound FastRelayAuthorization fields 7–12 and independent default-off
+  schema-v5 FastCompat/FastMediaV1 policy.
+- HBBR AKR1 UDP cookie/bind/forward/rebind data plane with bounded grants,
+  lifetimes, replay, traffic, cleanup, and authenticated telemetry schema 2.
+- Server-selected FastCompat/FastMedia grants for quality decisions and safe
+  ordinary GEO/failover fallback; clients never select the signed Relay.
+- Starry Pairing v1, Control Agent pair/adopt/rotate, bounded Relay enrollment,
+  and the separate `starry-relayctl` utility.
+- Explicit persistent container/native/DEB identity layouts and a no-side-
+  effect schema-v5 to schema-v4 downgrade preview/export with drain and
+  90-day certificate-window gates.
+
+### Fixed
+
+- Permit only a legitimate native initial `PunchHoleSent`/`LocalAddr` target
+  source-port change under the complete frozen Relay Quality binding; exact
+  top-level report/controller-route and conflicting-duplicate checks remain.
+- Drain the Control Agent cleanly on termination instead of leaving a
+  diagnostic container with an ambiguous forced-stop status.
+- Keep generated HBBR test signing keys out of child-process arguments.
+- Replace the yanked locked `chacha20 0.10.1` with non-yanked `0.10.2`, and
+  make CI reject yanked dependencies as well as vulnerabilities and unsound
+  advisories.
+
+### Compatibility and status
+
+- Relay Quality v1 protobuf, digest, scoring, telemetry, hysteresis, privacy,
+  and fallback semantics are unchanged.
+- Official clients, six-field FastCompat grants, manual Agent/Relay setup, and
+  ordinary Native/WSS Relay remain compatible. All new switches default off.
+- The protocol-level Akari harness now proves dual-role forwarding, reliable
+  fallback, and same-session automatic re-entry against the candidate HBBR.
+  The default-off preview is approved; stable publication still requires the
+  real two-client GUI/signalling, device/NAT/fault, and production PKI gates.
 
 ## patch-v1.3.0 — development
 

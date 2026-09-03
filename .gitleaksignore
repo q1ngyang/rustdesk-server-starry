@@ -1,0 +1,5 @@
+# Deterministic public Ed25519 key used only by the isolated package smoke test.
+# Keep this exception pinned to the reviewed historical commit, path, rule, and line.
+e7fe43142f1602612ca118f241ae84087b5cb461:.github/workflows/build.yml:generic-api-key:667
+# The same public fixture in the uncommitted candidate working-tree scan.
+.github/workflows/build.yml:generic-api-key:667

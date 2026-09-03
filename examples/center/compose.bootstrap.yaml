@@ -6,7 +6,7 @@ name: ${CENTER_COMPOSE_PROJECT_NAME:-rustdesk-center}
 
 services:
   hbbs:
-    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.3.0}
+    image: ${STARRY_IMAGE:-ghcr.io/q1ngyang/rustdesk-server-starry}:${STARRY_VERSION:-1.1.16-patch-v1.3.1}
     container_name: ${CENTER_HBBS_CONTAINER_NAME:-rustdesk-starry-hbbs}
     command:
       - hbbs
@@ -15,7 +15,7 @@ services:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
     volumes:
       - type: bind
-        source: ${CENTER_SERVER_DATA_DIR:-./data/server}
+        source: ${STARRY_PERSIST_ROOT:-./persist}/hbbs
         target: /root
     network_mode: host
     restart: unless-stopped

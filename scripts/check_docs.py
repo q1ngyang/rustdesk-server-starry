@@ -112,14 +112,26 @@ def main() -> int:
     for required in (
         "${STARRY_PERSIST_ROOT:-./persist}/auth/secrets",
         "${STARRY_PERSIST_ROOT:-./persist}/auth/cache",
-        "${STARRY_PERSIST_ROOT:-./persist}/control/secrets",
+        "${STARRY_PERSIST_ROOT:-./persist}/control/generated",
+        "${STARRY_PERSIST_ROOT:-./persist}/control/identity",
         "${STARRY_PERSIST_ROOT:-./persist}/control/shared",
         "${STARRY_PERSIST_ROOT:-./persist}/control/state",
+        "${STARRY_PERSIST_ROOT:-./persist}/relay-secrets",
+        "${STARRY_PERSIST_ROOT:-./persist}/relay",
         "target: /var/lib/starry-auth",
-        "target: /run/secrets/starry-control-shared",
+        "target: /starry-persist/control/shared",
+        "target: /var/lib/rustdesk-server-starry/relay",
+        "RELAY_DATA_DIR: /var/lib/rustdesk-server-starry/relay",
     ):
         if required not in control_compose:
             errors.append(f"Control Agent Compose is missing persistence boundary: {required}")
+
+    relay_compose = (ROOT / "examples/relay/compose.yaml").read_text()
+    relay_environment = (ROOT / "examples/relay/.env.example").read_text()
+    if "STARRY_REQUIRE_RELAY_ENROLLMENT: ${RELAY_REQUIRE_ENROLLMENT:-1}" not in relay_compose:
+        errors.append("Relay-only Compose must fail closed when enrollment state is absent")
+    if "RELAY_REQUIRE_ENROLLMENT=1" not in relay_environment:
+        errors.append("Relay-only environment example must preserve enrollment intent")
     for deprecated in ("source: ./data/", "source: ./secrets"):
         if deprecated in control_compose:
             errors.append(f"Control Agent Compose retains split host path: {deprecated}")

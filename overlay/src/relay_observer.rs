@@ -70,6 +70,33 @@ pub(crate) struct WebSocketRuntimeStatus {
 pub(crate) struct RelayCapabilities {
     pub(crate) relay_probe_protocol: Option<u32>,
     pub(crate) relay_load_protocol: Option<u32>,
+    pub(crate) fast_media_relay_udp: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct FastMediaUdpRuntimeStatus {
+    pub(crate) configured_port: Option<u16>,
+    pub(crate) reported_port: Option<u16>,
+    pub(crate) enabled: Option<bool>,
+    pub(crate) healthy: Option<bool>,
+    pub(crate) active_allocations: Option<u64>,
+    pub(crate) active_streams: Option<u64>,
+    pub(crate) hello_accepted: Option<u64>,
+    pub(crate) cookie_rejected: Option<u64>,
+    pub(crate) bind_succeeded: Option<u64>,
+    pub(crate) bind_rejected: Option<u64>,
+    pub(crate) grant_rejected: Option<u64>,
+    pub(crate) role_mismatch: Option<u64>,
+    pub(crate) session_mismatch: Option<u64>,
+    pub(crate) allocation_mismatch: Option<u64>,
+    pub(crate) rebinds: Option<u64>,
+    pub(crate) forwarded_packets: Option<u64>,
+    pub(crate) forwarded_bytes: Option<u64>,
+    pub(crate) dropped_packets: Option<u64>,
+    pub(crate) rate_limited: Option<u64>,
+    pub(crate) replay_rejected: Option<u64>,
+    pub(crate) expired_allocations: Option<u64>,
+    pub(crate) listener_failures: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -81,8 +108,15 @@ pub(crate) struct RelayRuntimeView {
     pub(crate) configured_order: usize,
     pub(crate) native: NativeRuntimeStatus,
     pub(crate) websocket: WebSocketRuntimeStatus,
+    pub(crate) fast_media_udp: FastMediaUdpRuntimeStatus,
     pub(crate) eligible_for: Vec<String>,
     pub(crate) referenced_by_rules: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FastMediaRelayEndpoint {
+    pub(crate) protocol: u32,
+    pub(crate) udp_port: u16,
 }
 
 #[derive(Clone, Serialize)]
@@ -293,6 +327,45 @@ pub(crate) fn snapshot() -> RelayRuntimeSnapshot {
     build_snapshot(active, pool, health, geo)
 }
 
+pub(crate) fn fast_media_endpoint(relay: &str) -> Option<FastMediaRelayEndpoint> {
+    let active = starry_config::active_snapshot();
+    let config = active.config.as_ref()?;
+    if !config.fast_mode.relay.fast_media_v1_enabled {
+        return None;
+    }
+    let configured = config
+        .websocket_signal
+        .relay_health
+        .endpoints
+        .iter()
+        .find(|endpoint| endpoint.relay.eq_ignore_ascii_case(relay))?;
+    let configured_port = configured.fast_media_udp_port?;
+    let health =
+        websocket_signal::health_runtime_snapshot(config.relay_quality.max_telemetry_age_seconds);
+    if !health.is_ready() {
+        return None;
+    }
+    let endpoint = health.endpoint(relay)?;
+    let load = endpoint.load.as_ref()?;
+    let protocol = load.fast_media_relay_udp?;
+    let reported_port = load.fast_media_udp_port?;
+    if endpoint.state != "healthy"
+        || endpoint.stale
+        || load.telemetry_schema < 2
+        || protocol != 1
+        || load.fast_media_udp_enabled != Some(true)
+        || load.fast_media_udp_healthy != Some(true)
+        || reported_port == 0
+        || reported_port != configured_port
+    {
+        return None;
+    }
+    Some(FastMediaRelayEndpoint {
+        protocol,
+        udp_port: reported_port,
+    })
+}
+
 pub(crate) fn simulate(
     params: Value,
     rotation_snapshot: usize,
@@ -427,6 +500,16 @@ fn build_snapshot(
             let explicitly_legacy = legacy_fallback_relays.contains(&relay.to_ascii_lowercase());
             let relay_probe_protocol = endpoint.and_then(|endpoint| endpoint.relay_probe_protocol);
             let relay_load_protocol = endpoint.and_then(|endpoint| endpoint.relay_load_protocol);
+            let load = endpoint.and_then(|endpoint| endpoint.load.as_ref());
+            let configured_fast_media_port = active.config.as_ref().and_then(|config| {
+                config
+                    .websocket_signal
+                    .relay_health
+                    .endpoints
+                    .iter()
+                    .find(|configured| configured.relay.eq_ignore_ascii_case(relay))
+                    .and_then(|configured| configured.fast_media_udp_port)
+            });
             let quality_candidate = !explicitly_legacy
                 && endpoint
                     .map(|endpoint| {
@@ -460,6 +543,7 @@ fn build_snapshot(
                 capabilities: RelayCapabilities {
                     relay_probe_protocol,
                     relay_load_protocol,
+                    fast_media_relay_udp: load.and_then(|load| load.fast_media_relay_udp),
                 },
                 quality_candidate,
                 configured_order,
@@ -536,6 +620,30 @@ fn build_snapshot(
                     error_code: endpoint.and_then(|endpoint| endpoint.error_code.clone()),
                     error_message: endpoint.and_then(|endpoint| endpoint.error_message.clone()),
                 },
+                fast_media_udp: FastMediaUdpRuntimeStatus {
+                    configured_port: configured_fast_media_port,
+                    reported_port: load.and_then(|load| load.fast_media_udp_port),
+                    enabled: load.and_then(|load| load.fast_media_udp_enabled),
+                    healthy: load.and_then(|load| load.fast_media_udp_healthy),
+                    active_allocations: load.and_then(|load| load.fast_media_active_allocations),
+                    active_streams: load.and_then(|load| load.fast_media_active_streams),
+                    hello_accepted: load.and_then(|load| load.fast_media_hello_accepted),
+                    cookie_rejected: load.and_then(|load| load.fast_media_cookie_rejected),
+                    bind_succeeded: load.and_then(|load| load.fast_media_bind_succeeded),
+                    bind_rejected: load.and_then(|load| load.fast_media_bind_rejected),
+                    grant_rejected: load.and_then(|load| load.fast_media_grant_rejected),
+                    role_mismatch: load.and_then(|load| load.fast_media_role_mismatch),
+                    session_mismatch: load.and_then(|load| load.fast_media_session_mismatch),
+                    allocation_mismatch: load.and_then(|load| load.fast_media_allocation_mismatch),
+                    rebinds: load.and_then(|load| load.fast_media_rebinds),
+                    forwarded_packets: load.and_then(|load| load.fast_media_forwarded_packets),
+                    forwarded_bytes: load.and_then(|load| load.fast_media_forwarded_bytes),
+                    dropped_packets: load.and_then(|load| load.fast_media_dropped_packets),
+                    rate_limited: load.and_then(|load| load.fast_media_rate_limited),
+                    replay_rejected: load.and_then(|load| load.fast_media_replay_rejected),
+                    expired_allocations: load.and_then(|load| load.fast_media_expired_allocations),
+                    listener_failures: load.and_then(|load| load.fast_media_listener_failures),
+                },
                 eligible_for,
                 referenced_by_rules: rule_references
                     .remove(&relay.to_ascii_lowercase())
@@ -605,6 +713,7 @@ mod tests {
             capabilities: RelayCapabilities {
                 relay_probe_protocol: quality_candidate.then_some(1),
                 relay_load_protocol: quality_candidate.then_some(1),
+                fast_media_relay_udp: None,
             },
             quality_candidate,
             configured_order: 0,
@@ -635,6 +744,7 @@ mod tests {
                 error_code: None,
                 ..Default::default()
             },
+            fast_media_udp: FastMediaUdpRuntimeStatus::default(),
             eligible_for: vec!["native".to_owned()],
             referenced_by_rules: Vec::new(),
         }

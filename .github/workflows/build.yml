@@ -51,6 +51,8 @@ jobs:
       release_tag: ${{ steps.version.outputs.release_tag }}
       deb_version: ${{ steps.version.outputs.deb_version }}
       publish: ${{ steps.version.outputs.publish }}
+      release_channel: ${{ steps.version.outputs.release_channel }}
+      rolling_tag: ${{ steps.version.outputs.rolling_tag }}
       skip: ${{ steps.version.outputs.skip }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -78,10 +80,25 @@ jobs:
           release_status="$(sed -n 's/^status: //p' RELEASE_STATUS)"
           release_status_version="$(sed -n 's/^patch_version: //p' RELEASE_STATUS)"
           if [ "$release_status_version" != "$patch_version" ] \
-            || ! printf '%s' "$release_status" | grep -Eq '^(BLOCKED|APPROVED)$'; then
+            || ! printf '%s' "$release_status" \
+              | grep -Eq '^(BLOCKED|PREVIEW_APPROVED|APPROVED)$'; then
             echo "RELEASE_STATUS is invalid or does not match PATCH_VERSION" >&2
             exit 1
           fi
+          case "$release_status" in
+            APPROVED)
+              release_channel=stable
+              rolling_tag=latest
+              ;;
+            PREVIEW_APPROVED)
+              release_channel=preview
+              rolling_tag=preview
+              ;;
+            BLOCKED)
+              release_channel=blocked
+              rolling_tag=preview
+              ;;
+          esac
 
           upstream_version="${upstream_ref#v}"
           if ! printf '%s' "$upstream_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([._-][A-Za-z0-9.-]+)?$'; then
@@ -93,12 +110,14 @@ jobs:
           deb_version="${deb_upstream}+patch.${patch_version}-1"
 
           publish=false
-          if [ "${GITHUB_EVENT_NAME}" = schedule ] && [ "${AUTO_ENABLED:-false}" = true ]; then
+          if [ "${GITHUB_EVENT_NAME}" = schedule ] \
+            && [ "${AUTO_ENABLED:-false}" = true ] \
+            && [ "$release_status" = APPROVED ]; then
             publish=true
           elif [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${REQUESTED_PUBLISH:-false}" = true ]; then
             publish=true
           fi
-          if [ "$publish" = true ] && [ "$release_status" != APPROVED ]; then
+          if [ "$publish" = true ] && [ "$release_status" = BLOCKED ]; then
             echo "Publication is blocked by RELEASE_STATUS" >&2
             exit 1
           fi
@@ -118,6 +137,8 @@ jobs:
             echo "release_tag=$release_tag"
             echo "deb_version=$deb_version"
             echo "publish=$publish"
+            echo "release_channel=$release_channel"
+            echo "rolling_tag=$rolling_tag"
             echo "skip=$skip"
           } >> "$GITHUB_OUTPUT"
 
@@ -126,6 +147,7 @@ jobs:
             echo
             echo "- Upstream: \`rustdesk/rustdesk-server@$upstream_ref\`"
             echo "- Starry tag: \`$release_tag\`"
+            echo "- Release channel: \`$release_channel\`"
             echo "- Publish after validation: \`$publish\`"
             echo "- Release gate: \`$release_status\`"
             echo "- Skip: \`$skip\`"
@@ -308,7 +330,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          components: rustfmt
+          components: rustfmt, clippy
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -324,7 +346,7 @@ jobs:
           cargo install cargo-audit --version "${CARGO_AUDIT_VERSION}" --locked
           test "$(cargo-audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"
           cargo audit --db _rustsec-advisory-db --no-fetch \
-            --file _upstream/Cargo.lock --deny unsound --json \
+            --file _upstream/Cargo.lock --deny unsound --deny yanked --json \
             | tee starry-rustsec-audit.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -345,10 +367,16 @@ jobs:
             _upstream/src/control_agent/auth.rs \
             _upstream/src/control_agent/config_store.rs \
             _upstream/src/control_agent/local_client.rs \
+            _upstream/src/control_agent/relay_enrollment.rs \
             _upstream/src/bin/starry-control-agent.rs \
+            _upstream/src/bin/starry-relayctl.rs \
+            _upstream/src/config_downgrade.rs \
             _upstream/src/database.rs \
+            _upstream/src/fast_media_relay.rs \
             _upstream/src/fast_relay.rs \
+            _upstream/src/pairing.rs \
             _upstream/src/profile_activation.rs \
+            _upstream/src/relay_enrollment.rs \
             _upstream/src/secure_tcp.rs \
             _upstream/src/geo_relay.rs \
             _upstream/src/geo_relay/rules.rs \
@@ -363,14 +391,21 @@ jobs:
             _upstream/tests/local_control.rs \
             _upstream/tests/connection_auth_transport.rs \
             _upstream/tests/control_agent.rs \
+            _upstream/tests/fast_media_relay.rs \
             _upstream/tests/protocol_contract.rs \
             _upstream/tests/websocket_signal.rs
 
       - name: Run all library tests serially
         run: cargo test --manifest-path _upstream/Cargo.toml --locked --lib -j 1
 
+      - name: Lint every server target serially
+        run: cargo clippy --manifest-path _upstream/Cargo.toml --locked --all-targets -j 1
+
       - name: Check all server binaries serially
         run: cargo check --manifest-path _upstream/Cargo.toml --locked --bins -j 1
+
+      - name: Exercise HBBR telemetry, enrollment, and bounded FastMedia state
+        run: cargo test --manifest-path _upstream/Cargo.toml --locked --bin hbbr -j 1
 
       - name: Lock authentication protobuf and client-compatible denial fixtures
         run: >-
@@ -410,6 +445,11 @@ jobs:
         run: >-
           cargo test --manifest-path _upstream/Cargo.toml --locked
           --test control_agent -j 1 -- --nocapture
+
+      - name: Bind both FastMedia roles in a real HBBR subprocess
+        run: >-
+          cargo test --manifest-path _upstream/Cargo.toml --locked
+          --test fast_media_relay -j 1 -- --nocapture
 
   linux:
     name: Linux amd64 static binaries
@@ -460,14 +500,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir artifact
-          for binary in hbbs hbbr rustdesk-utils starry-control-agent; do
+          for binary in hbbs hbbr rustdesk-utils starry-control-agent starry-relayctl; do
             install -m 0755 "_upstream/target/${TARGET}/release/${binary}" \
               "artifact/${binary}-${RELEASE_TAG}-linux-${ARCH}"
           done
           tar --sort=name --mtime='UTC 1970-01-01' \
             --owner=0 --group=0 --numeric-owner \
             -C "_upstream/target/${TARGET}/release" -cf - \
-            hbbs hbbr rustdesk-utils starry-control-agent \
+            hbbs hbbr rustdesk-utils starry-control-agent starry-relayctl \
             | gzip -n > \
               "artifact/rustdesk-server-starry-${RELEASE_TAG}-linux-${ARCH}.tar.gz"
 
@@ -559,7 +599,8 @@ jobs:
           scripts/build_deb.sh hbbs "input/hbbs-${RELEASE_TAG}-linux-${ARCH}" \
             "$ARCH" "$DEB_VERSION" artifact
           scripts/build_deb.sh hbbr "input/hbbr-${RELEASE_TAG}-linux-${ARCH}" \
-            "$ARCH" "$DEB_VERSION" artifact
+            "$ARCH" "$DEB_VERSION" artifact \
+            "input/starry-relayctl-${RELEASE_TAG}-linux-${ARCH}"
           scripts/build_deb.sh utils "input/rustdesk-utils-${RELEASE_TAG}-linux-${ARCH}" \
             "$ARCH" "$DEB_VERSION" artifact
           scripts/build_deb.sh agent \
@@ -613,6 +654,9 @@ jobs:
           install -m 0755 \
             "input/starry-control-agent-${RELEASE_TAG}-linux-${ARCH}" \
             "docker/${ARCH}/starry-control-agent"
+          install -m 0755 \
+            "input/starry-relayctl-${RELEASE_TAG}-linux-${ARCH}" \
+            "docker/${ARCH}/starry-relayctl"
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
         with:
@@ -637,6 +681,32 @@ jobs:
             rustdesk-utils genkeypair >/dev/null
           docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" \
             starry-control-agent /does-not-exist >/dev/null 2>&1 || test "$?" -ne 127
+          docker run --rm --platform "linux/${ARCH}" "starry-smoke:${ARCH}" \
+            starry-relayctl --help >/dev/null
+
+          relay_state="$(mktemp -d)"
+          relay_stub="$(mktemp -d)"
+          expected_key='c3RhcnJ5LXBhZGRlZC1wdWJsaWMta2V5LXYx=='
+          mkdir -p "${relay_state}/starry/enrollment"
+          printf '%s\n' \
+            "KEY=${expected_key}" \
+            'STARRY_RELAY_ENROLLMENT_DIR=/relay-data/starry/enrollment' \
+            > "${relay_state}/starry/enrollment/relay-compat.env"
+          printf '%s\n' 'staging-relay-machine-id' > "${relay_stub}/machine-id"
+          # The generated stub must expand KEY inside the smoke-test container.
+          # shellcheck disable=SC2016
+          printf '%s\n' '#!/bin/sh' 'printf "%s" "$KEY" > /relay-data/observed-key' \
+            > "${relay_stub}/hbbr"
+          chmod 0755 "${relay_stub}/hbbr"
+          docker run --rm --platform "linux/${ARCH}" \
+            --entrypoint /usr/bin/starry-relay-entrypoint \
+            -e RELAY_DATA_DIR=/relay-data \
+            -e STARRY_REQUIRE_RELAY_ENROLLMENT=1 \
+            -v "${relay_state}:/relay-data" \
+            -v "${relay_stub}/machine-id:/etc/machine-id:ro" \
+            -v "${relay_stub}/hbbr:/usr/bin/hbbr:ro" \
+            "starry-smoke:${ARCH}"
+          test "$(cat "${relay_state}/observed-key")" = "$expected_key"
 
           state_dir="$(mktemp -d)"
           container="$(docker run -d --platform "linux/${ARCH}" \
@@ -707,6 +777,7 @@ jobs:
               /usr/bin/hbbr --help
               /usr/bin/rustdesk-utils genkeypair >/dev/null
               /usr/bin/starry-control-agent /does-not-exist >/dev/null 2>&1 || test "$?" -ne 127
+              /usr/bin/starry-relayctl --help >/dev/null
             '
 
   release-candidate:
@@ -753,6 +824,7 @@ jobs:
           set -euo pipefail
           mkdir -p candidate/docker/amd64 candidate/release-assets
           cp docker/Dockerfile candidate/docker/Dockerfile
+          cp docker/starry-relay-entrypoint.sh candidate/docker/starry-relay-entrypoint.sh
           for arch in amd64; do
             install -m 0755 "_artifacts/linux-${arch}/hbbs-${RELEASE_TAG}-linux-${arch}" \
               "candidate/docker/${arch}/hbbs"
@@ -764,6 +836,9 @@ jobs:
             install -m 0755 \
               "_artifacts/linux-${arch}/starry-control-agent-${RELEASE_TAG}-linux-${arch}" \
               "candidate/docker/${arch}/starry-control-agent"
+            install -m 0755 \
+              "_artifacts/linux-${arch}/starry-relayctl-${RELEASE_TAG}-linux-${arch}" \
+              "candidate/docker/${arch}/starry-relayctl"
           done
           cp _artifacts/linux-amd64/* candidate/release-assets/
           cp _artifacts/deb/* candidate/release-assets/
@@ -822,7 +897,7 @@ jobs:
           test "$(find candidate/release-assets -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 2
           test "$(find candidate/release-assets -maxdepth 1 -name '*.zip' | wc -l)" -eq 0
           for arch in amd64; do
-            for binary in hbbs hbbr rustdesk-utils starry-control-agent; do
+            for binary in hbbs hbbr rustdesk-utils starry-control-agent starry-relayctl; do
               test -x "candidate/docker/${arch}/${binary}"
             done
           done
@@ -929,7 +1004,7 @@ jobs:
           sbom: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ needs.resolve.outputs.release_tag }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ needs.resolve.outputs.rolling_tag }}
           labels: |
             org.opencontainers.image.title=rustdesk-server-starry
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -938,7 +1013,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-only
-            org.opencontainers.image.description=patch-v1.3.0 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles HBBR with compatible Relay data forwarding plus active probes and load telemetry, while account/API services and MMDB data are not included
+            org.opencontainers.image.description=patch-v1.3.1 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, SP1 pairing, and an optional mTLS Control Agent; the same image bundles HBBR with compatible reliable Relay plus opt-in FastMedia UDP, active probes, and load telemetry, while account/API services and MMDB data are not included
           annotations: |
             index:org.opencontainers.image.title=rustdesk-server-starry
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -947,11 +1022,12 @@ jobs:
             index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             index:org.opencontainers.image.revision=${{ github.sha }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-            index:org.opencontainers.image.description=patch-v1.3.0 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, and an optional mTLS Control Agent; the same image bundles HBBR with compatible Relay data forwarding plus active probes and load telemetry, while account/API services and MMDB data are not included
+            index:org.opencontainers.image.description=patch-v1.3.1 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, SP1 pairing, and an optional mTLS Control Agent; the same image bundles HBBR with compatible reliable Relay plus opt-in FastMedia UDP, active probes, and load telemetry, while account/API services and MMDB data are not included
 
       - name: Record image and OpenAPI/schema publication summary
         env:
           PUSHED_DIGEST: ${{ steps.final-image.outputs.digest }}
+          RELEASE_CHANNEL: ${{ needs.resolve.outputs.release_channel }}
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           set -euo pipefail
@@ -988,13 +1064,16 @@ jobs:
             --upstream-hbb-common-commit "$upstream_common_commit" \
             --image-reference "$image_ref" \
             --image-index-digest "$PUSHED_DIGEST" \
-            --image-linux-amd64-digest "$linux_amd64_digest"
+            --image-linux-amd64-digest "$linux_amd64_digest" \
+            --release-channel "$RELEASE_CHANNEL"
           jq -e \
             --arg tag "$RELEASE_TAG" \
+            --arg channel "$RELEASE_CHANNEL" \
             --arg source "$GITHUB_SHA" \
             --arg index "$PUSHED_DIGEST" \
             --arg amd64 "$linux_amd64_digest" \
-            '.release.tag == $tag and .release.source_commit == $source
+            '.release.tag == $tag and .release.channel == $channel
+             and .release.source_commit == $source
              and .image.index_digest == $index
              and .image.platforms["linux/amd64"] == $amd64' \
             candidate/release-assets/STARRY-RELEASE-SUMMARY.json >/dev/null
@@ -1045,6 +1124,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          RELEASE_CHANNEL: ${{ needs.resolve.outputs.release_channel }}
           UPSTREAM_REF: ${{ needs.resolve.outputs.upstream_ref }}
           PATCH_VERSION: ${{ needs.resolve.outputs.patch_version }}
         run: |
@@ -1073,20 +1153,33 @@ jobs:
 
           EOF
           cat "$notes_file" >> release-notes.md
+          if [ "$RELEASE_CHANNEL" = preview ]; then
+            release_flag=--prerelease
+          else
+            release_flag=--latest
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" candidate/release-assets/* --clobber
-            gh release edit "$RELEASE_TAG" --notes-file release-notes.md --latest
+            gh release edit "$RELEASE_TAG" --notes-file release-notes.md \
+              "$release_flag"
           else
             gh release create "$RELEASE_TAG" candidate/release-assets/* \
               --title "rustdesk-server-starry $RELEASE_TAG" \
               --notes-file release-notes.md \
-              --latest
+              "$release_flag"
           fi
+          expected_prerelease=false
+          if [ "$RELEASE_CHANNEL" = preview ]; then
+            expected_prerelease=true
+          fi
+          test "$(gh release view "$RELEASE_TAG" --json isPrerelease \
+            --jq .isPrerelease)" = "$expected_prerelease"
 
       - name: Write publication summary
         env:
           PUSHED_DIGEST: ${{ steps.final-image.outputs.digest }}
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          ROLLING_TAG: ${{ needs.resolve.outputs.rolling_tag }}
         run: |
           {
             echo "## Starry publication completed"
@@ -1094,6 +1187,6 @@ jobs:
             echo "- Release: \`$RELEASE_TAG\`"
             echo "- Image: \`${IMAGE_NAME}:$RELEASE_TAG\`"
             echo "- Image index: \`$PUSHED_DIGEST\`"
-            echo "- Rolling image: \`${IMAGE_NAME}:latest\`"
+            echo "- Rolling image: \`${IMAGE_NAME}:$ROLLING_TAG\`"
             echo "- Contract digest summary: \`STARRY-RELEASE-SUMMARY.json\`"
           } >> "$GITHUB_STEP_SUMMARY"

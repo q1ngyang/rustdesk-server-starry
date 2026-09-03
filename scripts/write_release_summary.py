@@ -20,6 +20,16 @@ def sha256(relative: str) -> str:
     return "sha256:" + hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
 
 
+def contract_candidate() -> dict[str, object]:
+    path = "contracts/patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+    manifest = json.loads((ROOT / path).read_text(encoding="utf-8"))
+    return {
+        "path": path,
+        "digest": sha256(path),
+        **manifest,
+    }
+
+
 def build_summary(
     *,
     release_tag: str,
@@ -30,6 +40,7 @@ def build_summary(
     image_reference: str,
     image_index_digest: str,
     image_linux_amd64_digest: str,
+    release_channel: str,
 ) -> dict[str, object]:
     if not RELEASE_TAG.fullmatch(release_tag):
         raise ValueError("release tag is not a Starry patch tag")
@@ -50,11 +61,14 @@ def build_summary(
         raise ValueError("image reference must use the immutable Starry release tag")
     if not upstream_ref or any(character.isspace() for character in upstream_ref):
         raise ValueError("upstream ref must be a non-empty token")
+    if release_channel not in {"preview", "stable"}:
+        raise ValueError("release channel must be preview or stable")
 
     return {
         "schema_version": 1,
         "release": {
             "tag": release_tag,
+            "channel": release_channel,
             "source_commit": source_commit,
             "upstream_repository": "rustdesk/rustdesk-server",
             "upstream_ref": upstream_ref,
@@ -67,20 +81,21 @@ def build_summary(
             "platforms": {"linux/amd64": image_linux_amd64_digest},
         },
         "contracts": {
+            "contract_candidate": contract_candidate(),
             "control_openapi": {
                 "id": "control/v1",
                 "path": "contracts/control/v1/openapi.yaml",
                 "digest": sha256("contracts/control/v1/openapi.yaml"),
             },
             "config_schema": {
-                "id": "config/v4",
-                "path": "contracts/config/v4/config.schema.json",
-                "digest": sha256("contracts/config/v4/config.schema.json"),
+                "id": "config/v5",
+                "path": "contracts/config/v5/config.schema.json",
+                "digest": sha256("contracts/config/v5/config.schema.json"),
             },
             "config_ui_schema": {
-                "id": "config/v4-ui",
-                "path": "contracts/config/v4/config.ui-schema.json",
-                "digest": sha256("contracts/config/v4/config.ui-schema.json"),
+                "id": "config/v5-ui",
+                "path": "contracts/config/v5/config.ui-schema.json",
+                "digest": sha256("contracts/config/v5/config.ui-schema.json"),
             },
             "relay_quality_protocol": {
                 "id": "relay-quality/v1",
@@ -91,10 +106,38 @@ def build_summary(
                 ),
             },
             "relay_telemetry_schema": {
-                "id": "relay-telemetry/v1",
-                "path": "contracts/relay-telemetry/v1/telemetry.schema.json",
+                "id": "relay-telemetry/v2",
+                "path": "contracts/relay-telemetry/v2/telemetry.schema.json",
                 "digest": sha256(
-                    "contracts/relay-telemetry/v1/telemetry.schema.json"
+                    "contracts/relay-telemetry/v2/telemetry.schema.json"
+                ),
+            },
+            "fast_relay_protocol": {
+                "id": "fast-relay/v1",
+                "path": "contracts/fast-relay/v1/rendezvous-extension.proto",
+                "digest": sha256(
+                    "contracts/fast-relay/v1/rendezvous-extension.proto"
+                ),
+            },
+            "fast_media_relay_udp": {
+                "id": "fast-media/v1",
+                "status": "FROZEN",
+                "runtime_release_status": release_channel.upper(),
+                "path": "contracts/fast-media/v1/akr1-wire.json",
+                "digest": sha256("contracts/fast-media/v1/akr1-wire.json"),
+            },
+            "starry_pairing_protocol": {
+                "id": "starry-pairing/v1",
+                "path": "contracts/starry-pairing/v1/pairing.schema.json",
+                "digest": sha256(
+                    "contracts/starry-pairing/v1/pairing.schema.json"
+                ),
+            },
+            "downgrade_drain_state": {
+                "id": "config/v5-downgrade-drain-state/v1",
+                "path": "contracts/config/v5/downgrade-drain-state.schema.json",
+                "digest": sha256(
+                    "contracts/config/v5/downgrade-drain-state.schema.json"
                 ),
             },
         },
@@ -112,6 +155,7 @@ def main() -> None:
     parser.add_argument("--image-reference", required=True)
     parser.add_argument("--image-index-digest", required=True)
     parser.add_argument("--image-linux-amd64-digest", required=True)
+    parser.add_argument("--release-channel", required=True)
     args = parser.parse_args()
     try:
         summary = build_summary(
@@ -123,6 +167,7 @@ def main() -> None:
             image_reference=args.image_reference,
             image_index_digest=args.image_index_digest,
             image_linux_amd64_digest=args.image_linux_amd64_digest,
+            release_channel=args.release_channel,
         )
         with args.output.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(summary, stream, indent=2, sort_keys=True)

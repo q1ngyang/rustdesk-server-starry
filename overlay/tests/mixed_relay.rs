@@ -14,7 +14,7 @@ use hbb_common::{
     },
 };
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
     PKCS_ECDSA_P256_SHA256,
 };
 use sha2::{Digest, Sha256};
@@ -84,7 +84,11 @@ fn official_hbbr_bridges_websocket_and_native_streams() {
         assert_active_probe_and_public_headers(port).await;
         assert_telemetry_requires_authentication(port).await;
         let telemetry = authenticated_telemetry(port, telemetry_secret).await;
-        assert_eq!(telemetry["telemetry_schema"], 1);
+        assert_eq!(telemetry["telemetry_schema"], 2);
+        assert_eq!(telemetry["fast_media"]["protocol"], 1);
+        assert_eq!(telemetry["fast_media"]["enabled"], false);
+        assert_eq!(telemetry["fast_media"]["healthy"], false);
+        assert_eq!(telemetry["fast_media"]["udp_port"], 0);
         assert_eq!(telemetry["capacity_sessions"], 1);
         assert_eq!(telemetry["active_sessions"], 0);
         assert_eq!(telemetry["pending_pairs"], 0);
@@ -113,7 +117,7 @@ async fn assert_active_probe_and_public_headers(port: u16) {
     };
     assert!(header("x-starry-version")
         .as_deref()
-        .is_some_and(|value| value.ends_with("-patch-v1.3.0")));
+        .is_some_and(|value| value.ends_with("-patch-v1.3.1")));
     assert_eq!(
         header("x-starry-relay-probe-protocol").as_deref(),
         Some("1")
@@ -159,7 +163,7 @@ async fn assert_active_probe_and_public_headers(port: u16) {
     assert_eq!(response.protocol_version, 1);
     assert_eq!(response.nonce.as_ref(), nonce.as_slice());
     assert!(response.load.is_none());
-    assert!(response.starry_version.ends_with("-patch-v1.3.0"));
+    assert!(response.starry_version.ends_with("-patch-v1.3.1"));
     assert_eq!(response.relay_probe_protocol, 1);
     assert_eq!(response.relay_load_protocol, 1);
 }
@@ -446,24 +450,24 @@ async fn assert_wss_active_probe(port: u16, connector: Connector) {
 }
 
 async fn start_wss_proxy(upstream_port: u16) -> (u16, Connector, JoinHandle<()>) {
-    let mut ca_params = CertificateParams::new(Vec::new());
-    ca_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     let mut ca_name = DistinguishedName::new();
     ca_name.push(DnType::CommonName, "Starry mixed relay test CA");
     ca_params.distinguished_name = ca_name;
-    let ca = Certificate::from_params(ca_params).unwrap();
+    let ca = ca_params.self_signed(&ca_key).unwrap();
 
-    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]);
-    server_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let server_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
     let mut server_name = DistinguishedName::new();
     server_name.push(DnType::CommonName, "localhost");
     server_params.distinguished_name = server_name;
-    let server = Certificate::from_params(server_params).unwrap();
+    let server = server_params.signed_by(&server_key, &ca, &ca_key).unwrap();
 
-    let ca_der = ca.serialize_der().unwrap();
-    let server_der = server.serialize_der_with_signer(&ca).unwrap();
-    let private_key = server.serialize_private_key_der();
+    let ca_der = ca.der().to_vec();
+    let server_der = server.der().to_vec();
+    let private_key = server_key.serialize_der();
     let server_config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(

@@ -15,9 +15,9 @@
 
 ## 镜像包含什么
 
-patch-v1.3.0 候选镜像以 `linux/amd64` 为正式构建和运行验收平台，由一个锁定的官方
+patch-v1.3.1 开发镜像以 `linux/amd64` 为正式构建和运行验收平台，由一个锁定的官方
 RustDesk Server 版本加 Starry HBBS 扩展层构建。ARM 仅尽力保持源码兼容，不属于
-v1.3.0 承诺的镜像平台。
+v1.3.1 承诺的镜像平台。
 
 | 命令 | 来源 | 用途 |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ v1.3.0 承诺的镜像平台。
 | `hbbr` | 上游中继数据路径 + 公开探测/认证遥测 | 与 HBBS 从同一锁定上游版本构建，响应不含负载明细的 Akari 质量探测；有界负载/版本遥测仅供 HBBS 认证拉取；所有示例都使用同一镜像版本。 |
 | `rustdesk-utils` | 未修改的上游工具 | 密钥和数据库维护工具。 |
 | `starry-control-agent` | Starry 可选 Linux 管理组件 | 管理一台本机 HBBS 的固定接口；强制使用 mTLS 与按权限划分的服务令牌，默认禁止写入配置。 |
+| `starry-relayctl` | Starry Relay enrollment 工具 | 本地生成节点密钥/CSR，并把一次 SP1 结果安装到 `RELAY_DATA_DIR`；不修改兼容上游的 `hbbr` CLI。 |
 
 镜像**不包含**账户/API 服务，也不包含任何 GeoLite2/MMDB 数据库；管理代理不是账户
 API。可以另行部署兼容的第三方 API，推荐
@@ -42,7 +43,7 @@ API。可以另行部署兼容的第三方 API，推荐
 例如：
 
 ```text
-1.1.16-patch-v1.3.0
+1.1.16-patch-v1.3.1
 ```
 
 - 日常生产部署使用不可变版本标签。
@@ -53,18 +54,18 @@ API。可以另行部署兼容的第三方 API，推荐
 拉取当前文档对应版本：
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1
 ```
 
 公开 GHCR 镜像可匿名拉取。上线前检查实际镜像摘要和平台：
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1
 ```
 
 ## 推荐快速部署
@@ -107,13 +108,16 @@ docker compose --env-file .env -f compose.yaml up -d
 
 ## 持久化数据与首次启动
 
-两个服务把同一主机数据目录挂载到 `/root`。该目录包含服务器身份、SQLite 状态、
-日志、下载的 MMDB 和 Starry 配置，应当整体备份。
+示例要求宿主机使用一个绝对 `STARRY_PERSIST_ROOT`，并把 HBBS、Control 状态、配置与
+Relay 状态分别挂载。HBBS 仍在 `/root` 看到自己的子目录；HBBR 通过
+`RELAY_DATA_DIR` 在 `/var/lib/rustdesk-server-starry/relay` 看到独立目录。配对与
+enrollment 会拒绝 overlay/tmpfs、危险权限和根目录外身份路径；镜像不再声明匿名
+`VOLUME` 兜底。
 
 Starry HBBS 首次启动会创建：
 
 ```text
-data/
+persist/hbbs/
 ├── id_ed25519
 ├── id_ed25519.pub
 └── starry/
@@ -138,6 +142,7 @@ data/
 | `21117` | TCP | HBBR | 原生中继数据。 |
 | `21118` | TCP | HBBS | `/ws/id` 明文 WebSocket 后端；只允许可信反向代理访问。 |
 | `21119` | TCP | HBBR | `/ws/relay` 明文 WebSocket 后端；只允许可信反向代理访问。 |
+| 配置值，通常 `21119` | UDP | HBBR | 可选 AKR1 FastMedia 数据面；仅在 schema v5 显式开启且认证遥测报告健康时开放。 |
 | `21120` | TCP | 可选管理代理 | 私有 mTLS 管理接口；普通编排示例不对外发布该端口，只允许本机或私有管理网络访问。 |
 | `443` | TCP | Nginx | 使用 WebSocket 或 HTTPS API 时的公网 TLS/WSS 入口。 |
 
@@ -185,7 +190,7 @@ docker restart rustdesk-starry-hbbs
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
   hbbs --help
 ```
 
@@ -199,20 +204,23 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
-单机部署使用同一持久目录，从同一固定版本的 Starry 镜像启动保留上游中继数据路径的 HBBR：
+单机部署从同一固定版本的 Starry 镜像启动 HBBR，但使用独立 Relay 持久目录：
 
 ```sh
 docker run -d \
   --name rustdesk-hbbr \
   --network host \
   --restart unless-stopped \
-  -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.0 \
-  hbbr -k _
+  -e RELAY_DATA_DIR=/var/lib/rustdesk-server-starry/relay \
+  -e STARRY_REQUIRE_PERSISTENT_STATE=1 \
+  -v /opt/rustdesk-server-starry/relay:/var/lib/rustdesk-server-starry/relay \
+  -v /etc/machine-id:/etc/machine-id:ro \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
+  starry-relay-entrypoint -k _
 ```
 
 ## 验证部署
@@ -254,6 +262,12 @@ WSS↔WSS 和两个方向的 WSS↔原生测试。详见
 4. 拉取目标镜像并执行 `docker compose config --quiet`。
 5. 重建服务、检查日志、执行管理命令并完成真实客户端会话。
 6. 验收完成前保留旧镜像和备份。
+
+patch-v1.3.1 回滚 patch-v1.3.0 前，须关闭 FastMedia、取得匹配 apply ACK、等待
+授权/allocation/stream drain，确认每张配对证书剩余至少九十天，并用
+`starry-control-agent config downgrade --to-schema 4 --output ...` 导出 schema v4。
+保留全部 pairing/enrollment 文件；v1.3.0 只忽略这些新状态，并通过不含 secret 值的
+`relay-compat.env` 继续普通 Relay 与遥测。
 
 从 patch-v1.3.0 回滚到 patch-v1.2.0 前，必须先恢复不含 `fast_mode` 和
 `relay_quality` 的配置结构 `version: 3`（或更早）；二进制回滚前应关闭 FastCompat 并

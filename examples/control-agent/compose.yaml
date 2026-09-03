@@ -17,14 +17,14 @@ services:
       - --starry-config=/starry/config.yaml
     environment:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
-      STARRY_LOCAL_CONTROL_TOKEN_FILE: /run/secrets/starry-control-shared/local-control.token
+      STARRY_LOCAL_CONTROL_TOKEN_FILE: /starry-persist/control/shared/local-control.token
     volumes:
       - type: bind
         source: ${STARRY_PERSIST_ROOT:-./persist}/hbbs
         target: /root
       - type: bind
         source: ${STARRY_PERSIST_ROOT:-./persist}/config
-        target: /starry
+        target: /starry-persist/config
         read_only: true
       - type: bind
         source: ${STARRY_PERSIST_ROOT:-./persist}/auth/secrets
@@ -35,7 +35,7 @@ services:
         target: /var/lib/starry-auth
       - type: bind
         source: ${STARRY_PERSIST_ROOT:-./persist}/control/shared
-        target: /run/secrets/starry-control-shared
+        target: /starry-persist/control/shared
         read_only: true
     network_mode: host
     restart: ${STARRY_RESTART_POLICY:-unless-stopped}
@@ -45,28 +45,29 @@ services:
     user: ${STARRY_CONTROL_UID:-65532}:${STARRY_CONTROL_GID:-65532}
     command:
       - starry-control-agent
-      - /etc/starry-control/agent.yaml
+      - /starry-persist/control/generated/control-agent.yaml
     environment:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+      STARRY_PERSIST_ROOT: /starry-persist
     volumes:
       - type: bind
-        source: ./control-agent.yaml
-        target: /etc/starry-control/agent.yaml
-        read_only: true
+        source: ${STARRY_PERSIST_ROOT:-./persist}/control/generated
+        target: /starry-persist/control/generated
       - type: bind
-        source: ${STARRY_PERSIST_ROOT:-./persist}/control/secrets
-        target: /run/secrets/starry-control
-        read_only: true
+        source: ${STARRY_PERSIST_ROOT:-./persist}/control/identity
+        target: /starry-persist/control/identity
       - type: bind
         source: ${STARRY_PERSIST_ROOT:-./persist}/control/shared
-        target: /run/secrets/starry-control-shared
-        read_only: true
+        target: /starry-persist/control/shared
       - type: bind
         source: ${STARRY_PERSIST_ROOT:-./persist}/config
-        target: /starry
+        target: /starry-persist/config
       - type: bind
         source: ${STARRY_PERSIST_ROOT:-./persist}/control/state
-        target: /control-state
+        target: /starry-persist/control/state
+      - type: bind
+        source: ${STARRY_PERSIST_ROOT:-./persist}/relay-secrets
+        target: /starry-persist/relay-secrets
     network_mode: service:hbbs
     depends_on:
       - hbbs
@@ -85,19 +86,30 @@ services:
     # same pinned RustDesk Server revision. Using the same image tag for both
     # services prevents independent HBBS/HBBR version drift.
     image: ${STARRY_IMAGE}:${STARRY_VERSION}
-    command: [hbbr, -k, _]
+    entrypoint: [starry-relay-entrypoint]
+    command: [-k, _]
     environment:
       RUST_LOG: ${RUSTDESK_LOG_LEVEL:-info}
+      RELAY_DATA_DIR: /var/lib/rustdesk-server-starry/relay
+      STARRY_REQUIRE_PERSISTENT_STATE: "1"
+      STARRY_REQUIRE_RELAY_ENROLLMENT: ${RELAY_REQUIRE_ENROLLMENT:-0}
       STARRY_RELAY_MAX_SESSIONS: ${RELAY_MAX_SESSIONS:-10000}
       STARRY_RELAY_PROBE_PER_IP_PER_MINUTE: ${RELAY_PROBE_PER_IP_PER_MINUTE:-120}
       STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE: ${RELAY_PROBE_GLOBAL_PER_MINUTE:-10000}
       STARRY_RELAY_TELEMETRY_SECRET_FILE: ${RELAY_TELEMETRY_SECRET_FILE:-}
-      STARRY_RELAY_DRAINING_FILE: ${RELAY_DRAINING_FILE:-/root/starry/hbbr.draining}
+      STARRY_RELAY_DRAINING_FILE: ${RELAY_DRAINING_FILE:-/var/lib/rustdesk-server-starry/relay/starry/hbbr.draining}
     volumes:
       - type: bind
-        source: ${STARRY_PERSIST_ROOT:-./persist}/hbbs
-        target: /root
+        source: ${STARRY_PERSIST_ROOT:-./persist}/relay
+        target: /var/lib/rustdesk-server-starry/relay
+      - type: bind
+        source: /etc/machine-id
+        target: /etc/machine-id
+        read_only: true
     network_mode: host
     depends_on:
       - hbbs
     restart: ${STARRY_RESTART_POLICY:-unless-stopped}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777

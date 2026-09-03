@@ -1,0 +1,154 @@
+{
+  "manifest_schema": 1,
+  "id": "patch-v1.3.1-contract-candidate",
+  "patch_version": "1.3.1",
+  "status": "FROZEN",
+  "candidate_kind": "CONTRACT_ONLY",
+  "runtime_release_status": "BLOCKED",
+  "hash_algorithm": "SHA-256",
+  "source_binding": {
+    "type": "git_commit_containing_this_summary",
+    "remote": "origin",
+    "branch": "codex/patch-v1.3.1-fastmedia-pairing",
+    "replacement_policy": "new_patch_version_required"
+  },
+  "schema_v5_capability": {
+    "expression": "capabilities.config_schema",
+    "json_pointer": "/capabilities/config_schema",
+    "value": 5,
+    "semantics": "The implementation serves and validates config schema v5; this value does not assert that the active document is already v5.",
+    "supported_versions_path": "config.supported_schema_versions",
+    "supported_versions": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "active_version_path": "config.active_schema_version",
+    "schema_digest_path": "config.schema_digest",
+    "version_string_inference_forbidden": true
+  },
+  "files": [
+    {
+      "id": "control_openapi",
+      "path": "contracts/control/v1/openapi.yaml",
+      "sha256": "sha256:413cde55cc87402e050aae8cda55667b44766c6223851762c0839711637c8239"
+    },
+    {
+      "id": "config_schema_v5",
+      "path": "contracts/config/v5/config.schema.json",
+      "sha256": "sha256:0c2ae9eed359aa4d615ee948d9c0a81f285f4b948cc54ef500cee3dca7238d8a"
+    },
+    {
+      "id": "config_ui_schema_v5",
+      "path": "contracts/config/v5/config.ui-schema.json",
+      "sha256": "sha256:37d3e98c3149d88d8d65a9634a03feb13a37969b45ac3967a25be7dbbf4e7405"
+    },
+    {
+      "id": "downgrade_drain_state_v1",
+      "path": "contracts/config/v5/downgrade-drain-state.schema.json",
+      "sha256": "sha256:a60d5b901cb34f216237fbb80b7d3a89cdf7651ed78133fbe471a9252d042ead"
+    },
+    {
+      "id": "control_capabilities_fixture",
+      "path": "contracts/control/v1/examples/capabilities.json",
+      "sha256": "sha256:09a19f151f0a38ffb6f012d690b6959973d03f1112d94b8d241f52898d93b506"
+    },
+    {
+      "id": "control_relays_fixture",
+      "path": "contracts/control/v1/examples/relays.json",
+      "sha256": "sha256:7d70662518335ed8620e1ff1f0a15799e3430d5242207f803e4d653f553614b0"
+    },
+    {
+      "id": "control_status_fixture",
+      "path": "contracts/control/v1/examples/status.json",
+      "sha256": "sha256:f40a5d16d8307d0c79f1d6f9a152c86b0d48e1d07595c254b471feabb2369318"
+    },
+    {
+      "id": "relay_enrollment_prepare_fixture",
+      "path": "contracts/control/v1/examples/relay-enrollment-prepare.json",
+      "sha256": "sha256:781a71f307b832efaca9e933b459c36f8fb15168f034cf87500314d63eeb2497"
+    },
+    {
+      "id": "relay_enrollment_complete_fixture",
+      "path": "contracts/control/v1/examples/relay-enrollment-complete.json",
+      "sha256": "sha256:1045bcbf8e15f865e655741e6a143f006fd71bddbf77454691436a589ad33965"
+    },
+    {
+      "id": "relay_enrollment_activate_fixture",
+      "path": "contracts/control/v1/examples/relay-enrollment-activate.json",
+      "sha256": "sha256:66d21bcf15462b36d43a67221a125cc2702a2b92936214493524a8465fd776ef"
+    },
+    {
+      "id": "relay_enrollment_inventory_fixture",
+      "path": "contracts/control/v1/examples/relay-enrollments.json",
+      "sha256": "sha256:a49496f86406691535bc1ece81737c5bb82569320d3f57fa1be592afab767a9e"
+    },
+    {
+      "id": "fast_relay_authorization_v1",
+      "path": "contracts/fast-relay/v1/rendezvous-extension.proto",
+      "sha256": "sha256:18d44b252bdf698fa96f32703eb44b76499f2b32661daf28695a1318622e7845"
+    },
+    {
+      "id": "akr1_wire_v1",
+      "path": "contracts/fast-media/v1/akr1-wire.json",
+      "sha256": "sha256:794e103e8d5367d265dd1c34c57f40c45332583f3c62bf802554e76314bc0902"
+    },
+    {
+      "id": "sp1_pairing_v1",
+      "path": "contracts/starry-pairing/v1/pairing.schema.json",
+      "sha256": "sha256:df3a54ac4f695be4297a57b00b513d682275a1336f5d7f9bc5d4a0f7b2e8c140"
+    },
+    {
+      "id": "relay_telemetry_schema_v2",
+      "path": "contracts/relay-telemetry/v2/telemetry.schema.json",
+      "sha256": "sha256:9ce6192f781ac253ceb78ef57da8f52cd130e438e231f88e9bb5fcbd4c1a7957"
+    },
+    {
+      "id": "relay_telemetry_fixture_v2",
+      "path": "contracts/relay-telemetry/v2/telemetry.example.json",
+      "sha256": "sha256:0fdfef0a466683ec11804909db7c593695b8a2981455176fecb5adcda301bc39"
+    }
+  ],
+  "inherited_frozen_contracts": [
+    {
+      "id": "relay-quality/v1",
+      "path": "contracts/relay-quality/v1/rendezvous-extension.proto",
+      "sha256": "sha256:19380d18aebf91a6856e43009291c79cf002d7c843b9fd7fa92c570916b2734c"
+    }
+  ],
+  "runtime_release_gates": [
+    {
+      "code": "AKARI_DUAL_ROLE_END_TO_END",
+      "status": "BLOCKED",
+      "description": "Run the real Akari-to-HBBS-to-HBBR controller/target grant exchange, dual-role bind, AKF1 forwarding, and session preservation flow."
+    },
+    {
+      "code": "RELIABLE_FALLBACK_AUTO_REENTRY",
+      "status": "BLOCKED",
+      "description": "Verify automatic UDP failure fallback to the reliable HBBR path and later automatic FastMedia re-entry without disconnecting the desktop session."
+    },
+    {
+      "code": "DEVICE_NETWORK_FAULT_MATRIX",
+      "status": "BLOCKED",
+      "description": "Complete real-device and real-network tests for AP changes, NAT source-port rebinding, UDP blocking, HBBR restart, burst loss, and sustained rate excess."
+    },
+    {
+      "code": "SP1_BROKER_CERT_ROTATION_MULTIHOST",
+      "status": "BLOCKED",
+      "description": "Validate the Kessoku SP1 broker handoff, certificate rotation and rollback window, interruption recovery, and multi-host migration with production PKI."
+    },
+    {
+      "code": "HOSTED_RELEASE_CI_ATTESTATION",
+      "status": "BLOCKED",
+      "description": "Pass hosted release CI, security review, SBOM/provenance generation, image signing, and immutable artifact attestation."
+    }
+  ],
+  "kessoku_policy": {
+    "minimum_version": "3.0.8",
+    "pin": "exact_remote_commit_containing_this_summary",
+    "dirty_worktree_forbidden": true,
+    "runtime_release_approval": false
+  }
+}

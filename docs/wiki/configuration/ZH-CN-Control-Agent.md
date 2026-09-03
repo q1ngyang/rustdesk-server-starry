@@ -29,7 +29,7 @@ Agent 不是账户 API，也不是 HBBS 数据面的必需组件。停止 Agent 
 ## Linux 安装
 
 Linux archive/container 和 `rustdesk-server-starry-control-agent` DEB 包含 Agent。DEB 安装
-后不会自动 enable systemd service。v1.3.0 不发布 Windows Agent，因为原子配置事务只在
+后不会自动 enable systemd service。v1.3.1 不发布 Windows Agent，因为原子配置事务只在
 Unix filesystem 上属于发布支持范围。
 
 从 [`config/control-agent.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/control-agent.example.yaml)开始：
@@ -73,6 +73,48 @@ sidecar 共享 HBBS network namespace 仅为了保持 `127.0.0.1:21115` 为本�
 读写 Starry config volume，HBBS 以只读方式挂载同一 volume。示例 Agent 绑定 host
 loopback，并默认只读。
 
+## SP1 配对与 Relay enrollment
+
+以上手工 YAML、mTLS、service JWKS 和 local token 配置继续完整支持。patch-v1.3.1 可选
+使用短期 `SP1` 代码生成相同 Agent v1 字段：
+
+```console
+starry-control-agent pair
+starry-control-agent adopt
+starry-control-agent rotate
+```
+
+代码只从 stdin 或 mode-0600 文件读取。Agent 本地生成 server key/CSR，固定精确 HTTPS
+Broker SPKI，验证返回 CA 签名和 key binding，并且不覆盖不同身份。空状态使用 `pair`；
+既有实例必须显式 `adopt`；经审核证书轮换使用 `rotate`。生成 YAML 只含
+patch-v1.3.0 Agent v1 已支持字段。Kessoku 通过 DNS 连接 Agent 时，用
+`--tls-server-name`（或 `STARRY_CONTROL_AGENT_TLS_SERVER_NAME`）传入 allowlist 中完全
+相同的名字，使本地生成的 CSR 包含匹配 DNS SAN。首次配对中断会复用 durable pending
+instance UUID；rotation 校验既有 generated path binding，并保留已安装的 listen/
+local-control address、managed-config 大小上限与写策略。
+
+容器 identity/runtime state 必须位于
+`STARRY_PERSIST_ROOT/control/{state,identity,generated,shared}` 及
+`STARRY_PERSIST_ROOT/{config,relay-secrets}`。配对和启动拒绝 overlay/tmpfs 容器层、缺失
+显式 mount、不安全类型/mode 和漂移。原生/DEB 使用 `/etc/rustdesk-server-starry` 保存
+配置/身份，`/var/lib/rustdesk-server-starry` 保存状态。详见
+[Starry Pairing v1](../../reference/STARRY-PAIRING-v1.zh-CN.md)。
+
+配置 Relay enrollment CA 后，API 在 `/control/v1/relay-enrollments` 下增加 list/get 及
+write-enabled 的 `prepare`、`complete`、健康门控 `activate`、`revoke`。mutation 要求
+`starry.relay.enroll` scope；Relay endpoint、池、profile、限制和 digest 由 Agent 而非
+Kessoku/Broker 固定。registry 有界，完全相同重试幂等；list/get 不含 SP1 secret、
+telemetry secret、私钥或 CSR。
+
+撤销会先记录 terminal state，再删除精确当前 certificate、telemetry secret 和 claim
+marker；部分清理可重试，相同 node 的替换只可清理匹配且已 `revoked`/`expired` 的前任。
+active、未知、不匹配或并发变化的 claim 一律 fail closed。
+
+`activate` 不信任调用方提交的健康结论。它要求引用成功的 `config_apply` operation 与
+完整 HBBS activation ACK，再重新读取当前 `/relays` snapshot，并绑定精确 config
+generation 和 health snapshot ID；按不可变 enrollment profile 校验 Native、WSS、认证
+telemetry、capacity/draining 与 FastMedia UDP。
+
 ## 只读接入
 
 首次部署保持 `write_enabled: false`。Agent 仍正常认证请求，但只公布读取/模拟 capability，
@@ -93,9 +135,16 @@ loopback，并默认只读。
    production counter；
 6. 公网无法访问 listener，HBBS `21115` 继续只在 loopback。
 
-patch-v1.3.0 的能力发现包含 `relay_quality: 1`、`relay_active_probe: 1`、
+patch-v1.3.1 的 schema 支持只有一个规范机器表达：`capabilities.config_schema: 5`。
+`config` 对象另外返回 `supported_schema_versions: [1,2,3,4,5]`、当前 active version 和
+精确 schema digest；Kessoku 不得从 Starry 版本字符串推断 schema。其他能力包含
+`relay_quality: 1`、`relay_active_probe: 1`、
 `relay_probe_protocol: 1`、`relay_load_protocol: 1`、`fast_relay_authorization: 1`、
-`profile_activation_lease: 1` 与 `peer_registry: 2`。
+`fast_media_relay_udp: 1`、`relay_telemetry_schema: 2`、
+`starry_pairing: 1`、`relay_enrollment: 1`、`config_downgrade_preview: 1`、
+`profile_activation_lease: 1` 与 `peer_registry: 2`。只有 Agent write-enabled 且具有
+Relay CA 时才公布 enrollment write capability 与
+`relay_enrollment_health_activation: 1`。
 `/relays` 响应包含聚合的 `quality`、`fast_relay` 和 `profile_activation` 运行
 对象。每个 Relay 返回显式 probe/load capability 版本、telemetry 观测时间/年龄/stale
 状态及当前是否为质量候选；质量计数聚合 accepted、late、invalid 与 binding mismatch，
@@ -103,8 +152,21 @@ patch-v1.3.0 的能力发现包含 `relay_quality: 1`、`relay_active_probe: 1`�
 节省尝试数、expanded decision/timeout、hysteresis/cache hit、duplicate 和 stage mismatch；
 绝不暴露客户端完整 IP、allocation/session UUID、stage token、nonce 或原始报告。极速 Relay 计数用于
 区分签发、完全重试复用、送达和 fail-closed 原因，绝不包含
-令牌、会话 UUID 或签名授权。Kessoku 应先检查 capability 与 schema v4 digest，再通过与
-其他配置相同的 validate/plan/apply/audit 事务提供 FastCompat 控制。
+令牌、会话 UUID 或签名授权。Kessoku 以授权 capability 控制 FastCompat，并分别以
+schema v5、telemetry schema 2、typed Relay capability 和新鲜 UDP 健康控制 FastMedia，
+随后使用与其他配置相同的 validate/plan/apply/audit 事务。
+
+Agent 可无副作用预览/导出 v1.3.0 可读的 schema v4：
+
+```console
+starry-control-agent config downgrade --to-schema 4 --preview
+starry-control-agent config downgrade --to-schema 4 --output /safe/config-v4.yaml
+```
+
+它查询本机 HBBS/Relay telemetry；只有 FastMedia 策略已关闭、active authorization/
+allocation/stream 均为零、最新 grant 已过期，且所有提供的 Agent/Relay 证书至少剩余
+九十天才允许导出。输出不覆盖既有路径。`--runtime-state` 是显式审计的离线 override，
+不是普通路径。
 
 Profile activation 计数区分 lease/ACK/续期/注销/清理、stale、rate、TTL 与有界容量结果，
 绝不包含 peer ID、UUID、public key、activation ID 或 route lease。Kessoku 应另外以
