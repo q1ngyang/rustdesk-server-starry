@@ -152,7 +152,8 @@ telemetry schema 1 而被正确拒绝。该 staging image 来自 pre-review work
 - 真实 UDP block、HBBR restart、300–1200 ms 迁移、整形丢包/超限及设备长时 soak；
 - 生产 PKI 证书轮换、九十日回滚窗口前 enrolled Relay 轮换，以及多主机迁移、身份克隆
   和 down-volume 演练；
-- 修复并复验 Kessoku v3.0.8 Relay adapter 当前遗漏契约字段
-  `websocket.process_instance_id` 的问题；
+- 验证 Kessoku v3.0.8 隐私边界会主动从外部 API、UI 和持久状态丢弃
+  `websocket.process_instance_id` 进程 UUID；Starry 受认证 Control inventory 只把它用于
+  有界 telemetry sequence/restart 校验；
 - 精确干净 commit 上的托管 CI、RustSec/历史 secret scan、SBOM/attestation、交叉构建工件
   可复现性及完整 Docker/DEB/native 配对与 Relay 交叉升级矩阵。

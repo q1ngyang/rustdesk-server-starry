@@ -195,8 +195,10 @@ The following remain release blockers until recorded for one exact candidate:
   and long device/network soak;
 - production-PKI certificate rotation, enrolled-Relay rotation before a
   90-day rollback window, and multi-host migration/clone/down-volume drills;
-- correction and retest of the Kessoku v3.0.8 Relay adapter that currently
-  omits the contracted `websocket.process_instance_id` field;
+- verification that the Kessoku v3.0.8 privacy boundary deliberately drops
+  the `websocket.process_instance_id` process UUID from outward APIs, UI, and
+  persistent state; Starry's authenticated Control inventory uses it only for
+  bounded telemetry sequence/restart validation;
 - hosted clean-commit CI, RustSec/history secret scans, SBOM/attestations,
   cross-built artifact reproducibility, and the full Docker/DEB/native pairing
   and Relay cross-upgrade matrix.
