@@ -40,6 +40,7 @@ def build_summary(
     image_reference: str,
     image_index_digest: str,
     image_linux_amd64_digest: str,
+    release_channel: str,
 ) -> dict[str, object]:
     if not RELEASE_TAG.fullmatch(release_tag):
         raise ValueError("release tag is not a Starry patch tag")
@@ -60,11 +61,14 @@ def build_summary(
         raise ValueError("image reference must use the immutable Starry release tag")
     if not upstream_ref or any(character.isspace() for character in upstream_ref):
         raise ValueError("upstream ref must be a non-empty token")
+    if release_channel not in {"preview", "stable"}:
+        raise ValueError("release channel must be preview or stable")
 
     return {
         "schema_version": 1,
         "release": {
             "tag": release_tag,
+            "channel": release_channel,
             "source_commit": source_commit,
             "upstream_repository": "rustdesk/rustdesk-server",
             "upstream_ref": upstream_ref,
@@ -118,7 +122,7 @@ def build_summary(
             "fast_media_relay_udp": {
                 "id": "fast-media/v1",
                 "status": "FROZEN",
-                "runtime_release_status": "BLOCKED",
+                "runtime_release_status": release_channel.upper(),
                 "path": "contracts/fast-media/v1/akr1-wire.json",
                 "digest": sha256("contracts/fast-media/v1/akr1-wire.json"),
             },
@@ -151,6 +155,7 @@ def main() -> None:
     parser.add_argument("--image-reference", required=True)
     parser.add_argument("--image-index-digest", required=True)
     parser.add_argument("--image-linux-amd64-digest", required=True)
+    parser.add_argument("--release-channel", required=True)
     args = parser.parse_args()
     try:
         summary = build_summary(
@@ -162,6 +167,7 @@ def main() -> None:
             image_reference=args.image_reference,
             image_index_digest=args.image_index_digest,
             image_linux_amd64_digest=args.image_linux_amd64_digest,
+            release_channel=args.release_channel,
         )
         with args.output.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(summary, stream, indent=2, sort_keys=True)

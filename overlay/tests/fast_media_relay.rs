@@ -31,7 +31,7 @@ fn real_hbbr_recovers_udp_binds_both_roles_forwards_akf1_and_keeps_tcp_alive() {
     let udp_blocker = UdpSocket::bind("127.0.0.1:0").unwrap();
     let udp_port = udp_blocker.local_addr().unwrap().port();
     let relay_server = format!("127.0.0.1:{relay_port}");
-    let (_public, secret) = sign::gen_keypair();
+    let (public, secret) = sign::gen_keypair();
     let temporary_root = std::env::var_os("TMPDIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("/var/tmp"));
@@ -39,7 +39,7 @@ fn real_hbbr_recovers_udp_binds_both_roles_forwards_akf1_and_keeps_tcp_alive() {
         .prefix("starry-fast-media-process-")
         .tempdir_in(temporary_root)
         .unwrap();
-    let _relay = spawn_relay(state.path(), relay_port, udp_port, &relay_server, &secret);
+    let _relay = spawn_relay(state.path(), relay_port, udp_port, &relay_server, &public);
     wait_tcp(relay_port);
     assert!(TcpStream::connect_timeout(
         &format!("127.0.0.1:{relay_port}").parse().unwrap(),
@@ -120,13 +120,13 @@ fn spawn_relay(
     relay_port: u16,
     udp_port: u16,
     relay_server: &str,
-    secret: &sign::SecretKey,
+    public: &sign::PublicKey,
 ) -> RelayProcess {
     let child = Command::new(env!("CARGO_BIN_EXE_hbbr"))
         .arg("--port")
         .arg(relay_port.to_string())
         .arg("--key")
-        .arg(base64::encode(secret.as_ref()))
+        .arg(base64::encode(public.as_ref()))
         .env("STARRY_RELAY_FAST_MEDIA_UDP_PORT", udp_port.to_string())
         .env("STARRY_RELAY_PUBLIC_ENDPOINT", relay_server)
         .env("STARRY_RELAY_FAST_MEDIA_MAX_ALLOCATIONS", "32")

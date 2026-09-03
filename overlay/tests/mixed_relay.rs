@@ -14,7 +14,7 @@ use hbb_common::{
     },
 };
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
     PKCS_ECDSA_P256_SHA256,
 };
 use sha2::{Digest, Sha256};
@@ -450,24 +450,24 @@ async fn assert_wss_active_probe(port: u16, connector: Connector) {
 }
 
 async fn start_wss_proxy(upstream_port: u16) -> (u16, Connector, JoinHandle<()>) {
-    let mut ca_params = CertificateParams::new(Vec::new());
-    ca_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     let mut ca_name = DistinguishedName::new();
     ca_name.push(DnType::CommonName, "Starry mixed relay test CA");
     ca_params.distinguished_name = ca_name;
-    let ca = Certificate::from_params(ca_params).unwrap();
+    let ca = ca_params.self_signed(&ca_key).unwrap();
 
-    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]);
-    server_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let server_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
     let mut server_name = DistinguishedName::new();
     server_name.push(DnType::CommonName, "localhost");
     server_params.distinguished_name = server_name;
-    let server = Certificate::from_params(server_params).unwrap();
+    let server = server_params.signed_by(&server_key, &ca, &ca_key).unwrap();
 
-    let ca_der = ca.serialize_der().unwrap();
-    let server_der = server.serialize_der_with_signer(&ca).unwrap();
-    let private_key = server.serialize_private_key_der();
+    let ca_der = ca.der().to_vec();
+    let server_der = server.der().to_vec();
+    let private_key = server_key.serialize_der();
     let server_config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(

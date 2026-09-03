@@ -135,7 +135,7 @@ def main() -> None:
         'cargo install cargo-audit --version "${CARGO_AUDIT_VERSION}" --locked',
         'test "$(cargo-audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"',
         "cargo audit --db _rustsec-advisory-db --no-fetch",
-        "--file _upstream/Cargo.lock --deny unsound --json",
+        "--file _upstream/Cargo.lock --deny unsound --deny yanked --json",
         "starry-rustsec-audit-${{ github.sha }}",
     ):
         assert rust_audit_control in build, (
@@ -159,20 +159,25 @@ def main() -> None:
     lockfile = ROOT / "overlay/Cargo.lock"
     assert lockfile.is_file(), "the reviewed Cargo lockfile is missing"
     assert hashlib.sha256(lockfile.read_bytes()).hexdigest() == (
-        "ac30b9b86747d51177779a52e56a385230fb81db3e6052ba4ec1b4de13c92de0"
+        "e2b18e27daeaaa61c6fd46e8838bcdb4693aa3ae366826994983b051d7915edb"
     ), "the fixed Cargo dependency graph changed without review"
     for dependency_control in (
         'tokio-rusqlite = { version = "0.7", features = ["bundled"] }',
         'jsonwebtoken = { version = "9.3.1", default-features = false }',
         'reqwest = { version = "0.12.28"',
-        'x509-parser = { version = "0.15.1", features = ["verify"] }',
+        'x509-parser = { version = "0.16.0", features = ["verify"] }',
+        'rcgen = { version = "0.13.2", features = ["x509-parser"] }',
     ):
         assert dependency_control in overlay, (
             f"overlay is missing reviewed dependency control: {dependency_control}"
         )
     lock_text = lockfile.read_text(encoding="utf-8")
     database_source = (ROOT / "overlay/src/database.rs").read_text(encoding="utf-8")
-    for removed_dependency in ('name = "sqlx"', 'name = "deadpool"'):
+    for removed_dependency in (
+        'name = "sqlx"',
+        'name = "deadpool"',
+        'name = "ring"\nversion = "0.16.20"',
+    ):
         assert removed_dependency not in lock_text, (
             f"fixed graph still contains obsolete dependency: {removed_dependency}"
         )
@@ -207,8 +212,12 @@ def main() -> None:
         key, separator, value = line.partition(":")
         if separator and not line.lstrip().startswith("#"):
             release_gate[key.strip()] = value.strip()
-    assert release_gate.get("status") in {"BLOCKED", "APPROVED"}, (
-        "RELEASE_STATUS status must be BLOCKED or APPROVED"
+    assert release_gate.get("status") in {
+        "BLOCKED",
+        "PREVIEW_APPROVED",
+        "APPROVED",
+    }, (
+        "RELEASE_STATUS status must be BLOCKED, PREVIEW_APPROVED, or APPROVED"
     )
     assert release_gate.get("patch_version") == (
         ROOT / "PATCH_VERSION"
@@ -219,6 +228,17 @@ def main() -> None:
         "RELEASE_STATUS contains unsupported fields"
     )
     assert "Publication is blocked by RELEASE_STATUS" in build
+    for preview_release_control in (
+        "PREVIEW_APPROVED",
+        "release_channel=preview",
+        "rolling_tag=preview",
+        "release_flag=--prerelease",
+        "expected_prerelease=true",
+        "${{ needs.resolve.outputs.rolling_tag }}",
+    ):
+        assert preview_release_control in build, (
+            f"preview publication control is missing: {preview_release_control}"
+        )
     for release_control in (
         "package-test:",
         "release-candidate:",
@@ -230,6 +250,7 @@ def main() -> None:
         "scripts/write_release_summary.py",
         "STARRY-RELEASE-SUMMARY.json",
         "--image-linux-amd64-digest",
+        '--release-channel "$RELEASE_CHANNEL"',
         "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f",
         "actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34",
         "attestations: write",
@@ -254,7 +275,7 @@ def main() -> None:
     for container_release_metadata in (
         "org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve.outputs.release_tag }}",
         "org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/container/CONTAINER.md",
-        "the same image bundles HBBR with compatible Relay data forwarding plus active probes and load telemetry",
+        "the same image bundles HBBR with compatible reliable Relay plus opt-in FastMedia UDP, active probes, and load telemetry",
         "account/API services and MMDB data are not included",
         "Recommended Docker deployment: https://github.com/${GITHUB_REPOSITORY}/wiki/Docker-Deployment",
         "Single-host Compose asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/compose.yaml",

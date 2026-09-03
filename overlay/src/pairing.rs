@@ -1,6 +1,6 @@
 use base64::{decode_config, encode_config, URL_SAFE_NO_PAD};
 use hbb_common::tokio::time::{timeout, Duration};
-use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair};
+use rcgen::{CertificateParams, DistinguishedName, DnType, IsCa, KeyPair};
 use serde_derive::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -808,7 +808,7 @@ fn load_or_create_pending_key(
         if existing_key_path.exists() && !allow_existing_identity {
             return Err("identity_key_exists".to_owned());
         }
-        let key = KeyPair::generate(&rcgen::PKCS_ED25519)
+        let key = KeyPair::generate_for(&rcgen::PKCS_ED25519)
             .map_err(|_| "identity_key_generation_failed".to_owned())?;
         let value = key.serialize_pem();
         atomic_write(pending_key_path, value.as_bytes(), 0o600, false)?;
@@ -822,16 +822,15 @@ fn load_or_create_pending_key(
         .transpose()?
         .into_iter()
         .collect();
-    let mut params = CertificateParams::new(subject_alt_names);
-    params.alg = &rcgen::PKCS_ED25519;
+    let mut params = CertificateParams::new(subject_alt_names)
+        .map_err(|_| "identity_csr_generation_failed".to_owned())?;
     let mut name = DistinguishedName::new();
     name.push(DnType::CommonName, bounded_name(common_name)?);
     params.distinguished_name = name;
-    params.key_pair = Some(key_pair);
-    let certificate = Certificate::from_params(params)
-        .map_err(|_| "identity_csr_generation_failed".to_owned())?;
-    let csr_pem = certificate
-        .serialize_request_pem()
+    let csr_pem = params
+        .serialize_request(&key_pair)
+        .map_err(|_| "identity_csr_generation_failed".to_owned())?
+        .pem()
         .map_err(|_| "identity_csr_generation_failed".to_owned())?
         .trim()
         .to_owned();
@@ -1351,29 +1350,19 @@ fn ensure_relay_ca(identity_dir: &Path) -> Result<(), String> {
             )
         }
         (false, false) => {
-            let mut params = CertificateParams::new(Vec::<String>::new());
-            params.alg = &rcgen::PKCS_ED25519;
+            let key_pair = KeyPair::generate_for(&rcgen::PKCS_ED25519)
+                .map_err(|_| "relay_ca_generation_failed".to_owned())?;
+            let mut params = CertificateParams::new(Vec::<String>::new())
+                .map_err(|_| "relay_ca_generation_failed".to_owned())?;
             params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
             let mut name = DistinguishedName::new();
             name.push(DnType::CommonName, "Starry Relay Enrollment CA v1");
             params.distinguished_name = name;
-            let certificate = Certificate::from_params(params)
+            let certificate = params
+                .self_signed(&key_pair)
                 .map_err(|_| "relay_ca_generation_failed".to_owned())?;
-            atomic_write(
-                &key_path,
-                certificate.serialize_private_key_pem().as_bytes(),
-                0o600,
-                false,
-            )?;
-            atomic_write(
-                &cert_path,
-                certificate
-                    .serialize_pem()
-                    .map_err(|_| "relay_ca_generation_failed".to_owned())?
-                    .as_bytes(),
-                0o640,
-                false,
-            )
+            atomic_write(&key_path, key_pair.serialize_pem().as_bytes(), 0o600, false)?;
+            atomic_write(&cert_path, certificate.pem().as_bytes(), 0o640, false)
         }
         (false, true) => {
             // Recover the only valid interrupted creation shape: the private
@@ -1384,24 +1373,16 @@ fn ensure_relay_ca(identity_dir: &Path) -> Result<(), String> {
                 fs::read_to_string(&key_path).map_err(|_| "relay_ca_unreadable".to_owned())?;
             let key_pair =
                 KeyPair::from_pem(&private_key).map_err(|_| "relay_ca_key_invalid".to_owned())?;
-            let mut params = CertificateParams::new(Vec::<String>::new());
-            params.alg = &rcgen::PKCS_ED25519;
+            let mut params = CertificateParams::new(Vec::<String>::new())
+                .map_err(|_| "relay_ca_generation_failed".to_owned())?;
             params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
             let mut name = DistinguishedName::new();
             name.push(DnType::CommonName, "Starry Relay Enrollment CA v1");
             params.distinguished_name = name;
-            params.key_pair = Some(key_pair);
-            let certificate = Certificate::from_params(params)
+            let certificate = params
+                .self_signed(&key_pair)
                 .map_err(|_| "relay_ca_generation_failed".to_owned())?;
-            atomic_write(
-                &cert_path,
-                certificate
-                    .serialize_pem()
-                    .map_err(|_| "relay_ca_generation_failed".to_owned())?
-                    .as_bytes(),
-                0o640,
-                false,
-            )
+            atomic_write(&cert_path, certificate.pem().as_bytes(), 0o640, false)
         }
         _ => Err("relay_ca_partial_identity".to_owned()),
     }
@@ -1990,13 +1971,12 @@ mod tests {
     }
 
     fn test_identity() -> (String, String, String) {
-        let mut params = CertificateParams::new(Vec::<String>::new());
-        params.alg = &rcgen::PKCS_ED25519;
-        let certificate = Certificate::from_params(params).unwrap();
-        let private_key = certificate.serialize_private_key_pem();
-        let key = KeyPair::from_pem(&private_key).unwrap();
+        let params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        let key = KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
+        let certificate = params.self_signed(&key).unwrap();
+        let private_key = key.serialize_pem();
         let fingerprint = digest(&key.public_key_der());
-        let certificate_pem = certificate.serialize_pem().unwrap();
+        let certificate_pem = certificate.pem();
         (private_key, certificate_pem, fingerprint)
     }
 
@@ -2189,7 +2169,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(csr.trim(), csr);
-        let request = rcgen::CertificateSigningRequest::from_pem(&csr).unwrap();
+        let request = rcgen::CertificateSigningRequestParams::from_pem(&csr).unwrap();
         assert!(request.params.subject_alt_names.iter().any(|name| {
             matches!(name, rcgen::SanType::DnsName(value) if value == "starry.internal")
         }));

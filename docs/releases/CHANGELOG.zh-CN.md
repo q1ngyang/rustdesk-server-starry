@@ -5,7 +5,7 @@
 本文记录 Starry overlay 的变化。完整产物版本由官方 RustDesk Server 版本与 Starry
 patch 版本组合，例如 `1.1.16-patch-v1.3.1`。
 
-## patch-v1.3.1 — 发布候选阻断中
+## patch-v1.3.1 — 预览版
 
 完整说明：[`RELEASE-NOTES-patch-v1.3.1.zh-CN.md`](RELEASE-NOTES-patch-v1.3.1.zh-CN.md)
 
@@ -27,13 +27,19 @@ patch 版本组合，例如 `1.1.16-patch-v1.3.1`。
 - 仅在完整冻结 Relay Quality 绑定全部匹配时允许 native 初始
   `PunchHoleSent`/`LocalAddr` 的合法 target 来源端口变化；顶层 report/controller route
   仍精确绑定，冲突重复仍拒绝。
+- Control Agent 在终止时完成有界 drain，避免诊断容器留下含糊的强制停止状态。
+- 生成的 HBBR 测试签名私钥不再进入子进程参数。
+- 将锁文件中已撤回的 `chacha20 0.10.1` 替换为未撤回的 `0.10.2`，CI 除 vulnerability
+  与 unsound advisory 外也会拒绝 yanked 依赖。
 
 ### 兼容性与状态
 
 - Relay Quality v1 protobuf、digest、评分、遥测、迟滞、隐私及 fallback 语义不变。
 - 官方客户端、六字段 FastCompat、手工 Agent/Relay 和普通 Native/WSS Relay 保持兼容；
   所有新开关默认关闭。
-- 真实 Akari↔HBBS↔HBBR 双角色转发、可靠回退、自动重入与完整发布矩阵通过前禁止发布。
+- 协议级 Akari harness 已针对候选 HBBR 证明双角色转发、可靠回退和同会话自动重入。
+  默认关闭新开关的预览版已获批准；真实双客户端 GUI/信令、设备/NAT/故障矩阵及生产
+  PKI 门禁通过前仍不得升级为稳定版。
 
 ## patch-v1.3.0 — 开发中
 

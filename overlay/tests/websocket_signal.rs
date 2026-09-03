@@ -21,7 +21,7 @@ use hbb_common::{
     udp::FramedSocket,
 };
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
     PKCS_ECDSA_P256_SHA256,
 };
 use sha2::{Digest, Sha256};
@@ -1104,30 +1104,30 @@ fn ensure_websocket_load_nofile_limit() {}
 async fn start_wss_probe(
     root: &Path,
 ) -> (u16, u16, PathBuf, PathBuf, Arc<AtomicUsize>, JoinHandle<()>) {
-    let mut ca_params = CertificateParams::new(Vec::new());
-    ca_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     let mut ca_name = DistinguishedName::new();
     ca_name.push(DnType::CommonName, "Starry integration test CA");
     ca_params.distinguished_name = ca_name;
-    let ca = Certificate::from_params(ca_params).unwrap();
+    let ca = ca_params.self_signed(&ca_key).unwrap();
 
-    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]);
-    server_params.alg = &PKCS_ECDSA_P256_SHA256;
+    let server_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
     let mut server_name = DistinguishedName::new();
     server_name.push(DnType::CommonName, "localhost");
     server_params.distinguished_name = server_name;
-    let server = Certificate::from_params(server_params).unwrap();
+    let server = server_params.signed_by(&server_key, &ca, &ca_key).unwrap();
 
     let ca_path = root.join("test-ca.pem");
-    fs::write(&ca_path, ca.serialize_pem().unwrap()).unwrap();
+    fs::write(&ca_path, ca.pem()).unwrap();
     let telemetry_secret_path = root.join("test-relay-telemetry.secret");
     let telemetry_secret = b"starry-test-telemetry-secret-32-bytes-minimum";
     fs::write(&telemetry_secret_path, telemetry_secret).unwrap();
     let telemetry_key =
         auth::Key::from_slice(&Sha256::digest(telemetry_secret)).expect("test HMAC key");
-    let certificate = server.serialize_der_with_signer(&ca).unwrap();
-    let private_key = server.serialize_private_key_der();
+    let certificate = server.der().to_vec();
+    let private_key = server_key.serialize_der();
     let tls = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(

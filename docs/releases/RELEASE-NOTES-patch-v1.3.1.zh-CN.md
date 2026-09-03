@@ -1,4 +1,4 @@
-# patch-v1.3.1 发布候选说明
+# patch-v1.3.1 预览版说明
 
 [English](RELEASE-NOTES-patch-v1.3.1.md) | **简体中文**
 
@@ -7,9 +7,14 @@ patch-v1.3.1 基于已冻结 patch-v1.3.0 commit
 FastCompat/FastMediaV1 Relay 的 Starry 侧和 Starry Pairing v1，并保持官方客户端、旧
 Akari、手工部署及冻结 Relay Quality v1 契约兼容。
 
-**发布状态：BLOCKED。** 在真实 Akari↔HBBS↔HBBR 集成证明双角色授权/绑定、加密转发、
-可靠回退与自动重入之前，不得创建 tag 或宣称冻结。只有该门禁和完整 CI 对一个精确
-候选 commit 全部通过后，发布工作流才会写入最终 commit 与契约 digest。
+**发布状态：PREVIEW_APPROVED。** wire 与 Control 契约已冻结在 commit
+`6f5a31008ab7761d8557c8cf9fefcb5be11c49e6`；其
+`CONTRACT-RELEASE-SUMMARY.json` SHA-256 为
+`67cc28287ed8c6fedfc37b88c6b0ecbc95a734a4644a34bfbb2d85e6d801df67`。
+源码候选已通过协议级 Akari↔HBBS↔HBBR 双角色授权/bind、加密转发、可靠回退与
+同会话自动重入 harness。这足以发布默认关闭 Fast 开关、需要管理员主动启用的预览版，
+但不代表稳定运行时批准：真实双客户端 GUI/信令、设备/NAT/故障矩阵与生产 PKI 门禁尚未
+对同一精确审核 commit 通过。
 
 ## Fast Relay 与 FastMedia
 
@@ -119,8 +124,8 @@ v5/UI schema、`capabilities`/`relays`/`status`、Relay enrollment、SP1、十�
 授权、AKR1、telemetry v2 schema/fixture 和 downgrade drain-state schema。source binding
 是包含该摘要的 Git commit。schema 支持只用 `capabilities.config_schema = 5` 表达，并附带
 supported/active version 与 schema digest。Kessoku v3.0.8 可以 pin 推送后的精确契约候选
-commit，绝不能 pin dirty worktree；`RELEASE_STATUS` 仍为 `BLOCKED` 时也不能把它当作运行时
-发布批准。
+commit，绝不能 pin dirty worktree。`PREVIEW_APPROVED` 只批准 GitHub prerelease 和滚动
+`preview` 镜像，不能把它当作稳定运行时发布批准。
 
 ## 验证状态
 
@@ -129,31 +134,39 @@ bind、AKF1 转发/replay、来源端口 rebind、速率/生命周期、认证 t
 SP1 过期/重放/用途/key/digest/pin、中断安装恢复、enrollment 幂等、持久 mount 和无副作用
 downgrade 测试。真实 HBBR 子进程测试覆盖双角色，并证明 UDP 工作不破坏可靠 TCP。
 
-本地候选还通过了 140 个非 SQLite lib 测试、单独串行 SQLite 慢测、11 个 HBBR binary
-测试、24 个定向集成测试（另有一个显式 ignored 的负载门禁）以及单独运行的 1000 WSS
-发布门禁；CI 所属文件 rustfmt、`cargo check --all-targets`、`cargo clippy
+当前工作树已通过全部 141 个 lib 测试、11 个 HBBR binary 测试、12 个协议契约测试、
+Control Agent、连接鉴权、local-control、mixed Relay、WebSocket 与真实 HBBR 定向集成，
+以及单独运行的 1000 WSS 发布门禁。跨仓 Akari 协议 harness 保持可靠 TCP 流在线，在
+UDP probe 超时后回退，并于同一会话重新进入 FastMedia；这证明协议状态迁移，不等同于
+GUI 远控或真实设备/网络结果。CI 所属文件 rustfmt、`cargo check --all-targets`、`cargo clippy
 --all-targets`、native/amd64-musl release build、本地镜像命令与持久化 smoke、四包 DEB
 可复现构建、固定 Debian 镜像安装及 HBBS v1.3.1→v1.3.0→v1.3.1 身份往返均通过。
 干净官方 commit 连续应用 overlay 两次的整树文件 digest 均为
-`a83db4b81c4dc2867785a36d869bba09afc2b677e085d47a9cb686537f48a1e5`。
+`6cc4aea565e8968973715280d7739f85db67531726974345b3ab1029a286ab85`。
+锁定依赖审计在把已撤回的 `chacha20 0.10.1` 更新为未撤回的 `0.10.2` 后为
+0 vulnerability、0 unsound advisory、0 yanked；已披露的上游
+`sodiumoxide 0.2.7` unmaintained warning 仍保留。
 
-后续隔离、非发布 staging 使用同一 `KESSOKU_DATA_DIR` 对接 Kessoku v3.0.8，通过 SP1
-Control 证书轮换、重启后 mTLS/JWT inventory、健康门控 Relay 重新 enrollment、修正后的
-容器重建，以及 relative content/metadata manifest 完全相同的停机备份恢复。
+后续隔离、非发布的精确工作状态 staging 使用同一 `KESSOKU_DATA_DIR` 对接 Kessoku
+v3.0.8，通过 SP1 Control 证书轮换、重启后 mTLS/JWT inventory、健康门控 Relay 重新
+enrollment、force-recreate 持久化、停机备份恢复及精确绑定的高风险 rollback 二次确认。
 协调执行 v3.0.8/v1.3.1 → v3.0.7/v1.3.0 schema-v4 → v3.0.8/v1.3.1 后，registry、
-HBBS identity、生成的 Agent-v1 identity、普通 Native/WSS Relay 与新鲜 telemetry 均保留。
+generation、HBBS identity、生成的 Agent-v1 identity、普通 Native/WSS Relay 与新鲜
+telemetry 均保留。
 Kessoku v3.0.7 直接读取 Starry v1.3.1 inventory 会因前者冻结 config schema ≤4 和
-telemetry schema 1 而被正确拒绝。该 staging image 来自 pre-review worktree，只是诊断
-证据；所有适用操作仍须对最终精确干净 release commit 重跑。
+telemetry schema 1 而被正确拒绝。恢复后的 Kessoku v3.0.8 inventory 会主动丢弃
+process/allocation/session UUID、地址、token、nonce、grant、私钥及媒体字段。这些镜像只是
+工作树诊断工件，不是不可变发布工件；所有适用操作仍须对最终精确干净 commit 重跑。
 
-以下仍是对同一精确候选的发布阻断项：
+以下仍是对同一精确候选的稳定版阻断项；后续发现的问题进入新的 patch 预览版迭代，
+不反向改写或撤销本次不可变预览版：
 
-- Native、WSS、mixed 上真实 Akari↔HBBS↔HBBR 自动回退与重入；
-- 真实 UDP block、HBBR restart、300–1200 ms 迁移、整形丢包/超限及设备长时 soak；
+- Native、WSS、mixed 信令上的真实双客户端 Akari GUI 远控会话，并证明可靠回退与自动
+  重入时会话不中断；
+- 真实设备上的 UDP block、HBBR restart、NAT/AP 漫游、300–1200 ms 路径迁移、整形
+  丢包/超限、长视频/温升及重连 soak；
 - 生产 PKI 证书轮换、九十日回滚窗口前 enrolled Relay 轮换，以及多主机迁移、身份克隆
   和 down-volume 演练；
-- 验证 Kessoku v3.0.8 隐私边界会主动从外部 API、UI 和持久状态丢弃
-  `websocket.process_instance_id` 进程 UUID；Starry 受认证 Control inventory 只把它用于
-  有界 telemetry sequence/restart 校验；
-- 精确干净 commit 上的托管 CI、RustSec/历史 secret scan、SBOM/attestation、交叉构建工件
-  可复现性及完整 Docker/DEB/native 配对与 Relay 交叉升级矩阵。
+- 不可变、干净的 Akari 候选，以及精确干净 commit 上的托管 CI/安全审核、历史 secret
+  scan、SBOM/签名/provenance/attestation、多架构工件可复现性和完整 Docker/DEB/native
+  配对与 Relay 交叉升级矩阵。

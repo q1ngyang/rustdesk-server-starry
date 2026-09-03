@@ -309,7 +309,7 @@ def patch_dependencies(upstream: Path) -> None:
     production_only_dependencies = (
         'tokio-rustls = { version = "0.26", features = ["ring", "tls12"], default-features = false }',
         'tower = { version = "0.4", features = ["util"] }',
-        'x509-parser = { version = "0.15.1", features = ["verify"] }',
+        'x509-parser = { version = "0.16.0", features = ["verify"] }',
     )
     content = cargo.read_text(encoding="utf-8")
     dependencies_end = content.find("\n[dev-dependencies]")
@@ -328,6 +328,7 @@ def patch_dependencies(upstream: Path) -> None:
             'rcgen = "0.9"\n',
             'rcgen = "0.12.1"\n',
             'rcgen = { version = "0.12.1", features = ["x509-parser"] }\n',
+            'rcgen = { version = "0.13.2", features = ["x509-parser"] }\n',
         ):
             position = content.find(rcgen_dev, dependencies_end)
             if position >= 0:
@@ -365,21 +366,25 @@ def patch_dependencies(upstream: Path) -> None:
         ),
         (
             "x509-parser",
-            'x509-parser = { version = "0.15.1", features = ["verify"] }',
+            'x509-parser = { version = "0.16.0", features = ["verify"] }',
             'tower = { version = "0.4", features = ["util"] }',
-            ('x509-parser = "0.14"', 'x509-parser = "0.15.1"'),
+            (
+                'x509-parser = "0.14"',
+                'x509-parser = "0.15.1"',
+                'x509-parser = { version = "0.15.1", features = ["verify"] }',
+            ),
         ),
         (
             "url",
             'url = "2.2"',
-            'x509-parser = { version = "0.15.1", features = ["verify"] }',
+            'x509-parser = { version = "0.16.0", features = ["verify"] }',
             (),
         ),
         (
             "rcgen",
-            'rcgen = { version = "0.12.1", features = ["x509-parser"] }',
+            'rcgen = { version = "0.13.2", features = ["x509-parser"] }',
             'url = "2.2"',
-            (),
+            ('rcgen = { version = "0.12.1", features = ["x509-parser"] }',),
         ),
     )
     for name, desired, after, accepted in dependency_chain:
@@ -426,6 +431,7 @@ def patch_dependencies(upstream: Path) -> None:
             '[dev-dependencies]\nrcgen = "0.9"\n'
             'tokio-rustls = "0.23"\n\n',
             '[dev-dependencies]\nrcgen = "0.12.1"\n\n',
+            '[dev-dependencies]\nrcgen = "0.13.2"\n\n',
             '[dev-dependencies]\ntempfile = "3.27"\n\n',
         )
         source = next((block for block in legacy_dev if block in content), None)
@@ -447,6 +453,12 @@ def patch_dependencies(upstream: Path) -> None:
             replace_once(
                 cargo,
                 'rcgen = "0.12.1"\n',
+                'tempfile = "3.27"\n',
+            )
+        elif 'rcgen = "0.13.2"\n' in content and 'tempfile = "3.27"\n' not in content:
+            replace_once(
+                cargo,
+                'rcgen = "0.13.2"\n',
                 'tempfile = "3.27"\n',
             )
         elif 'tempfile = "3.27"\n' in content:

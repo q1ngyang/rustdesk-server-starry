@@ -1174,8 +1174,8 @@ mod tests {
         runtime::Builder,
     };
     use rcgen::{
-        BasicConstraints, Certificate as GeneratedCertificate, CertificateParams,
-        ExtendedKeyUsagePurpose, IsCa, PKCS_ECDSA_P256_SHA256,
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair,
+        PKCS_ECDSA_P256_SHA256,
     };
     use rustls::{
         pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
@@ -1622,42 +1622,37 @@ mod tests {
             .build()
             .unwrap()
             .block_on(async {
-                let mut ca_params = CertificateParams::new(Vec::new());
-                ca_params.alg = &PKCS_ECDSA_P256_SHA256;
+                let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+                let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
                 ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-                let ca = GeneratedCertificate::from_params(ca_params).unwrap();
+                let ca = ca_params.self_signed(&ca_key).unwrap();
 
-                let mut server_params = CertificateParams::new(vec!["localhost".to_owned()]);
-                server_params.alg = &PKCS_ECDSA_P256_SHA256;
+                let server_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+                let mut server_params =
+                    CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
                 server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-                let server_certificate =
-                    GeneratedCertificate::from_params(server_params).unwrap();
+                let server_certificate = server_params
+                    .signed_by(&server_key, &ca, &ca_key)
+                    .unwrap();
 
-                let mut client_params = CertificateParams::new(Vec::new());
-                client_params.alg = &PKCS_ECDSA_P256_SHA256;
+                let client_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+                let mut client_params = CertificateParams::new(Vec::new()).unwrap();
                 client_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-                let client_certificate =
-                    GeneratedCertificate::from_params(client_params).unwrap();
+                let client_certificate = client_params
+                    .signed_by(&client_key, &ca, &ca_key)
+                    .unwrap();
 
                 let directory = tempfile::tempdir().unwrap();
                 let ca_path = directory.path().join("ca.pem");
                 let client_path = directory.path().join("client.pem");
                 let client_key_path = directory.path().join("client-key.pem");
-                fs::write(&ca_path, ca.serialize_pem().unwrap()).unwrap();
-                fs::write(
-                    &client_path,
-                    client_certificate.serialize_pem_with_signer(&ca).unwrap(),
-                )
-                .unwrap();
-                fs::write(
-                    &client_key_path,
-                    client_certificate.serialize_private_key_pem(),
-                )
-                .unwrap();
+                fs::write(&ca_path, ca.pem()).unwrap();
+                fs::write(&client_path, client_certificate.pem()).unwrap();
+                fs::write(&client_key_path, client_key.serialize_pem()).unwrap();
 
                 let mut client_roots = RootCertStore::empty();
                 client_roots
-                    .add(CertificateDer::from(ca.serialize_der().unwrap()))
+                    .add(CertificateDer::from(ca.der().to_vec()))
                     .unwrap();
                 let verifier = WebPkiClientVerifier::builder(Arc::new(client_roots))
                     .build()
@@ -1666,10 +1661,10 @@ mod tests {
                     .with_client_cert_verifier(verifier)
                     .with_single_cert(
                         vec![CertificateDer::from(
-                            server_certificate.serialize_der_with_signer(&ca).unwrap(),
+                            server_certificate.der().to_vec(),
                         )],
                         PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-                            server_certificate.serialize_private_key_der(),
+                            server_key.serialize_der(),
                         )),
                     )
                     .unwrap();

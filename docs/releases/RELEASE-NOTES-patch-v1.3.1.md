@@ -1,4 +1,4 @@
-# patch-v1.3.1 release-candidate notes
+# patch-v1.3.1 preview notes
 
 **English** | [简体中文](RELEASE-NOTES-patch-v1.3.1.zh-CN.md)
 
@@ -8,11 +8,16 @@ FastCompat/FastMediaV1 Relay support and Starry Pairing v1 while preserving
 official clients, old Akari, manual deployments, and the frozen Relay Quality
 v1 contract.
 
-**Release state: BLOCKED.** The candidate must not be tagged or described as
-frozen until a real Akari↔HBBS↔HBBR integration proves dual-role authorization
-and binding, encrypted forwarding, reliable fallback, and automatic re-entry.
-The exact candidate commit and final contract digests will be written by the
-release workflow only after that gate and the complete CI matrix pass.
+**Release state: PREVIEW_APPROVED.** The wire and Control contract is frozen at commit
+`6f5a31008ab7761d8557c8cf9fefcb5be11c49e6`, whose
+`CONTRACT-RELEASE-SUMMARY.json` SHA-256 is
+`67cc28287ed8c6fedfc37b88c6b0ecbc95a734a4644a34bfbb2d85e6d801df67`.
+The source candidate has passed a protocol-level
+Akari↔HBBS↔HBBR dual-role authorization/bind, encrypted forwarding, reliable
+fallback, and same-session automatic re-entry harness. This is sufficient for
+an opt-in preview whose Fast switches remain off by default. It is not stable
+runtime approval: the real two-client GUI/signalling, device/NAT/fault matrix,
+and production PKI gates have not passed for one exact reviewed commit.
 
 ## Fast Relay and FastMedia
 
@@ -149,8 +154,8 @@ the downgrade drain-state schema by per-file SHA-256. Its source binding is the
 Git commit containing that summary. Schema support is expressed only as
 `capabilities.config_schema = 5`, accompanied by supported/active versions and
 the schema digest. Kessoku v3.0.8 may pin the exact pushed contract-candidate
-commit, never a dirty worktree, but must not treat it as runtime release
-approval while `RELEASE_STATUS` remains `BLOCKED`.
+commit, never a dirty worktree. `PREVIEW_APPROVED` authorizes only a GitHub
+prerelease and the rolling `preview` image; it is not stable runtime approval.
 
 ## Verification status
 
@@ -163,42 +168,52 @@ idempotency, persistence-mount checks, and no-side-effect downgrade export. A
 real HBBR subprocess test exercises both roles and proves its reliable TCP path
 survives UDP work.
 
-Local candidate validation additionally passed 140 non-SQLite library tests,
-the separately serialized SQLite test, 11 HBBR binary tests, 24 directed
-integration tests (with one explicitly ignored load gate), and the explicit
-1,000-WebSocket release gate. The CI-owned rustfmt set, `cargo check
+Current working-tree validation passed all 141 library tests, 11 HBBR binary
+tests, the 12 protocol-contract tests, the directed Control Agent, connection
+authentication, local-control, mixed-Relay, WebSocket, and real-HBBR
+integration suites, and the explicit 1,000-WebSocket release gate. The
+cross-repository Akari protocol harness kept the reliable TCP stream alive,
+fell back after a UDP probe timeout, and re-entered FastMedia in the same
+session. This proves the protocol state transition, not a GUI remote-control
+session or a real-device/network result. The CI-owned rustfmt set, `cargo check
 --all-targets`, `cargo clippy --all-targets`, native and amd64-musl release
 builds, local image command/persistence smoke, reproducible four-package DEB
 build, pinned-Debian install smoke, and an HBBS
 v1.3.1→v1.3.0→v1.3.1 identity round trip also passed. Applying the overlay
 twice to clean official commits produced the same full-file digest
-`a83db4b81c4dc2867785a36d869bba09afc2b677e085d47a9cb686537f48a1e5`.
+`6cc4aea565e8968973715280d7739f85db67531726974345b3ab1029a286ab85`.
+The locked dependency audit reports zero vulnerabilities, zero unsound
+advisories, and zero yanked crates after moving the yanked
+`chacha20 0.10.1` lock entry to non-yanked `0.10.2`; the disclosed upstream
+`sodiumoxide 0.2.7` unmaintained warning remains.
 
-A later isolated, non-publishing staging exercise against Kessoku v3.0.8 used
-one persistent `KESSOKU_DATA_DIR` and passed SP1 Control certificate rotation,
-mTLS/JWT inventory after restart, health-gated Relay re-enrollment, corrected
-container reconstruction, and a stopped backup/restore with identical
-relative content and metadata manifests. A coordinated
+An isolated, non-publishing exact-working-state staging exercise against
+Kessoku v3.0.8 used one persistent `KESSOKU_DATA_DIR` and passed SP1 Control
+certificate rotation, mTLS/JWT inventory after restart, health-gated Relay
+re-enrollment, force-recreate persistence, stopped backup/restore, and exact
+high-risk rollback confirmation. A coordinated
 v3.0.8/v1.3.1 → v3.0.7/v1.3.0 schema-v4 → v3.0.8/v1.3.1 round trip preserved
-the registry, HBBS identity, generated Agent-v1 identity, ordinary Native/WSS
-Relay, and fresh telemetry. Direct Kessoku v3.0.7 → Starry v1.3.1 inventory was
-correctly rejected because the former freezes config schema ≤4 and telemetry
-schema 1. This staging image was built from a pre-review worktree and is
-diagnostic evidence only; every applicable operation must be repeated for the
-exact clean release commit.
+the independent registry, generation, HBBS identity, generated Agent-v1
+identity, ordinary Native/WSS Relay, and fresh telemetry. Direct Kessoku
+v3.0.7 → Starry v1.3.1 inventory was correctly rejected because the former
+freezes config schema ≤4 and telemetry schema 1. The restored Kessoku v3.0.8
+inventory deliberately dropped process/allocation/session UUIDs, addresses,
+tokens, nonces, grants, private keys, and media fields. These images are
+diagnostic working-tree artifacts, not immutable release artifacts; every
+applicable operation must be repeated for the final clean commit.
 
-The following remain release blockers until recorded for one exact candidate:
+The following remain stable-release blockers until recorded for one exact
+candidate; findings become a later patch preview and do not revoke this
+immutable preview:
 
-- real Akari↔HBBS↔HBBR automatic fallback and re-entry across Native, WSS, and
-  mixed signalling;
-- real UDP-block, HBBR-restart, 300–1200 ms migration, shaped loss/overload,
-  and long device/network soak;
+- real two-client Akari GUI remote-control sessions through HBBS/HBBR across
+  Native, WSS, and mixed signalling, including observable reliable fallback
+  and automatic re-entry without session loss;
+- real-device UDP-block, HBBR-restart, NAT/AP migration, 300–1200 ms path
+  migration, shaped loss/overload, long video/thermal, and reconnect soak;
 - production-PKI certificate rotation, enrolled-Relay rotation before a
   90-day rollback window, and multi-host migration/clone/down-volume drills;
-- verification that the Kessoku v3.0.8 privacy boundary deliberately drops
-  the `websocket.process_instance_id` process UUID from outward APIs, UI, and
-  persistent state; Starry's authenticated Control inventory uses it only for
-  bounded telemetry sequence/restart validation;
-- hosted clean-commit CI, RustSec/history secret scans, SBOM/attestations,
-  cross-built artifact reproducibility, and the full Docker/DEB/native pairing
-  and Relay cross-upgrade matrix.
+- an immutable, clean Akari candidate plus hosted clean-commit CI/security
+  review, history secret scans, SBOM/signing/provenance/attestations,
+  multi-architecture artifact reproducibility, and the full Docker/DEB/native
+  pairing and Relay cross-upgrade matrix.

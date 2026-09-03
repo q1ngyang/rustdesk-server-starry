@@ -49,6 +49,7 @@ use x509_parser::{extensions::GeneralName, parse_x509_certificate};
 const CONTROL_BODY_LIMIT: u64 = 1024 * 1024 + 4096;
 const MAX_CONNECTIONS: usize = 256;
 const CONNECTION_DEADLINE_SECONDS: u64 = 30;
+const SHUTDOWN_DEADLINE_SECONDS: u64 = 8;
 const REQUESTS_PER_MINUTE: u32 = 120;
 const STARRY_PATCH_VERSION: &str = "1.3.1";
 const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v5/config.schema.json");
@@ -275,11 +276,19 @@ pub async fn run(config_path: impl AsRef<Path>) -> Result<(), String> {
         config.listen
     );
 
+    let shutdown = crate::common::listen_signal();
+    hbb_common::tokio::pin!(shutdown);
     loop {
-        let (stream, _) = listener
-            .accept()
-            .await
-            .map_err(|err| format!("control Agent accept failed: {err}"))?;
+        let (stream, _) = hbb_common::tokio::select! {
+            signal = &mut shutdown => {
+                signal.map_err(|err| format!("control Agent shutdown signal failed: {err}"))?;
+                hbb_common::log::info!("Starry Control Agent stopping after shutdown signal");
+                break;
+            }
+            accepted = listener.accept() => {
+                accepted.map_err(|err| format!("control Agent accept failed: {err}"))?
+            }
+        };
         let Ok(permit) = permits.clone().try_acquire_owned() else {
             continue;
         };
@@ -326,6 +335,21 @@ pub async fn run(config_path: impl AsRef<Path>) -> Result<(), String> {
             drop(permit);
         });
     }
+
+    drop(listener);
+    match timeout(
+        Duration::from_secs(SHUTDOWN_DEADLINE_SECONDS),
+        permits.acquire_many_owned(MAX_CONNECTIONS as u32),
+    )
+    .await
+    {
+        Ok(Ok(_)) => hbb_common::log::info!("Starry Control Agent stopped cleanly"),
+        Ok(Err(_)) => return Err("control Agent connection semaphore closed".to_owned()),
+        Err(_) => hbb_common::log::warn!(
+            "Starry Control Agent reached its bounded connection drain deadline"
+        ),
+    }
+    Ok(())
 }
 
 /// Queries HBBS over its authenticated loopback control socket and reduces the

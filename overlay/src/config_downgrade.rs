@@ -307,7 +307,7 @@ fn unix_seconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcgen::{Certificate, CertificateParams};
+    use rcgen::{CertificateParams, KeyPair};
 
     #[test]
     fn v5_only_fields_are_removed_without_mutating_source_value() {
@@ -362,10 +362,12 @@ fast_mode:
 "#;
         fs::write(&input, source).unwrap();
         fs::write(&enrollment_state, b"preserve-newer-enrollment-state\n").unwrap();
-        let certificate =
-            Certificate::from_params(CertificateParams::new(vec!["agent.example".to_owned()]))
-                .unwrap();
-        fs::write(&certificate_path, certificate.serialize_pem().unwrap()).unwrap();
+        let key = KeyPair::generate().unwrap();
+        let certificate = CertificateParams::new(vec!["agent.example".to_owned()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        fs::write(&certificate_path, certificate.pem()).unwrap();
         let runtime_state = serde_json::json!({
             "version": 1,
             "observed_at_unix": unix_seconds(),

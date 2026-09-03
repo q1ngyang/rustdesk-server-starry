@@ -467,7 +467,12 @@ def check_release_version() -> None:
         ),
         image_index_digest="sha256:" + "4" * 64,
         image_linux_amd64_digest="sha256:" + "5" * 64,
+        release_channel="preview",
     )
+    assert summary["release"]["channel"] == "preview"
+    assert summary["contracts"]["fast_media_relay_udp"][
+        "runtime_release_status"
+    ] == "PREVIEW"
     contracts = summary["contracts"]
     assert isinstance(contracts, dict)
     assert contracts["control_openapi"]["digest"] == (

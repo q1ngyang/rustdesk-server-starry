@@ -2,8 +2,8 @@ use crate::pairing::{relay_claim_request_digest, relay_configuration_digest};
 use base64::{decode_config, encode_config, URL_SAFE_NO_PAD};
 use fs2::FileExt;
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, CertificateSigningRequest, DistinguishedName,
-    DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+    BasicConstraints, Certificate, CertificateParams, CertificateSigningRequestParams,
+    DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
 };
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
@@ -617,9 +617,9 @@ impl RelayEnrollmentStore {
     }
 
     fn issue_certificate(&self, csr_pem: &str) -> Result<String, EnrollmentError> {
-        let mut request = CertificateSigningRequest::from_pem(csr_pem)
+        let mut request = CertificateSigningRequestParams::from_pem(csr_pem)
             .map_err(|_| EnrollmentError::invalid("The Relay CSR is invalid."))?;
-        if request.params.alg != &rcgen::PKCS_ED25519 {
+        if request.public_key.algorithm() != &rcgen::PKCS_ED25519 {
             return Err(EnrollmentError::invalid("The Relay CSR must use Ed25519."));
         }
         let now = SystemTime::now();
@@ -637,13 +637,14 @@ impl RelayEnrollmentStore {
             ExtendedKeyUsagePurpose::ClientAuth,
             ExtendedKeyUsagePurpose::ServerAuth,
         ];
-        let signer = self.ca_signer()?;
+        let (signer, signer_key) = self.ca_signer()?;
         request
-            .serialize_pem_with_signer(&signer)
+            .signed_by(&signer, &signer_key)
             .map_err(|_| EnrollmentError::internal())
+            .map(|certificate| certificate.pem())
     }
 
-    fn ca_signer(&self) -> Result<Certificate, EnrollmentError> {
+    fn ca_signer(&self) -> Result<(Certificate, KeyPair), EnrollmentError> {
         let private_key = fs::read_to_string(self.identity_dir.join("relay-ca-key.pem"))
             .map_err(|_| EnrollmentError::internal())?;
         let key_pair = KeyPair::from_pem(&private_key).map_err(|_| EnrollmentError::internal())?;
@@ -660,14 +661,16 @@ impl RelayEnrollmentStore {
         {
             return Err(EnrollmentError::internal());
         }
-        let mut params = CertificateParams::new(Vec::<String>::new());
-        params.alg = &rcgen::PKCS_ED25519;
+        let mut params = CertificateParams::new(Vec::<String>::new())
+            .map_err(|_| EnrollmentError::internal())?;
         params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
-        params.key_pair = Some(key_pair);
         let mut name = DistinguishedName::new();
         name.push(DnType::CommonName, "Starry Relay Enrollment CA v1");
         params.distinguished_name = name;
-        Certificate::from_params(params).map_err(|_| EnrollmentError::internal())
+        let certificate = params
+            .self_signed(&key_pair)
+            .map_err(|_| EnrollmentError::internal())?;
+        Ok((certificate, key_pair))
     }
 
     fn bundle(
@@ -1467,23 +1470,23 @@ mod tests {
         create_private_directory(&identity_dir).unwrap();
         create_private_directory(&shared_dir).unwrap();
 
-        let mut ca_params = CertificateParams::new(Vec::<String>::new());
-        ca_params.alg = &rcgen::PKCS_ED25519;
+        let ca_key = KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
+        let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
         ca_params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
         let mut ca_name = DistinguishedName::new();
         ca_name.push(DnType::CommonName, "Starry Relay Enrollment CA v1");
         ca_params.distinguished_name = ca_name;
-        let ca = Certificate::from_params(ca_params).unwrap();
+        let ca = ca_params.self_signed(&ca_key).unwrap();
         atomic_write(
             &identity_dir.join("relay-ca-key.pem"),
-            ca.serialize_private_key_pem().as_bytes(),
+            ca_key.serialize_pem().as_bytes(),
             0o600,
             false,
         )
         .unwrap();
         atomic_write(
             &identity_dir.join("relay-ca.pem"),
-            ca.serialize_pem().unwrap().as_bytes(),
+            ca.pem().as_bytes(),
             0o640,
             false,
         )
@@ -1509,18 +1512,13 @@ mod tests {
         assert_eq!(prepared.enrollment_id, prepared_retry.enrollment_id);
         assert!(prepared_retry.reused);
 
-        let key = KeyPair::generate(&rcgen::PKCS_ED25519).unwrap();
+        let key = KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
         let key_fingerprint = digest(&key.public_key_der());
-        let mut csr_params = CertificateParams::new(Vec::<String>::new());
-        csr_params.alg = &rcgen::PKCS_ED25519;
-        csr_params.key_pair = Some(key);
+        let mut csr_params = CertificateParams::new(Vec::<String>::new()).unwrap();
         let mut name = DistinguishedName::new();
         name.push(DnType::CommonName, "relay-sg");
         csr_params.distinguished_name = name;
-        let csr = Certificate::from_params(csr_params)
-            .unwrap()
-            .serialize_request_pem()
-            .unwrap();
+        let csr = csr_params.serialize_request(&key).unwrap().pem().unwrap();
         let request_digest = relay_claim_request_digest(
             &prepared.enrollment_id,
             &prepared.configuration_digest,
@@ -1682,14 +1680,13 @@ mod tests {
         .unwrap();
 
         let replacement = store.prepare(request(), "test-enrollment-0002").unwrap();
-        let replacement_key = KeyPair::generate(&rcgen::PKCS_ED25519).unwrap();
+        let replacement_key = KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
         let replacement_fingerprint = digest(&replacement_key.public_key_der());
-        let mut replacement_params = CertificateParams::new(Vec::<String>::new());
-        replacement_params.alg = &rcgen::PKCS_ED25519;
-        replacement_params.key_pair = Some(replacement_key);
-        let replacement_csr = Certificate::from_params(replacement_params)
+        let replacement_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        let replacement_csr = replacement_params
+            .serialize_request(&replacement_key)
             .unwrap()
-            .serialize_request_pem()
+            .pem()
             .unwrap()
             .trim()
             .to_owned();
