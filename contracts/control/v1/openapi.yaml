@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Starry Control API
-  version: 1.0.0
+  version: 1.1.0
   description: >-
     Versioned, least-privilege management API for a single Starry HBBS instance.
     Remote deployments require both mTLS and a short-lived scoped service JWT.
@@ -557,11 +557,12 @@ components:
         capabilities:
           type: object
           additionalProperties: false
-          required: [relay_probe_protocol, relay_load_protocol, fast_media_relay_udp]
+          required: [relay_probe_protocol, relay_load_protocol, fast_media_relay_udp, fast_media_relay_renewal]
           properties:
             relay_probe_protocol: {type: [integer, "null"], minimum: 1, description: Explicit HBBR active-probe protocol version; null means legacy/unsupported.}
             relay_load_protocol: {type: [integer, "null"], minimum: 1, description: Explicit HBBR load-telemetry protocol version; null means legacy/unsupported.}
             fast_media_relay_udp: {type: [integer, "null"], minimum: 1, description: Explicit authenticated HBBR AKR1 UDP capability; null means unavailable.}
+            fast_media_relay_renewal: {type: [integer, "null"], minimum: 1, description: Explicit authenticated HBBR active-session renewal capability; null means bootstrap-only FastMedia.}
         quality_candidate: {type: boolean, description: True only when explicitly non-legacy, capability-compatible, healthy, and telemetry-fresh.}
         configured_order: {type: integer, minimum: 0}
         native:
@@ -587,7 +588,7 @@ components:
             latency_ms: {type: [integer, "null"], minimum: 0}
             telemetry_schema:
               oneOf:
-                - {type: integer, enum: [1, 2]}
+                - {type: integer, enum: [1, 2, 3]}
                 - {type: "null"}
             process_instance_id: {type: [string, "null"], maxLength: 64}
             telemetry_sequence: {type: [integer, "null"], format: int64, minimum: 1}
@@ -680,14 +681,18 @@ components:
     FastRelayRuntime:
       type: object
       additionalProperties: false
-      required: [protocol_version, fast_compat_enabled, fast_media_v1_enabled, active_authorizations, active_fast_media_authorizations, last_fast_media_authorization_expires_at_unix, issued_sessions, target_grants_issued, controller_grants_issued, fast_compat_sessions, fast_media_sessions, reused, delivered, disabled, insecure_requests, invalid_configuration, invalid_uuids, invalid_server_selection, missing_signing_keys, signing_failures, quality_selection_failures, rate_limited, response_misses, expired_cache_evictions, fast_media_unavailable, reliable_fallbacks]
+      required: [protocol_version, renewal_protocol_version, fast_compat_enabled, fast_media_v1_enabled, active_authorizations, active_fast_media_authorizations, active_renewable_authorizations, last_fast_media_authorization_expires_at_unix, minimum_remaining_ttl_seconds, renewals_due_within_30_seconds, issued_sessions, target_grants_issued, controller_grants_issued, fast_compat_sessions, fast_media_sessions, reused, delivered, disabled, insecure_requests, invalid_configuration, invalid_uuids, invalid_server_selection, missing_signing_keys, signing_failures, quality_selection_failures, rate_limited, response_misses, expired_cache_evictions, fast_media_unavailable, reliable_fallbacks, renewal_requests, renewal_succeeded, renewal_idempotent_replays, renewal_failures, admission_downcapped, admission_rejected, last_signed_bitrate_cap_kbps]
       properties:
         protocol_version: {const: 1}
+        renewal_protocol_version: {const: 1}
         fast_compat_enabled: {type: boolean}
         fast_media_v1_enabled: {type: boolean}
         active_authorizations: {type: integer, minimum: 0}
         active_fast_media_authorizations: {type: integer, minimum: 0}
+        active_renewable_authorizations: {type: integer, minimum: 0}
         last_fast_media_authorization_expires_at_unix: {type: integer, format: int64, minimum: 0}
+        minimum_remaining_ttl_seconds: {type: [integer, "null"], format: int64, minimum: 0}
+        renewals_due_within_30_seconds: {type: integer, minimum: 0}
         issued_sessions: {type: integer, format: int64, minimum: 0}
         target_grants_issued: {type: integer, format: int64, minimum: 0}
         controller_grants_issued: {type: integer, format: int64, minimum: 0}
@@ -708,13 +713,35 @@ components:
         expired_cache_evictions: {type: integer, format: int64, minimum: 0}
         fast_media_unavailable: {type: integer, format: int64, minimum: 0}
         reliable_fallbacks: {type: integer, format: int64, minimum: 0}
+        renewal_requests: {type: integer, format: int64, minimum: 0}
+        renewal_succeeded: {type: integer, format: int64, minimum: 0}
+        renewal_idempotent_replays: {type: integer, format: int64, minimum: 0}
+        renewal_failures:
+          type: object
+          additionalProperties: false
+          required: [disabled, unauthenticated, not_found, binding_mismatch, expired, too_early, rate_limited, unavailable, invalid, signing]
+          properties:
+            disabled: {type: integer, format: int64, minimum: 0}
+            unauthenticated: {type: integer, format: int64, minimum: 0}
+            not_found: {type: integer, format: int64, minimum: 0}
+            binding_mismatch: {type: integer, format: int64, minimum: 0}
+            expired: {type: integer, format: int64, minimum: 0}
+            too_early: {type: integer, format: int64, minimum: 0}
+            rate_limited: {type: integer, format: int64, minimum: 0}
+            unavailable: {type: integer, format: int64, minimum: 0}
+            invalid: {type: integer, format: int64, minimum: 0}
+            signing: {type: integer, format: int64, minimum: 0}
+        admission_downcapped: {type: integer, format: int64, minimum: 0}
+        admission_rejected: {type: integer, format: int64, minimum: 0}
+        last_signed_bitrate_cap_kbps: {type: integer, minimum: 0, maximum: 200000}
     FastMediaUdpRuntime:
       type: object
       additionalProperties: false
-      required: [configured_port, reported_port, enabled, healthy, active_allocations, active_streams, hello_accepted, cookie_rejected, bind_succeeded, bind_rejected, grant_rejected, role_mismatch, session_mismatch, allocation_mismatch, rebinds, forwarded_packets, forwarded_bytes, dropped_packets, rate_limited, replay_rejected, expired_allocations, listener_failures]
+      required: [configured_port, reported_port, renewal_protocol, enabled, healthy, active_allocations, active_streams, hello_accepted, cookie_rejected, bind_succeeded, bind_rejected, grant_rejected, role_mismatch, session_mismatch, allocation_mismatch, rebinds, forwarded_packets, forwarded_bytes, dropped_packets, rate_limited, replay_rejected, expired_allocations, listener_failures, replay_window_packets, maximum_forward_sequence_jump, max_session_seconds, transition_seconds, post_expiry_recovery_seconds, per_ip_bytes_per_second, global_bytes_per_second, reserved_bytes_per_second, peak_per_ip_reserved_bytes_per_second, active_role_reservations, renewal_grants_accepted, renewal_grants_replayed, renewal_rejected_invalid, renewal_rejected_binding, renewal_rejected_sequence, renewal_rejected_expired, post_expiry_rebinds, replay_rejected_duplicate, replay_rejected_too_old, replay_rejected_jump, admission_accepted, admission_rejected_allocation, admission_rejected_per_ip, admission_rejected_global, minimum_remaining_ttl_seconds, expiring_within_30_seconds]
       properties:
         configured_port: {type: [integer, "null"], minimum: 1, maximum: 65535}
         reported_port: {type: [integer, "null"], minimum: 1, maximum: 65535}
+        renewal_protocol: {type: [integer, "null"], minimum: 1}
         enabled: {type: [boolean, "null"]}
         healthy: {type: [boolean, "null"]}
         active_allocations: {type: [integer, "null"], minimum: 0}
@@ -735,6 +762,32 @@ components:
         replay_rejected: {type: [integer, "null"], format: int64, minimum: 0}
         expired_allocations: {type: [integer, "null"], format: int64, minimum: 0}
         listener_failures: {type: [integer, "null"], format: int64, minimum: 0}
+        replay_window_packets: {type: [integer, "null"], minimum: 2048}
+        maximum_forward_sequence_jump: {type: [integer, "null"], format: int64, minimum: 1}
+        max_session_seconds: {type: [integer, "null"], minimum: 600, maximum: 86400}
+        transition_seconds: {type: [integer, "null"], minimum: 5, maximum: 60}
+        post_expiry_recovery_seconds: {type: [integer, "null"], minimum: 10, maximum: 120}
+        per_ip_bytes_per_second: {type: [integer, "null"], format: int64, minimum: 65536}
+        global_bytes_per_second: {type: [integer, "null"], format: int64, minimum: 1048576}
+        reserved_bytes_per_second: {type: [integer, "null"], format: int64, minimum: 0}
+        peak_per_ip_reserved_bytes_per_second: {type: [integer, "null"], format: int64, minimum: 0}
+        active_role_reservations: {type: [integer, "null"], minimum: 0}
+        renewal_grants_accepted: {type: [integer, "null"], format: int64, minimum: 0}
+        renewal_grants_replayed: {type: [integer, "null"], format: int64, minimum: 0}
+        renewal_rejected_invalid: {type: [integer, "null"], format: int64, minimum: 0}
+        renewal_rejected_binding: {type: [integer, "null"], format: int64, minimum: 0}
+        renewal_rejected_sequence: {type: [integer, "null"], format: int64, minimum: 0}
+        renewal_rejected_expired: {type: [integer, "null"], format: int64, minimum: 0}
+        post_expiry_rebinds: {type: [integer, "null"], format: int64, minimum: 0}
+        replay_rejected_duplicate: {type: [integer, "null"], format: int64, minimum: 0}
+        replay_rejected_too_old: {type: [integer, "null"], format: int64, minimum: 0}
+        replay_rejected_jump: {type: [integer, "null"], format: int64, minimum: 0}
+        admission_accepted: {type: [integer, "null"], format: int64, minimum: 0}
+        admission_rejected_allocation: {type: [integer, "null"], format: int64, minimum: 0}
+        admission_rejected_per_ip: {type: [integer, "null"], format: int64, minimum: 0}
+        admission_rejected_global: {type: [integer, "null"], format: int64, minimum: 0}
+        minimum_remaining_ttl_seconds: {type: [integer, "null"], format: int64, minimum: 0}
+        expiring_within_30_seconds: {type: [integer, "null"], minimum: 0}
     RelayEnrollmentPrepareRequest:
       type: object
       additionalProperties: false

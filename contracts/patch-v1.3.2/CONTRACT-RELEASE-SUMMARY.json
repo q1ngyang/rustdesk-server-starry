@@ -1,0 +1,159 @@
+{
+  "manifest_schema": 1,
+  "id": "patch-v1.3.2-fast-media-renewal-contract-candidate",
+  "patch_version": "1.3.2",
+  "status": "FROZEN",
+  "candidate_kind": "CONTRACT_AND_FIXTURES",
+  "runtime_release_status": "IMPLEMENTATION_PENDING",
+  "hash_algorithm": "SHA-256",
+  "source_binding": {
+    "type": "git_commit_containing_this_summary",
+    "remote": "origin",
+    "branch": "codex/patch-v1.3.2-fastmedia-renewal",
+    "baseline_tag": "1.1.16-patch-v1.3.1",
+    "baseline_commit": "1b8080bf074e3236cf9a3c0dfae2bdf16832249e",
+    "replacement_policy": "new_protocol_version_or_later_patch_contract_required"
+  },
+  "schema_v5_capability": {
+    "expression": "capabilities.config_schema",
+    "json_pointer": "/capabilities/config_schema",
+    "value": 5,
+    "semantics": "Configuration schema v5 is unchanged from patch-v1.3.1; renewal is negotiated independently and adds no YAML field.",
+    "supported_versions_path": "config.supported_schema_versions",
+    "supported_versions": [1, 2, 3, 4, 5],
+    "active_version_path": "config.active_schema_version",
+    "schema_digest_path": "config.schema_digest",
+    "version_string_inference_forbidden": true
+  },
+  "renewal_capability": {
+    "expression": "capabilities.fast_media_relay_renewal",
+    "json_pointer": "/capabilities/fast_media_relay_renewal",
+    "value": 1,
+    "relay_inventory_expression": "relays[].capabilities.fast_media_relay_renewal",
+    "telemetry_expression": "fast_media.renewal_protocol",
+    "requires_authenticated_fresh_telemetry_schema": 3,
+    "existing_fast_media_capability_unchanged": {"fast_media_relay_udp": 1},
+    "version_string_inference_forbidden": true
+  },
+  "files": [
+    {
+      "id": "fast_media_renewal_rendezvous_v1",
+      "path": "contracts/fast-media-renewal/v1/rendezvous-extension.proto",
+      "sha256": "sha256:7cacf95b29492d8387574c5c7ea9d6057e8be7691b473f83f8d6bad4f3376b84"
+    },
+    {
+      "id": "fast_media_renewal_semantics_v1",
+      "path": "contracts/fast-media-renewal/v1/renewal-contract.json",
+      "sha256": "sha256:1187125b9baa87d924ebd02fe8b74f4c53801471ba0882844109c2e2745c3cc4"
+    },
+    {
+      "id": "fast_media_renewal_fixture_v1",
+      "path": "contracts/fast-media-renewal/v1/fixtures/renewal-flow.json",
+      "sha256": "sha256:d29edec9a4173f0548046e6e3d2f57f02ea6e2cf8ebda6d05053cd434a91bc99"
+    },
+    {
+      "id": "fast_media_renewal_frozen_marker",
+      "path": "contracts/fast-media-renewal/v1/FROZEN",
+      "sha256": "sha256:55ea2884ccf4c6563cd1ad175129eb81a27c1d18bfcbc25ef1ec620c059bd1a4"
+    },
+    {
+      "id": "relay_telemetry_schema_v3",
+      "path": "contracts/relay-telemetry/v3/telemetry.schema.json",
+      "sha256": "sha256:b5fed29637aeafa3fd359906e04f1a3a1c6872ee2ca5f560e90a0d9105204d2e"
+    },
+    {
+      "id": "relay_telemetry_fixture_v3",
+      "path": "contracts/relay-telemetry/v3/telemetry.example.json",
+      "sha256": "sha256:8bd7c159f6b90727704b633ce67a0838136ee84fc4821a9e6c25782f2640027e"
+    },
+    {
+      "id": "control_openapi_v1_1",
+      "path": "contracts/control/v1/openapi.yaml",
+      "sha256": "sha256:83ef1bdd648a66ece56476301cff0274d3899eb3e5b93b5c2fc78ae6db6ee47d"
+    },
+    {
+      "id": "control_capabilities_fixture_v1_1",
+      "path": "contracts/control/v1/examples/capabilities.json",
+      "sha256": "sha256:ad8b065701745cd0406e5b993d206f61821907f09adc6792c0e8728dc6017424"
+    },
+    {
+      "id": "control_relays_fixture_v1_1",
+      "path": "contracts/control/v1/examples/relays.json",
+      "sha256": "sha256:8dc2b769c876b363590ef3c6ba01ddd702d2364ebac72ef4c7209455dda48b8a"
+    },
+    {
+      "id": "fast_media_renewal_reference_en",
+      "path": "docs/reference/FAST-MEDIA-RENEWAL-v1.md",
+      "sha256": "sha256:b6c5a011ef3fb59d35c472dfd3551abfda65b520638c2b7d22817b12f0f986c1"
+    },
+    {
+      "id": "fast_media_renewal_reference_zh_cn",
+      "path": "docs/reference/FAST-MEDIA-RENEWAL-v1.zh-CN.md",
+      "sha256": "sha256:32941143a0723f9f07b36efc13c472779a96f45b535764f99ca903816d0359b7"
+    },
+    {
+      "id": "relay_telemetry_v3_reference_en",
+      "path": "docs/reference/RELAY-TELEMETRY-v3.md",
+      "sha256": "sha256:a1173caa4901f0d43e1a0dea6363da6168d64ebafade2c93d28a79eaf45fb7a8"
+    },
+    {
+      "id": "relay_telemetry_v3_reference_zh_cn",
+      "path": "docs/reference/RELAY-TELEMETRY-v3.zh-CN.md",
+      "sha256": "sha256:4cb8bf7122342a48ead2cd599f4fc226a4d2d8386715f89e0e17b97560e0cdab"
+    }
+  ],
+  "inherited_frozen_contracts": [
+    {
+      "id": "patch-v1.3.1-contract-candidate",
+      "path": "contracts/patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json",
+      "sha256": "sha256:67cc28287ed8c6fedfc37b88c6b0ecbc95a734a4644a34bfbb2d85e6d801df67"
+    },
+    {
+      "id": "relay-quality/v1",
+      "path": "contracts/relay-quality/v1/rendezvous-extension.proto",
+      "sha256": "sha256:19380d18aebf91a6856e43009291c79cf002d7c843b9fd7fa92c570916b2734c"
+    },
+    {
+      "id": "fast-relay/v1-fields-1-through-12",
+      "path": "contracts/fast-relay/v1/rendezvous-extension.proto",
+      "sha256": "sha256:18d44b252bdf698fa96f32703eb44b76499f2b32661daf28695a1318622e7845"
+    },
+    {
+      "id": "fast-media/akr1-v1-kinds-1-through-5",
+      "path": "contracts/fast-media/v1/akr1-wire.json",
+      "sha256": "sha256:794e103e8d5367d265dd1c34c57f40c45332583f3c62bf802554e76314bc0902"
+    },
+    {
+      "id": "relay-telemetry/v2",
+      "path": "contracts/relay-telemetry/v2/telemetry.schema.json",
+      "sha256": "sha256:9ce6192f781ac253ceb78ef57da8f52cd130e438e231f88e9bb5fcbd4c1a7957"
+    },
+    {
+      "id": "config/v5",
+      "path": "contracts/config/v5/config.schema.json",
+      "sha256": "sha256:0c2ae9eed359aa4d615ee948d9c0a81f285f4b948cc54ef500cee3dca7238d8a"
+    },
+    {
+      "id": "config/v5-ui",
+      "path": "contracts/config/v5/config.ui-schema.json",
+      "sha256": "sha256:37d3e98c3149d88d8d65a9634a03feb13a37969b45ac3967a25be7dbbf4e7405"
+    }
+  ],
+  "preview_release_gates": [
+    {"code": "RENEWAL_RUNTIME_IMPLEMENTATION", "status": "BLOCKED"},
+    {"code": "CONTROLLED_CLOCK_AND_FAULT_MATRIX", "status": "BLOCKED"},
+    {"code": "CLEAN_OVERLAY_CONTRACT_LINT_BUILD", "status": "BLOCKED"}
+  ],
+  "stable_latest_gates": [
+    {"code": "REAL_AKARI_DUAL_ROLE_LONG_SESSION", "status": "BLOCKED"},
+    {"code": "CROSS_NETWORK_NAT_UDP_SOAK", "status": "BLOCKED"},
+    {"code": "HOSTED_RELEASE_PROVENANCE", "status": "BLOCKED"}
+  ],
+  "kessoku_policy": {
+    "minimum_version_to_consume_new_typed_aggregates": "3.0.9",
+    "v3.0.8_behavior": "safe_ignore_unknown_fields_but_no_renewal_visibility",
+    "media_or_signing_path": false,
+    "contract_pin_required_only_after_clean_remote_candidate": true,
+    "dirty_worktree_pin_forbidden": true
+  }
+}

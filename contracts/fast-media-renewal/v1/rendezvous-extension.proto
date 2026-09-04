@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+// Canonical additive Starry/Akari FastMedia active-session renewal v1
+// contract. apply_overlay.py appends fields 13..16 to the existing frozen
+// FastRelayAuthorization message and injects the new enum/messages below.
+// Fields 1..12 and AKR1 kinds 1..5 are not changed.
+message FastRelayAuthorization {
+  uint32 version = 1;
+  string session_uuid = 2;
+  uint64 expires_at = 3;
+  bool allow_fast_compat = 4;
+  bool allow_fast_media_v1 = 5;
+  uint32 max_bitrate_kbps = 6;
+  uint32 relay_udp_protocol = 7;
+  string relay_server = 8;
+  uint32 relay_udp_port = 9;
+  bytes relay_allocation_id = 10;
+  uint32 relay_max_datagram = 11;
+  uint32 relay_endpoint_role = 12;
+  // 1 means this grant participates in active-session renewal v1.
+  uint32 fast_media_relay_renewal = 13;
+  // Zero only on a bootstrap grant. Renewed grants bind the non-zero AKR1
+  // session_id selected by the controller and accepted by the target.
+  uint64 relay_session_id = 14;
+  // Zero on a bootstrap grant; strictly increasing for each issued pair.
+  uint64 renewal_sequence = 15;
+  // Empty on a bootstrap grant. A renewed role grant contains SHA-256 over
+  // the complete immediately preceding combined Ed25519 role grant.
+  bytes previous_authorization_sha256 = 16;
+}
+
+enum FastMediaRenewalStatus {
+  FAST_MEDIA_RENEWAL_STATUS_UNSPECIFIED = 0;
+  FAST_MEDIA_RENEWAL_STATUS_OK = 1;
+  FAST_MEDIA_RENEWAL_STATUS_DISABLED = 2;
+  FAST_MEDIA_RENEWAL_STATUS_UNAUTHENTICATED = 3;
+  FAST_MEDIA_RENEWAL_STATUS_NOT_FOUND = 4;
+  FAST_MEDIA_RENEWAL_STATUS_BINDING_MISMATCH = 5;
+  FAST_MEDIA_RENEWAL_STATUS_EXPIRED = 6;
+  FAST_MEDIA_RENEWAL_STATUS_TOO_EARLY = 7;
+  FAST_MEDIA_RENEWAL_STATUS_RATE_LIMITED = 8;
+  FAST_MEDIA_RENEWAL_STATUS_UNAVAILABLE = 9;
+  FAST_MEDIA_RENEWAL_STATUS_INVALID = 10;
+}
+
+message FastMediaRenewalRequest {
+  uint32 protocol_version = 1;
+  string session_uuid = 2;
+  bytes relay_allocation_id = 3;
+  uint64 relay_session_id = 4;
+  uint64 current_renewal_sequence = 5;
+  bytes controller_authorization_sha256 = 6;
+  bytes target_authorization_sha256 = 7;
+  bytes request_id = 8;
+  string token = 9;
+  string relay_server = 10;
+  uint32 relay_udp_protocol = 11;
+  uint32 relay_max_datagram = 12;
+  uint32 current_max_bitrate_kbps = 13;
+  // Active-session renewal v1 is controller-coordinated; exactly 1.
+  uint32 requester_role = 14;
+}
+
+message FastMediaRenewalResponse {
+  uint32 protocol_version = 1;
+  FastMediaRenewalStatus status = 2;
+  string session_uuid = 3;
+  bytes relay_allocation_id = 4;
+  uint64 relay_session_id = 5;
+  uint64 renewal_sequence = 6;
+  uint64 expires_at = 7;
+  bytes request_id = 8;
+  bytes controller_authorization = 9;
+  bytes target_authorization = 10;
+  string relay_server = 11;
+  uint32 relay_udp_protocol = 12;
+  uint32 relay_max_datagram = 13;
+  uint32 max_bitrate_kbps = 14;
+  uint64 renew_after = 15;
+  uint64 fallback_before = 16;
+}
+
+// Additive RendezvousMessage.oneof bindings:
+// FastMediaRenewalRequest fast_media_renewal_request = 106
+// FastMediaRenewalResponse fast_media_renewal_response = 107

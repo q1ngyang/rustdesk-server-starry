@@ -1,0 +1,157 @@
+{
+  "contract": "starry-fast-media-active-session-renewal",
+  "version": 1,
+  "status": "FROZEN",
+  "base_contracts": {
+    "fast_relay_authorization": "contracts/fast-relay/v1/rendezvous-extension.proto",
+    "akr1": "contracts/fast-media/v1/akr1-wire.json",
+    "preserved_akr1_kinds": [1, 2, 3, 4, 5]
+  },
+  "capability": {
+    "name": "fast_media_relay_renewal",
+    "version": 1,
+    "source": "authenticated HBBR telemetry consumed by HBBS",
+    "version_string_inference_forbidden": true
+  },
+  "rendezvous": {
+    "request_oneof_tag": 106,
+    "response_oneof_tag": 107,
+    "request_max_bytes": 8192,
+    "request_id_bytes": 16,
+    "authorization_sha256_bytes": 32,
+    "accepted_transports": ["secure_tcp", "wss"],
+    "requester_role": 1,
+    "response_delivery": "same authenticated encrypted controller signalling route",
+    "target_delivery": "controller forwards only the target role grant over the existing authenticated end-to-end encrypted reliable session"
+  },
+  "authorization_extension": {
+    "fast_media_relay_renewal_tag": 13,
+    "relay_session_id_tag": 14,
+    "renewal_sequence_tag": 15,
+    "previous_authorization_sha256_tag": 16,
+    "bootstrap": {
+      "fast_media_relay_renewal": 1,
+      "relay_session_id": 0,
+      "renewal_sequence": 0,
+      "previous_authorization_sha256_bytes": 0
+    },
+    "renewed": {
+      "fast_media_relay_renewal": 1,
+      "relay_session_id_minimum": 1,
+      "renewal_sequence_minimum": 1,
+      "previous_authorization_sha256_bytes": 32
+    },
+    "maximum_combined_authorization_bytes": 4096,
+    "maximum_future_expiry_seconds": 300
+  },
+  "hbbs_binding": {
+    "required_exact": [
+      "original controller route",
+      "normalized controller IP",
+      "session UUID",
+      "selected Relay",
+      "Relay allocation ID",
+      "AKR1 protocol",
+      "datagram maximum",
+      "current renewal sequence",
+      "controller authorization SHA-256",
+      "target authorization SHA-256",
+      "controller requester role"
+    ],
+    "first_request_pins_nonzero_relay_session_id": true,
+    "subsequent_relay_session_id_change": "fail_closed_new_allocation_required",
+    "client_selects_relay": false,
+    "signer": "HBBS existing Starry Ed25519 signing key",
+    "hbbrr_signing_forbidden": true,
+    "client_signing_forbidden": true
+  },
+  "monotonicity": {
+    "same_session_uuid_sha256": true,
+    "same_relay": true,
+    "same_allocation_id": true,
+    "same_relay_session_id": true,
+    "same_role": true,
+    "same_relay_udp_protocol": true,
+    "same_relay_udp_port": true,
+    "same_relay_max_datagram": true,
+    "max_bitrate_kbps_may_only_decrease": true,
+    "expires_at_must_increase": true,
+    "renewal_sequence_step": 1
+  },
+  "timing": {
+    "authorization_ttl_seconds_range": [30, 300],
+    "renew_window_seconds": "min(60,max(30,floor(authorization_ttl_seconds/3)))",
+    "fallback_safety_seconds": 10,
+    "hbbr_role_transition_seconds_default": 15,
+    "hbbr_role_transition_seconds_range": [5, 60],
+    "hbbr_post_expiry_recovery_seconds_default": 30,
+    "hbbr_post_expiry_recovery_seconds_range": [10, 120],
+    "hbbr_max_session_seconds_default": 43200,
+    "hbbr_max_session_seconds_range": [600, 86400]
+  },
+  "replay_and_idempotency": {
+    "same_request_id_and_exact_request": "return_byte_identical_cached_response_while_new_grants_are_valid",
+    "same_sequence_with_different_request_or_grant": "reject_conflict",
+    "older_sequence": "reject_replay",
+    "next_sequence_without_exact_previous_digest": "reject_binding_mismatch",
+    "role_sequence_difference_maximum": 1,
+    "media_during_role_sequence_difference": "allowed_only_while_both_grants_are_unexpired_and_within_transition_window",
+    "expired_grant_authorizes_media": false,
+    "post_restart_unexpired_hbbs_signed_renewed_grant_may_recreate_allocation": true
+  },
+  "akf1_replay": {
+    "window_packets": 2048,
+    "words": 32,
+    "word_bits": 64,
+    "maximum_forward_sequence_jump": 1048576,
+    "preserved_across": ["same-role rebind", "grant renewal"],
+    "reset_allowed_on_renewal": false
+  },
+  "lifecycle": {
+    "legacy_sequence_zero_expires_by_bootstrap_grant": true,
+    "renewable_fully_bound_expires_at_original_bootstrap_grant": false,
+    "media_requires_both_current_role_grants_unexpired": true,
+    "half_bind_ttl_retained": true,
+    "idle_ttl_retained": true,
+    "allocation_limit_retained": true,
+    "incremental_cleanup_retained": true,
+    "absolute_session_ttl_retained": true,
+    "immortal_allocation_forbidden": true,
+    "reliable_hbbr_session_affected_by_udp_failure": false
+  },
+  "admission": {
+    "wire_kbps": "ceil(source_kbps*145/100)",
+    "wire_bytes_per_second": "ceil(wire_kbps*1000/8)",
+    "hbbs_reservation_headroom_basis_points": 9000,
+    "dimensions": ["per-role", "normalized-source-IP", "global"],
+    "same_nat_roles_are_summed": true,
+    "first_bind_reserves_before_accept": true,
+    "cross_ip_rebind_moves_reservation_atomically": true,
+    "renewal_may_release_but_not_increase_reservation": true,
+    "signed_cap_must_not_exceed_available_byte_budget": true,
+    "response_returns_actual_signed_source_kbps": true,
+    "authorize_then_stably_throttle_forbidden": true
+  },
+  "privacy": {
+    "control_and_telemetry_are_aggregate_only": true,
+    "forbidden_in_control_logs_metrics": [
+      "session UUID",
+      "client IP",
+      "Relay allocation ID",
+      "request ID",
+      "nonce",
+      "token",
+      "stage token",
+      "signed grant",
+      "AKF1/media content"
+    ],
+    "kessoku_media_or_key_path": false
+  },
+  "compatibility": {
+    "official_clients": "ignore additive fields and oneof messages; ordinary reliable Relay unchanged",
+    "old_akari": "uses bootstrap authorization and safely falls back at its original expiry",
+    "v1_3_1_hbbr": "ignores authorization fields 13..16 and retains its original 90/300 second behavior",
+    "v1_3_2_hbbr_with_old_hbbs": "does not advertise renewal through HBBS and retains bootstrap expiry behavior",
+    "renewal_required_for_stable_long_session": true
+  }
+}

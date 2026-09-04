@@ -1,0 +1,67 @@
+{
+  "fixture": "fast-media-renewal-v1-semantic-flow",
+  "fixture_version": 1,
+  "note": "Non-production semantic fixture; authorization byte fields are identified by their SHA-256 values and are never Control API output.",
+  "bootstrap": {
+    "session_uuid": "019d1111-2222-7333-8444-555555555555",
+    "relay_server": "relay-asia-1.example.com:21117",
+    "relay_udp_protocol": 1,
+    "relay_udp_port": 22119,
+    "relay_allocation_id_base64": "EREREREREREREREREREREQ==",
+    "relay_max_datagram": 1200,
+    "max_bitrate_kbps": 50000,
+    "fast_media_relay_renewal": 1,
+    "relay_session_id": 0,
+    "renewal_sequence": 0,
+    "controller_authorization_sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "target_authorization_sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "request": {
+    "protocol_version": 1,
+    "session_uuid": "019d1111-2222-7333-8444-555555555555",
+    "relay_allocation_id_base64": "EREREREREREREREREREREREQ==",
+    "relay_session_id": 72623859790382856,
+    "current_renewal_sequence": 0,
+    "controller_authorization_sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "target_authorization_sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "request_id_base64": "REREREREREREREREREREQ==",
+    "token": "<authenticated-redacted-fixture-token>",
+    "relay_server": "relay-asia-1.example.com:21117",
+    "relay_udp_protocol": 1,
+    "relay_max_datagram": 1200,
+    "current_max_bitrate_kbps": 50000,
+    "requester_role": 1
+  },
+  "response": {
+    "protocol_version": 1,
+    "status": 1,
+    "session_uuid": "019d1111-2222-7333-8444-555555555555",
+    "relay_allocation_id_base64": "EREREREREREREREREREREREQ==",
+    "relay_session_id": 72623859790382856,
+    "renewal_sequence": 1,
+    "expires_at": 1800000090,
+    "request_id_base64": "REREREREREREREREREREREQ==",
+    "controller_authorization": "<combined-ed25519-bytes-redacted>",
+    "target_authorization": "<combined-ed25519-bytes-redacted>",
+    "relay_server": "relay-asia-1.example.com:21117",
+    "relay_udp_protocol": 1,
+    "relay_max_datagram": 1200,
+    "max_bitrate_kbps": 50000,
+    "renew_after": 1800000060,
+    "fallback_before": 1800000080
+  },
+  "renewed_controller": {
+    "fast_media_relay_renewal": 1,
+    "relay_session_id": 72623859790382856,
+    "renewal_sequence": 1,
+    "previous_authorization_sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "relay_endpoint_role": 1
+  },
+  "renewed_target": {
+    "fast_media_relay_renewal": 1,
+    "relay_session_id": 72623859790382856,
+    "renewal_sequence": 1,
+    "previous_authorization_sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "relay_endpoint_role": 2
+  }
+}
