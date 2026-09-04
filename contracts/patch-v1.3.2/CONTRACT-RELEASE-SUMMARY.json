@@ -44,7 +44,7 @@
     {
       "id": "fast_media_renewal_semantics_v1",
       "path": "contracts/fast-media-renewal/v1/renewal-contract.json",
-      "sha256": "sha256:1187125b9baa87d924ebd02fe8b74f4c53801471ba0882844109c2e2745c3cc4"
+      "sha256": "sha256:abfd86342801ea5dd9d6c0fd9939ca2794014a750f3491637e774f964a411df4"
     },
     {
       "id": "fast_media_renewal_fixture_v1",
@@ -54,7 +54,7 @@
     {
       "id": "fast_media_renewal_frozen_marker",
       "path": "contracts/fast-media-renewal/v1/FROZEN",
-      "sha256": "sha256:55ea2884ccf4c6563cd1ad175129eb81a27c1d18bfcbc25ef1ec620c059bd1a4"
+      "sha256": "sha256:3bd4ea66dcb0341be757737358b42fb34d65d76076c8ba2a8ab6ef52ca7ffafe"
     },
     {
       "id": "relay_telemetry_schema_v3",
@@ -84,12 +84,12 @@
     {
       "id": "fast_media_renewal_reference_en",
       "path": "docs/reference/FAST-MEDIA-RENEWAL-v1.md",
-      "sha256": "sha256:b6c5a011ef3fb59d35c472dfd3551abfda65b520638c2b7d22817b12f0f986c1"
+      "sha256": "sha256:dfa957b3ba7d226f1ec6dead174d230c6906662c69d3eafb00ec610667660df1"
     },
     {
       "id": "fast_media_renewal_reference_zh_cn",
       "path": "docs/reference/FAST-MEDIA-RENEWAL-v1.zh-CN.md",
-      "sha256": "sha256:32941143a0723f9f07b36efc13c472779a96f45b535764f99ca903816d0359b7"
+      "sha256": "sha256:0ea7a90054bada29e0b319fa4cc73684cadc50f2e58355a7630d1f7464ad5d84"
     },
     {
       "id": "relay_telemetry_v3_reference_en",

@@ -3,7 +3,7 @@ protocol: fast-media-active-session-renewal-v1
 source_binding: git commit containing contracts/patch-v1.3.2/CONTRACT-RELEASE-SUMMARY.json
 replacement_policy: new protocol version or later patch contract required
 rendezvous_extension_sha256: 7cacf95b29492d8387574c5c7ea9d6057e8be7691b473f83f8d6bad4f3376b84
-renewal_contract_sha256: 1187125b9baa87d924ebd02fe8b74f4c53801471ba0882844109c2e2745c3cc4
+renewal_contract_sha256: abfd86342801ea5dd9d6c0fd9939ca2794014a750f3491637e774f964a411df4
 semantic_fixture_sha256: d29edec9a4173f0548046e6e3d2f57f02ea6e2cf8ebda6d05053cd434a91bc99
 official_server_tag: 1.1.16
 starry_baseline_tag: 1.1.16-patch-v1.3.1

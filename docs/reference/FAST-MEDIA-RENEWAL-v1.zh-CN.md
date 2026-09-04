@@ -43,13 +43,18 @@ closed，并通过全新 allocation 处理。
 
 controller 通过 Secure TCP 或 WSS 发送 Rendezvous `oneof` tag 106 的
 `FastMediaRenewalRequest`。仅当 connection authentication 精确返回 `allow`，且
-原 controller route、规范化 IP、session UUID、Relay、allocation、协议、datagram
-上限、当前 bitrate、sequence 及双角色授权哈希全部匹配缓存的 bootstrap 记录时，
-HBBS 才接受。`requester_role` 必须为 `1`，单独的 allocation ID 永远不构成授权。
+规范化 controller IP、session UUID、Relay、allocation、协议、datagram 上限、
+当前 bitrate、sequence 及双角色授权哈希全部匹配缓存的 bootstrap 记录时，HBBS
+才接受。`requester_role` 必须为 `1`，单独的 allocation ID 永远不构成授权。
+
+WSS 续期继续精确绑定原 controller route。Native Secure TCP 的初始 Relay 响应会
+消费一次性连接的 writer，因此续期 v1 只允许在原 controller route IP 和同一认证
+controller IP 不变时更换源**端口**；上述其余绑定仍全部精确。源 IP 变化、明文 TCP
+或 WSS route 变化均 fail closed。该窄例外不是通用 route rebind，也不会弱化授权链。
 
 首次成功请求固定 controller 选择且 target 已接受的非零 FastMedia session ID；
 之后改变它会被拒绝。HBBS 用现有 Starry 密钥分别签出 controller/target 授权，并
-在同一加密 controller route 返回 `oneof` tag 107 的
+在承载已接受请求的同一加密 route 返回 `oneof` tag 107 的
 `FastMediaRenewalResponse`。controller 安装本角色授权，并仅通过已认证、端到端
 加密的现有可靠桌面会话把 target 授权交给对端。Control API、telemetry 和 Kessoku
 均不传递授权。
@@ -118,4 +123,3 @@ Telemetry v3 和 Control API 只暴露固定维度的成功、幂等、非法、
 过期、限速、replay 和 admission 聚合；以及活动/预留总量、最小剩余 TTL 与即将
 到期数量。不得包含 UUID、客户端 IP、allocation/request ID、nonce、token、stage
 token、grant 或媒体内容。Kessoku 只能读取 typed 聚合，不进入签名或媒体路径。
-

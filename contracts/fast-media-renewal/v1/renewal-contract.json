@@ -21,7 +21,7 @@
     "authorization_sha256_bytes": 32,
     "accepted_transports": ["secure_tcp", "wss"],
     "requester_role": 1,
-    "response_delivery": "same authenticated encrypted controller signalling route",
+    "response_delivery": "same authenticated encrypted route that carried the accepted renewal request",
     "target_delivery": "controller forwards only the target role grant over the existing authenticated end-to-end encrypted reliable session"
   },
   "authorization_extension": {
@@ -46,7 +46,8 @@
   },
   "hbbs_binding": {
     "required_exact": [
-      "original controller route",
+      "original controller route for WSS",
+      "original controller route IP for native Secure TCP",
       "normalized controller IP",
       "session UUID",
       "selected Relay",
@@ -59,6 +60,23 @@
       "controller requester role"
     ],
     "first_request_pins_nonzero_relay_session_id": true,
+    "native_secure_tcp_route_exception": {
+      "reason": "the one-shot initial Relay response consumes the native writer, so renewal uses a new authenticated Secure TCP connection",
+      "allowed_change": "source port only",
+      "required_same": [
+        "normalized original controller route IP",
+        "normalized authenticated controller IP",
+        "session UUID",
+        "selected Relay",
+        "Relay allocation ID",
+        "AKR1 session ID",
+        "protocol and datagram maximum",
+        "current bitrate cap",
+        "sequence and both role authorization SHA-256 values"
+      ],
+      "wss_route_remains_exact": true,
+      "plaintext_tcp_allowed": false
+    },
     "subsequent_relay_session_id_change": "fail_closed_new_allocation_required",
     "client_selects_relay": false,
     "signer": "HBBS existing Starry Ed25519 signing key",

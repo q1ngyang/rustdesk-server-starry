@@ -51,16 +51,24 @@ limit fails closed and requires a new allocation.
 The controller sends `FastMediaRenewalRequest` as Rendezvous `oneof` tag 106
 over Secure TCP or WSS. HBBS accepts it only when connection authentication
 returns the exact `allow` verdict and all of these match the cached bootstrap
-record: the original controller route and normalized IP, session UUID, Relay,
-allocation, protocol, datagram limit, current bitrate, sequence, and both role
-authorization hashes. The requester role is exactly `1`. An allocation ID by
-itself is never authorization.
+record: normalized controller IP, session UUID, Relay, allocation, protocol,
+datagram limit, current bitrate, sequence, and both role authorization hashes.
+The requester role is exactly `1`. An allocation ID by itself is never
+authorization.
+
+WSS renewal remains bound to the exact original controller route. Native
+Secure TCP is necessarily one-shot after the initial Relay response consumes
+its writer, so renewal v1 permits only a new source **port** on the same
+original controller route IP and the same authenticated controller IP. All
+other bindings above remain exact. A source-IP change, plaintext TCP, or a WSS
+route change fails closed. This narrow native exception is not a general route
+rebind and does not weaken the grant chain.
 
 The first accepted request pins the non-zero FastMedia session ID chosen by the
 controller and already accepted by the target. Later changes to that value are
 rejected. HBBS signs a new controller grant and a new target grant using its
 existing Starry Ed25519 key, then returns `FastMediaRenewalResponse` as `oneof`
-tag 107 on the same encrypted controller route. The controller installs its
+tag 107 on the same encrypted request route. The controller installs its
 role grant and carries only the target grant over the already authenticated,
 end-to-end encrypted reliable desktop session. No grant is delivered through
 Control API, telemetry, or Kessoku.
@@ -147,4 +155,3 @@ outcomes; active/reserved totals; minimum remaining TTL; and allocations
 approaching expiry. They never expose a UUID, client IP, allocation or request
 ID, nonce, token, stage token, grant, or media payload. Kessoku can consume the
 typed aggregates but is outside both the signing and media paths.
-
