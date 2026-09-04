@@ -71,12 +71,14 @@ pub(crate) struct RelayCapabilities {
     pub(crate) relay_probe_protocol: Option<u32>,
     pub(crate) relay_load_protocol: Option<u32>,
     pub(crate) fast_media_relay_udp: Option<u32>,
+    pub(crate) fast_media_relay_renewal: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct FastMediaUdpRuntimeStatus {
     pub(crate) configured_port: Option<u16>,
     pub(crate) reported_port: Option<u16>,
+    pub(crate) renewal_protocol: Option<u32>,
     pub(crate) enabled: Option<bool>,
     pub(crate) healthy: Option<bool>,
     pub(crate) active_allocations: Option<u64>,
@@ -97,6 +99,32 @@ pub(crate) struct FastMediaUdpRuntimeStatus {
     pub(crate) replay_rejected: Option<u64>,
     pub(crate) expired_allocations: Option<u64>,
     pub(crate) listener_failures: Option<u64>,
+    pub(crate) replay_window_packets: Option<u32>,
+    pub(crate) maximum_forward_sequence_jump: Option<u64>,
+    pub(crate) max_session_seconds: Option<u64>,
+    pub(crate) transition_seconds: Option<u64>,
+    pub(crate) post_expiry_recovery_seconds: Option<u64>,
+    pub(crate) per_ip_bytes_per_second: Option<u64>,
+    pub(crate) global_bytes_per_second: Option<u64>,
+    pub(crate) reserved_bytes_per_second: Option<u64>,
+    pub(crate) peak_per_ip_reserved_bytes_per_second: Option<u64>,
+    pub(crate) active_role_reservations: Option<u64>,
+    pub(crate) renewal_grants_accepted: Option<u64>,
+    pub(crate) renewal_grants_replayed: Option<u64>,
+    pub(crate) renewal_rejected_invalid: Option<u64>,
+    pub(crate) renewal_rejected_binding: Option<u64>,
+    pub(crate) renewal_rejected_sequence: Option<u64>,
+    pub(crate) renewal_rejected_expired: Option<u64>,
+    pub(crate) post_expiry_rebinds: Option<u64>,
+    pub(crate) replay_rejected_duplicate: Option<u64>,
+    pub(crate) replay_rejected_too_old: Option<u64>,
+    pub(crate) replay_rejected_jump: Option<u64>,
+    pub(crate) admission_accepted: Option<u64>,
+    pub(crate) admission_rejected_allocation: Option<u64>,
+    pub(crate) admission_rejected_per_ip: Option<u64>,
+    pub(crate) admission_rejected_global: Option<u64>,
+    pub(crate) minimum_remaining_ttl_seconds: Option<u64>,
+    pub(crate) expiring_within_30_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -117,6 +145,12 @@ pub(crate) struct RelayRuntimeView {
 pub(crate) struct FastMediaRelayEndpoint {
     pub(crate) protocol: u32,
     pub(crate) udp_port: u16,
+    pub(crate) renewal_protocol: Option<u32>,
+    pub(crate) per_ip_bytes_per_second: Option<u64>,
+    pub(crate) global_bytes_per_second: Option<u64>,
+    pub(crate) reserved_bytes_per_second: Option<u64>,
+    pub(crate) peak_per_ip_reserved_bytes_per_second: Option<u64>,
+    pub(crate) max_session_seconds: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -353,6 +387,8 @@ pub(crate) fn fast_media_endpoint(relay: &str) -> Option<FastMediaRelayEndpoint>
         || endpoint.stale
         || load.telemetry_schema < 2
         || protocol != 1
+        || load.draining
+        || !load.admission_open
         || load.fast_media_udp_enabled != Some(true)
         || load.fast_media_udp_healthy != Some(true)
         || reported_port == 0
@@ -363,6 +399,15 @@ pub(crate) fn fast_media_endpoint(relay: &str) -> Option<FastMediaRelayEndpoint>
     Some(FastMediaRelayEndpoint {
         protocol,
         udp_port: reported_port,
+        renewal_protocol: (load.telemetry_schema >= 3)
+            .then_some(load.fast_media_renewal_protocol)
+            .flatten(),
+        per_ip_bytes_per_second: load.fast_media_per_ip_bytes_per_second,
+        global_bytes_per_second: load.fast_media_global_bytes_per_second,
+        reserved_bytes_per_second: load.fast_media_reserved_bytes_per_second,
+        peak_per_ip_reserved_bytes_per_second: load
+            .fast_media_peak_per_ip_reserved_bytes_per_second,
+        max_session_seconds: load.fast_media_max_session_seconds,
     })
 }
 
@@ -544,6 +589,8 @@ fn build_snapshot(
                     relay_probe_protocol,
                     relay_load_protocol,
                     fast_media_relay_udp: load.and_then(|load| load.fast_media_relay_udp),
+                    fast_media_relay_renewal: load
+                        .and_then(|load| load.fast_media_renewal_protocol),
                 },
                 quality_candidate,
                 configured_order,
@@ -623,6 +670,7 @@ fn build_snapshot(
                 fast_media_udp: FastMediaUdpRuntimeStatus {
                     configured_port: configured_fast_media_port,
                     reported_port: load.and_then(|load| load.fast_media_udp_port),
+                    renewal_protocol: load.and_then(|load| load.fast_media_renewal_protocol),
                     enabled: load.and_then(|load| load.fast_media_udp_enabled),
                     healthy: load.and_then(|load| load.fast_media_udp_healthy),
                     active_allocations: load.and_then(|load| load.fast_media_active_allocations),
@@ -643,6 +691,54 @@ fn build_snapshot(
                     replay_rejected: load.and_then(|load| load.fast_media_replay_rejected),
                     expired_allocations: load.and_then(|load| load.fast_media_expired_allocations),
                     listener_failures: load.and_then(|load| load.fast_media_listener_failures),
+                    replay_window_packets: load
+                        .and_then(|load| load.fast_media_replay_window_packets),
+                    maximum_forward_sequence_jump: load
+                        .and_then(|load| load.fast_media_maximum_forward_sequence_jump),
+                    max_session_seconds: load.and_then(|load| load.fast_media_max_session_seconds),
+                    transition_seconds: load.and_then(|load| load.fast_media_transition_seconds),
+                    post_expiry_recovery_seconds: load
+                        .and_then(|load| load.fast_media_post_expiry_recovery_seconds),
+                    per_ip_bytes_per_second: load
+                        .and_then(|load| load.fast_media_per_ip_bytes_per_second),
+                    global_bytes_per_second: load
+                        .and_then(|load| load.fast_media_global_bytes_per_second),
+                    reserved_bytes_per_second: load
+                        .and_then(|load| load.fast_media_reserved_bytes_per_second),
+                    peak_per_ip_reserved_bytes_per_second: load
+                        .and_then(|load| load.fast_media_peak_per_ip_reserved_bytes_per_second),
+                    active_role_reservations: load
+                        .and_then(|load| load.fast_media_active_role_reservations),
+                    renewal_grants_accepted: load
+                        .and_then(|load| load.fast_media_renewal_grants_accepted),
+                    renewal_grants_replayed: load
+                        .and_then(|load| load.fast_media_renewal_grants_replayed),
+                    renewal_rejected_invalid: load
+                        .and_then(|load| load.fast_media_renewal_rejected_invalid),
+                    renewal_rejected_binding: load
+                        .and_then(|load| load.fast_media_renewal_rejected_binding),
+                    renewal_rejected_sequence: load
+                        .and_then(|load| load.fast_media_renewal_rejected_sequence),
+                    renewal_rejected_expired: load
+                        .and_then(|load| load.fast_media_renewal_rejected_expired),
+                    post_expiry_rebinds: load.and_then(|load| load.fast_media_post_expiry_rebinds),
+                    replay_rejected_duplicate: load
+                        .and_then(|load| load.fast_media_replay_rejected_duplicate),
+                    replay_rejected_too_old: load
+                        .and_then(|load| load.fast_media_replay_rejected_too_old),
+                    replay_rejected_jump: load
+                        .and_then(|load| load.fast_media_replay_rejected_jump),
+                    admission_accepted: load.and_then(|load| load.fast_media_admission_accepted),
+                    admission_rejected_allocation: load
+                        .and_then(|load| load.fast_media_admission_rejected_allocation),
+                    admission_rejected_per_ip: load
+                        .and_then(|load| load.fast_media_admission_rejected_per_ip),
+                    admission_rejected_global: load
+                        .and_then(|load| load.fast_media_admission_rejected_global),
+                    minimum_remaining_ttl_seconds: load
+                        .and_then(|load| load.fast_media_minimum_remaining_ttl_seconds),
+                    expiring_within_30_seconds: load
+                        .and_then(|load| load.fast_media_expiring_within_30_seconds),
                 },
                 eligible_for,
                 referenced_by_rules: rule_references
@@ -714,6 +810,7 @@ mod tests {
                 relay_probe_protocol: quality_candidate.then_some(1),
                 relay_load_protocol: quality_candidate.then_some(1),
                 fast_media_relay_udp: None,
+                fast_media_relay_renewal: None,
             },
             quality_candidate,
             configured_order: 0,

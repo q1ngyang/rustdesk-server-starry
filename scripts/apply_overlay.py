@@ -1318,30 +1318,8 @@ fn telemetry_payload() -> String {
     let draining = is_draining();
     let admission_open = !draining && load.active_sessions < load.capacity_sessions;
     let sequence = TELEMETRY_SEQUENCE.fetch_add(1, Ordering::SeqCst).saturating_add(1);
-    let fast_media_payload = serde_json::json!({
-        "protocol": crate::fast_media_relay::PROTOCOL_VERSION,
-        "enabled": fast_media.enabled,
-        "healthy": fast_media.healthy,
-        "udp_port": fast_media.udp_port.unwrap_or_default(),
-        "active_allocations": fast_media.active_allocations,
-        "active_streams": fast_media.active_streams,
-        "hello_accepted": fast_media.hello_accepted,
-        "cookie_rejected": fast_media.cookie_rejected,
-        "bind_succeeded": fast_media.bind_succeeded,
-        "bind_rejected": fast_media.bind_rejected,
-        "grant_rejected": fast_media.grant_rejected,
-        "role_mismatch": fast_media.role_mismatch,
-        "session_mismatch": fast_media.session_mismatch,
-        "allocation_mismatch": fast_media.allocation_mismatch,
-        "rebinds": fast_media.rebinds,
-        "forwarded_packets": fast_media.forwarded_packets,
-        "forwarded_bytes": fast_media.forwarded_bytes,
-        "dropped_packets": fast_media.dropped_packets,
-        "rate_limited": fast_media.rate_limited,
-        "replay_rejected": fast_media.replay_rejected,
-        "expired_allocations": fast_media.expired_allocations,
-        "listener_failures": fast_media.listener_failures,
-    });
+    let fast_media_payload = serde_json::to_value(&fast_media)
+        .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
     let payload = serde_json::json!({
         "telemetry_schema": STARRY_RELAY_TELEMETRY_SCHEMA,
         "process_instance_id": PROCESS_INSTANCE_ID.as_str(),
@@ -1772,6 +1750,10 @@ pub use dlopen;
         common_root / "protos/rendezvous.proto",
         upstream / "contracts/fast-relay/v1/rendezvous-extension.proto",
     )
+    patch_fast_media_renewal_proto(
+        common_root / "protos/rendezvous.proto",
+        upstream / "contracts/fast-media-renewal/v1/rendezvous-extension.proto",
+    )
     patch_profile_activation_proto(common_root / "protos/rendezvous.proto")
 
 
@@ -2032,6 +2014,43 @@ def patch_fast_relay_proto(proto: Path, contract: Path) -> None:
         "RelayResponse",
         "bytes fast_relay_authorization = 64;",
         64,
+    )
+
+
+def patch_fast_media_renewal_proto(proto: Path, contract: Path) -> None:
+    contract_text = contract.read_text(encoding="utf-8")
+    enum_marker = "enum FastMediaRenewalStatus {"
+    if enum_marker not in contract_text:
+        raise RuntimeError(f"FastMedia renewal contract has no definitions: {contract}")
+    content = proto.read_text(encoding="utf-8")
+    if enum_marker not in content:
+        definitions = contract_text[contract_text.index(enum_marker) :]
+        definitions = definitions[: definitions.index("// Additive RendezvousMessage")].rstrip()
+        replace_once(
+            proto,
+            "message RendezvousMessage {\n",
+            definitions + "\n\nmessage RendezvousMessage {\n",
+        )
+    for field, tag in (
+        ("uint32 fast_media_relay_renewal = 13;", 13),
+        ("uint64 relay_session_id = 14;", 14),
+        ("uint64 renewal_sequence = 15;", 15),
+        ("bytes previous_authorization_sha256 = 16;", 16),
+    ):
+        add_proto_field(proto, "FastRelayAuthorization", field, tag)
+    add_proto_oneof_arm(
+        proto,
+        "RendezvousMessage",
+        "union",
+        "FastMediaRenewalRequest fast_media_renewal_request = 106;",
+        106,
+    )
+    add_proto_oneof_arm(
+        proto,
+        "RendezvousMessage",
+        "union",
+        "FastMediaRenewalResponse fast_media_renewal_response = 107;",
+        107,
     )
 
 
@@ -6284,6 +6303,7 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
             "                        .and_then(|(_, target_ip)| {\n"
             "                            fast_relay::authorization_for_request(\n"
             "                                &rf.uuid,\n"
+            "                                route_addr,\n"
             "                                effective_addr.ip(),\n"
             "                                *target_ip,\n"
             "                                &rf.relay_server,\n"
@@ -6415,6 +6435,38 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
             "                    }\n"
             "                }\n"
             "                Some(rendezvous_message::Union::PunchHoleRequest(_ph)) => {\n",
+        )
+
+    content = rendezvous.read_text(encoding="utf-8")
+    if "Union::FastMediaRenewalRequest(request)" not in content:
+        replace_once(
+            rendezvous,
+            "                Some(rendezvous_message::Union::RequestRelay(mut rf)) => {\n",
+            "                Some(rendezvous_message::Union::FastMediaRenewalRequest(request)) => {\n"
+            "                    let decision = connection_auth::authorize_connection_attempt(\n"
+            "                        &request.token,\n"
+            "                        connection_auth::ConnectionAttemptKind::FastMediaRenewal,\n"
+            "                        signal_transport,\n"
+            "                        effective_addr.ip(),\n"
+            "                    )\n"
+            "                    .await;\n"
+            "                    let endpoint =\n"
+            "                        relay_observer::fast_media_endpoint(&request.relay_server);\n"
+            "                    let response = fast_relay::renewal_response(\n"
+            "                        request,\n"
+            "                        route_addr,\n"
+            "                        effective_addr.ip(),\n"
+            "                        signal_transport,\n"
+            "                        &decision,\n"
+            "                        endpoint,\n"
+            "                        self.inner.sk.as_ref(),\n"
+            "                    );\n"
+            "                    let mut message = RendezvousMessage::new();\n"
+            "                    message.set_fast_media_renewal_response(response);\n"
+            "                    Self::send_to_sink(sink, message).await;\n"
+            "                    return true;\n"
+            "                }\n"
+            "                Some(rendezvous_message::Union::RequestRelay(mut rf)) => {\n",
         )
 
     content = rendezvous.read_text(encoding="utf-8")

@@ -1,4 +1,5 @@
 use hbb_common::{protobuf::Message as _, rendezvous_proto::FastRelayAuthorization};
+use sha2::Digest as _;
 use sodiumoxide::crypto::sign;
 use std::{
     net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
@@ -74,7 +75,7 @@ fn real_hbbr_recovers_udp_binds_both_roles_forwards_akf1_and_keeps_tcp_alive() {
     )
     .is_ok());
 
-    bind_role(
+    let controller_bootstrap = bind_role(
         &controller,
         relay_udp,
         ROLE_CONTROLLER,
@@ -84,7 +85,7 @@ fn real_hbbr_recovers_udp_binds_both_roles_forwards_akf1_and_keeps_tcp_alive() {
         udp_port,
         now,
     );
-    bind_role(
+    let target_bootstrap = bind_role(
         &target,
         relay_udp,
         ROLE_TARGET,
@@ -108,6 +109,47 @@ fn real_hbbr_recovers_udp_binds_both_roles_forwards_akf1_and_keeps_tcp_alive() {
     // the reliable TCP Relay listener.
     target.send_to(&outer, relay_udp).unwrap();
     assert!(receive(&controller).is_none());
+
+    let controller_renewed = signed_renewal_grant(
+        &secret,
+        ROLE_CONTROLLER,
+        &relay_server,
+        udp_port,
+        now + 150,
+        1,
+        &controller_bootstrap,
+    );
+    let target_renewed = signed_renewal_grant(
+        &secret,
+        ROLE_TARGET,
+        &relay_server,
+        udp_port,
+        now + 150,
+        1,
+        &target_bootstrap,
+    );
+    let controller_roamed = udp_client();
+    bind_signed_role(
+        &controller_roamed,
+        relay_udp,
+        ROLE_CONTROLLER,
+        [0x31; 16],
+        &controller_renewed,
+    );
+    bind_signed_role(&target, relay_udp, ROLE_TARGET, [0x32; 16], &target_renewed);
+    target.send_to(&outer, relay_udp).unwrap();
+    assert!(
+        receive(&controller_roamed).is_none(),
+        "renewal/rebind must preserve the AKF1 replay window"
+    );
+    let akf1_after_renewal = encrypted_akf1(ROLE_TARGET, 2);
+    let mut outer_after_renewal = header(5, ROLE_TARGET);
+    outer_after_renewal.extend_from_slice(&akf1_after_renewal);
+    target.send_to(&outer_after_renewal, relay_udp).unwrap();
+    assert_eq!(
+        receive(&controller_roamed).expect("renewed controller must receive AKF1"),
+        akf1_after_renewal
+    );
     assert!(TcpStream::connect_timeout(
         &format!("127.0.0.1:{relay_port}").parse().unwrap(),
         Duration::from_secs(1),
@@ -150,11 +192,22 @@ fn bind_role(
     relay_server: &str,
     udp_port: u16,
     now: u64,
+) -> Vec<u8> {
+    let signed = signed_grant(secret, role, relay_server, udp_port, now + 90);
+    bind_signed_role(socket, relay, role, nonce, &signed);
+    signed
+}
+
+fn bind_signed_role(
+    socket: &UdpSocket,
+    relay: SocketAddr,
+    role: u8,
+    nonce: [u8; 16],
+    signed: &[u8],
 ) {
     let cookie = hello_cookie(socket, relay, role, nonce);
-    let signed = signed_grant(secret, role, relay_server, udp_port, now + 90);
     socket
-        .send_to(&bind_packet(role, nonce, cookie, &signed), relay)
+        .send_to(&bind_packet(role, nonce, cookie, signed), relay)
         .unwrap();
     let bound = receive(socket).expect("HBBR must return Bound");
     assert_eq!(bound.len(), 32);
@@ -205,6 +258,41 @@ fn signed_grant(
         relay_allocation_id: ALLOCATION_ID.to_vec().into(),
         relay_max_datagram: 1_200,
         relay_endpoint_role: u32::from(role),
+        fast_media_relay_renewal: 1,
+        ..Default::default()
+    }
+    .write_to_bytes()
+    .unwrap();
+    sign::sign(&payload, secret)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn signed_renewal_grant(
+    secret: &sign::SecretKey,
+    role: u8,
+    relay_server: &str,
+    udp_port: u16,
+    expires_at: u64,
+    renewal_sequence: u64,
+    previous: &[u8],
+) -> Vec<u8> {
+    let payload = FastRelayAuthorization {
+        version: 1,
+        session_uuid: "process-fast-media-session".to_owned(),
+        expires_at,
+        allow_fast_compat: true,
+        allow_fast_media_v1: true,
+        max_bitrate_kbps: 50_000,
+        relay_udp_protocol: 1,
+        relay_server: relay_server.to_owned(),
+        relay_udp_port: u32::from(udp_port),
+        relay_allocation_id: ALLOCATION_ID.to_vec().into(),
+        relay_max_datagram: 1_200,
+        relay_endpoint_role: u32::from(role),
+        fast_media_relay_renewal: 1,
+        relay_session_id: SESSION_ID,
+        renewal_sequence,
+        previous_authorization_sha256: sha2::Sha256::digest(previous).to_vec().into(),
         ..Default::default()
     }
     .write_to_bytes()

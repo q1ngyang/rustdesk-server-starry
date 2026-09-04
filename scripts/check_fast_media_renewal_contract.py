@@ -132,6 +132,10 @@ def main() -> None:
     assert semantics["lifecycle"]["immortal_allocation_forbidden"] is True
     assert semantics["admission"]["same_nat_roles_are_summed"] is True
     assert semantics["privacy"]["kessoku_media_or_key_path"] is False
+    native_route = semantics["hbbs_binding"]["native_secure_tcp_route_exception"]
+    assert native_route["allowed_change"] == "source port only"
+    assert native_route["wss_route_remains_exact"] is True
+    assert native_route["plaintext_tcp_allowed"] is False
 
     fixture = read_json(CONTRACT / "fixtures/renewal-flow.json")
     assert fixture["request"]["current_renewal_sequence"] == 0

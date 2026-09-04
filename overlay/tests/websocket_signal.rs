@@ -1,14 +1,16 @@
 use base64::{encode_config, URL_SAFE_NO_PAD};
 use hbb_common::{
     bytes::Bytes,
+    bytes_codec::BytesCodec,
     futures_util::{SinkExt, StreamExt},
     protobuf::{Message as _, MessageField},
     rendezvous_proto::{
         punch_hole_response, register_pk_response, rendezvous_message, DeactivatePeer,
-        DeactivatePeerResponse, FastRelayAuthorization, NatType, PunchHole, PunchHoleRequest,
-        PunchHoleSent, RegisterPeer, RegisterPk, RegisterPkResponse, RelayProbeReport,
-        RelayProbeResult, RelayQualityCancel, RelayQualityOffer, RelayResponse, RendezvousMessage,
-        RequestRelay,
+        DeactivatePeerResponse, FastMediaRenewalRequest, FastMediaRenewalResponse,
+        FastMediaRenewalStatus, FastRelayAuthorization, KeyExchange, NatType, PunchHole,
+        PunchHoleRequest, PunchHoleSent, RegisterPeer, RegisterPk, RegisterPkResponse,
+        RelayProbeReport, RelayProbeResult, RelayQualityCancel, RelayQualityOffer, RelayResponse,
+        RendezvousMessage, RequestRelay,
     },
     tcp::FramedStream,
     timeout,
@@ -18,6 +20,7 @@ use hbb_common::{
         task::JoinHandle,
         time::{sleep, Duration},
     },
+    tokio_util::codec::Framed,
     udp::FramedSocket,
 };
 use rcgen::{
@@ -25,7 +28,7 @@ use rcgen::{
     PKCS_ECDSA_P256_SHA256,
 };
 use sha2::{Digest, Sha256};
-use sodiumoxide::crypto::{auth, sign};
+use sodiumoxide::crypto::{auth, box_, secretbox, sign};
 use std::{
     fs,
     net::{SocketAddr, TcpListener as StdTcpListener, UdpSocket as StdUdpSocket},
@@ -556,6 +559,382 @@ fn hbbs_authorizes_its_single_relay_after_ordinary_p2p_fallback_without_quality(
             assert_eq!(retry.relay_server, relay);
             assert!(retry.relay_quality_decision.is_none());
             assert_eq!(retry.fast_relay_authorization, signed);
+        });
+}
+
+#[test]
+fn hbbs_renews_both_fast_media_roles_over_wss_and_rotated_native_secure_tcp() {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            sodiumoxide::init().unwrap();
+            let hbbs_port = reserve_hbbs_ports();
+            let hbbr_port = reserve_hbbr_ports(hbbs_port);
+            let root = std::env::temp_dir().join(format!(
+                "starry-fast-media-renewal-{}-{hbbs_port}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&root);
+            let hbbs_dir = root.join("hbbs");
+            fs::create_dir_all(hbbs_dir.join("auth")).unwrap();
+            let udp_port = {
+                let socket = StdUdpSocket::bind(("127.0.0.1", 0)).unwrap();
+                socket.local_addr().unwrap().port()
+            };
+            let (probe_port, _, ca_path, telemetry_secret, probe_count, probe_task) =
+                start_fast_media_wss_probe(&root, udp_port).await;
+            let (auth_public, auth_secret) = sign::gen_keypair();
+            fs::write(
+                hbbs_dir.join("auth/jwks.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "keys": [{
+                        "kty": "OKP",
+                        "crv": "Ed25519",
+                        "use": "sig",
+                        "alg": "EdDSA",
+                        "kid": "persistent-wss-test-key",
+                        "x": encode_config(auth_public.0, URL_SAFE_NO_PAD)
+                    }]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let token = connection_token(&auth_secret);
+            let relay = format!("127.0.0.1:{hbbr_port}");
+            let config_path = hbbs_dir.join("config.yaml");
+            fs::write(
+                &config_path,
+                fast_media_renewal_config(&relay, probe_port, &telemetry_secret, udp_port),
+            )
+            .unwrap();
+            let hbbs = Command::new(env!("CARGO_BIN_EXE_hbbs"))
+                .arg("--port")
+                .arg(hbbs_port.to_string())
+                .arg(format!("--starry-config={}", config_path.display()))
+                .env("SSL_CERT_FILE", &ca_path)
+                .env("RUST_LOG", "warn")
+                .current_dir(&hbbs_dir)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            let mut environment = TestEnvironment {
+                children: vec![hbbs],
+                tasks: vec![probe_task],
+                root,
+            };
+
+            wait_until_listening(SocketAddr::from(([127, 0, 0, 1], hbbs_port))).await;
+            wait_until_listening(SocketAddr::from(([127, 0, 0, 1], hbbs_port + 2))).await;
+            wait_for_wss_probe_count(&probe_count, 2).await;
+            let server_key = wait_for_server_key(&hbbs_dir).await;
+            let server_public = sign::PublicKey::from_slice(&base64::decode(&server_key).unwrap())
+                .expect("HBBS signing public key");
+            let hbbr_dir = hbbs_dir.join("hbbr");
+            fs::create_dir_all(&hbbr_dir).unwrap();
+            let hbbr = Command::new(env!("CARGO_BIN_EXE_hbbr"))
+                .arg("--port")
+                .arg(hbbr_port.to_string())
+                .arg("--key")
+                .arg(&server_key)
+                .env("STARRY_RELAY_FAST_MEDIA_UDP_PORT", udp_port.to_string())
+                .env("STARRY_RELAY_PUBLIC_ENDPOINT", &relay)
+                .env("STARRY_RELAY_FAST_MEDIA_MAX_ALLOCATIONS", "32")
+                .env("STARRY_RELAY_FAST_MEDIA_PER_IP_PACKETS_PER_SECOND", "1000")
+                .env("STARRY_RELAY_FAST_MEDIA_GLOBAL_PACKETS_PER_SECOND", "10000")
+                .env("RUST_LOG", "warn")
+                .current_dir(&hbbr_dir)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            environment.children.push(hbbr);
+            wait_until_listening(SocketAddr::from(([127, 0, 0, 1], hbbr_port))).await;
+            let target_id = "renewal-target-000001";
+            let mut controller =
+                connect_registered_websocket(hbbs_port, "renewal-controller-001", 0x91).await;
+            let mut target = connect_registered_websocket(hbbs_port, target_id, 0x92).await;
+
+            // WSS keeps the authenticated, encrypted route open. Bootstrap
+            // grants are issued only after HBBS selects the configured Relay.
+            let wss_session = "fast-media-renewal-wss-0001";
+            controller
+                .send(Message::Binary(
+                    request_relay_message(target_id, wss_session, &relay, &token)
+                        .write_to_bytes()
+                        .unwrap()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            let target_request = expect_request_relay(
+                receive_protocol(&mut target, 5_000).await.unwrap(),
+                wss_session,
+                &relay,
+            );
+            let target_bootstrap = parse_fast_media_grant(
+                &target_request.fast_relay_authorization,
+                &server_public,
+                wss_session,
+                &relay,
+                udp_port,
+                2,
+            );
+            send_fast_response(&mut target, &target_request, b"untrusted-target-grant").await;
+            let controller_response = expect_relay_response_message(
+                receive_protocol(&mut controller, 5_000).await.unwrap(),
+                wss_session,
+                &relay,
+            );
+            let controller_bootstrap = parse_fast_media_grant(
+                &controller_response.fast_relay_authorization,
+                &server_public,
+                wss_session,
+                &relay,
+                udp_port,
+                1,
+            );
+            assert_eq!(
+                controller_bootstrap.relay_allocation_id,
+                target_bootstrap.relay_allocation_id
+            );
+            let relay_udp = SocketAddr::from(([127, 0, 0, 1], udp_port));
+            let controller_udp = fast_media_udp_client();
+            let target_udp = fast_media_udp_client();
+            let wss_relay_session_id = 0x1020_3040_5060_7080;
+            bind_generated_grant(
+                &controller_udp,
+                relay_udp,
+                1,
+                wss_relay_session_id,
+                &controller_bootstrap.relay_allocation_id,
+                [0x11; 16],
+                &controller_response.fast_relay_authorization,
+            );
+            bind_generated_grant(
+                &target_udp,
+                relay_udp,
+                2,
+                wss_relay_session_id,
+                &target_bootstrap.relay_allocation_id,
+                [0x12; 16],
+                &target_request.fast_relay_authorization,
+            );
+            let first_media = generated_akf1(wss_relay_session_id, 2, 1);
+            send_generated_media(
+                &target_udp,
+                relay_udp,
+                wss_relay_session_id,
+                &target_bootstrap.relay_allocation_id,
+                2,
+                &first_media,
+            );
+            assert_eq!(
+                receive_fast_media_udp(&controller_udp)
+                    .expect("HBBS bootstrap grants must bind on real HBBR"),
+                first_media
+            );
+
+            let wss_renewal_request = fast_media_renewal_request(
+                &token,
+                wss_session,
+                &relay,
+                wss_relay_session_id,
+                [0x41; 16],
+                &controller_response.fast_relay_authorization,
+                &target_request.fast_relay_authorization,
+                &controller_bootstrap,
+            );
+            sleep(Duration::from_millis(1_100)).await;
+            let mut wss_renewal = RendezvousMessage::new();
+            wss_renewal.set_fast_media_renewal_request(wss_renewal_request.clone());
+            controller
+                .send(Message::Binary(
+                    wss_renewal.write_to_bytes().unwrap().into(),
+                ))
+                .await
+                .unwrap();
+            let renewed = expect_fast_media_renewal_response(
+                receive_protocol(&mut controller, 5_000).await.unwrap(),
+            );
+            assert_renewed_pair(
+                &renewed,
+                &server_public,
+                &controller_response.fast_relay_authorization,
+                &target_request.fast_relay_authorization,
+                wss_session,
+                &relay,
+                udp_port,
+                wss_relay_session_id,
+            );
+            let controller_roamed = fast_media_udp_client();
+            bind_generated_grant(
+                &controller_roamed,
+                relay_udp,
+                1,
+                wss_relay_session_id,
+                &renewed.relay_allocation_id,
+                [0x21; 16],
+                &renewed.controller_authorization,
+            );
+            bind_generated_grant(
+                &target_udp,
+                relay_udp,
+                2,
+                wss_relay_session_id,
+                &renewed.relay_allocation_id,
+                [0x22; 16],
+                &renewed.target_authorization,
+            );
+            send_generated_media(
+                &target_udp,
+                relay_udp,
+                wss_relay_session_id,
+                &renewed.relay_allocation_id,
+                2,
+                &first_media,
+            );
+            assert!(
+                receive_fast_media_udp(&controller_roamed).is_none(),
+                "HBBR renewal/rebind must preserve the AKF1 replay window"
+            );
+            let renewed_media = generated_akf1(wss_relay_session_id, 2, 2);
+            send_generated_media(
+                &target_udp,
+                relay_udp,
+                wss_relay_session_id,
+                &renewed.relay_allocation_id,
+                2,
+                &renewed_media,
+            );
+            assert_eq!(
+                receive_fast_media_udp(&controller_roamed)
+                    .expect("renewed HBBS grants must rebind and forward on real HBBR"),
+                renewed_media
+            );
+
+            // Exact request replay is byte-identical and does not consume a
+            // second sequence. A byte-different conflict with the same ID is
+            // rejected without closing either reliable WebSocket route.
+            controller
+                .send(Message::Binary(
+                    wss_renewal.write_to_bytes().unwrap().into(),
+                ))
+                .await
+                .unwrap();
+            let replay = expect_fast_media_renewal_response(
+                receive_protocol(&mut controller, 5_000).await.unwrap(),
+            );
+            assert_eq!(replay, renewed);
+            let mut conflicting = wss_renewal_request;
+            conflicting.current_max_bitrate_kbps -= 1;
+            let mut conflict_message = RendezvousMessage::new();
+            conflict_message.set_fast_media_renewal_request(conflicting);
+            controller
+                .send(Message::Binary(
+                    conflict_message.write_to_bytes().unwrap().into(),
+                ))
+                .await
+                .unwrap();
+            let conflict = expect_fast_media_renewal_response(
+                receive_protocol(&mut controller, 5_000).await.unwrap(),
+            );
+            assert_eq!(
+                conflict.status.enum_value().ok(),
+                Some(FastMediaRenewalStatus::FAST_MEDIA_RENEWAL_STATUS_BINDING_MISMATCH)
+            );
+            controller = verify_websocket_ping(controller, b"controller-live".to_vec()).await;
+            target = verify_websocket_ping(target, b"target-live".to_vec()).await;
+
+            // Native RequestRelay consumes its one-shot response writer. A
+            // renewal therefore opens a new Secure TCP connection with a new
+            // source port; HBBS accepts only the same authenticated source IP.
+            let native_session = "fast-media-renewal-native-0001";
+            let mut native = TestSecureTcpClient::connect(hbbs_port, &server_public).await;
+            native
+                .send(&request_relay_message(
+                    target_id,
+                    native_session,
+                    &relay,
+                    &token,
+                ))
+                .await;
+            let native_target_request = expect_request_relay(
+                receive_protocol(&mut target, 5_000).await.unwrap(),
+                native_session,
+                &relay,
+            );
+            let native_target_bootstrap = parse_fast_media_grant(
+                &native_target_request.fast_relay_authorization,
+                &server_public,
+                native_session,
+                &relay,
+                udp_port,
+                2,
+            );
+            send_fast_response(
+                &mut target,
+                &native_target_request,
+                b"untrusted-native-target-grant",
+            )
+            .await;
+            let native_controller_response =
+                expect_relay_response_message(native.receive().await, native_session, &relay);
+            let native_controller_bootstrap = parse_fast_media_grant(
+                &native_controller_response.fast_relay_authorization,
+                &server_public,
+                native_session,
+                &relay,
+                udp_port,
+                1,
+            );
+            assert_eq!(
+                native_controller_bootstrap.relay_allocation_id,
+                native_target_bootstrap.relay_allocation_id
+            );
+            let native_request = fast_media_renewal_request(
+                &token,
+                native_session,
+                &relay,
+                0x8877_6655_4433_2211,
+                [0x51; 16],
+                &native_controller_response.fast_relay_authorization,
+                &native_target_request.fast_relay_authorization,
+                &native_controller_bootstrap,
+            );
+            drop(native);
+            sleep(Duration::from_millis(1_100)).await;
+            let mut rotated = TestSecureTcpClient::connect(hbbs_port, &server_public).await;
+            let mut native_renewal = RendezvousMessage::new();
+            native_renewal.set_fast_media_renewal_request(native_request.clone());
+            rotated.send(&native_renewal).await;
+            let native_renewed = expect_fast_media_renewal_response(rotated.receive().await);
+            assert_renewed_pair(
+                &native_renewed,
+                &server_public,
+                &native_controller_response.fast_relay_authorization,
+                &native_target_request.fast_relay_authorization,
+                native_session,
+                &relay,
+                udp_port,
+                0x8877_6655_4433_2211,
+            );
+
+            let unauthenticated = plaintext_tcp_exchange_after_secure_offer(hbbs_port, {
+                let mut message = RendezvousMessage::new();
+                message.set_fast_media_renewal_request(native_request);
+                message
+            })
+            .await;
+            let unauthenticated = expect_fast_media_renewal_response(unauthenticated);
+            assert_eq!(
+                unauthenticated.status.enum_value().ok(),
+                Some(FastMediaRenewalStatus::FAST_MEDIA_RENEWAL_STATUS_UNAUTHENTICATED)
+            );
+            let _ = verify_websocket_ping(controller, b"controller-still-live".to_vec()).await;
+            let _ = verify_websocket_ping(target, b"target-still-live".to_vec()).await;
         });
 }
 
@@ -1104,6 +1483,20 @@ fn ensure_websocket_load_nofile_limit() {}
 async fn start_wss_probe(
     root: &Path,
 ) -> (u16, u16, PathBuf, PathBuf, Arc<AtomicUsize>, JoinHandle<()>) {
+    start_wss_probe_with_telemetry(root, None).await
+}
+
+async fn start_fast_media_wss_probe(
+    root: &Path,
+    udp_port: u16,
+) -> (u16, u16, PathBuf, PathBuf, Arc<AtomicUsize>, JoinHandle<()>) {
+    start_wss_probe_with_telemetry(root, Some(udp_port)).await
+}
+
+async fn start_wss_probe_with_telemetry(
+    root: &Path,
+    fast_media_udp_port: Option<u16>,
+) -> (u16, u16, PathBuf, PathBuf, Arc<AtomicUsize>, JoinHandle<()>) {
     let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
     let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -1157,6 +1550,7 @@ async fn start_wss_probe(
             let probe_count = task_probe_count.clone();
             let telemetry_key = telemetry_key.clone();
             let telemetry_sequence = telemetry_sequence.clone();
+            let fast_media_udp_port = fast_media_udp_port;
             hbb_common::tokio::spawn(async move {
                 let stream = match acceptor.accept(stream).await {
                     Ok(stream) => stream,
@@ -1217,31 +1611,11 @@ async fn start_wss_probe(
                             .unwrap()
                             .as_millis() as u64;
                         let payload = encode_config(
-                            serde_json::to_vec(&serde_json::json!({
-                                "telemetry_schema": 1,
-                                "process_instance_id": "integration-relay-instance",
-                                "sequence": sequence,
-                                "observed_at_unix_ms": observed_at_unix_ms,
-                                "uptime_seconds": sequence,
-                                "version": "1.1.16-patch-v1.3.0",
-                                "relay_probe_protocol": 1,
-                                "relay_load_protocol": 1,
-                                "load_basis_points": 1000,
-                                "active_sessions": 10,
-                                "pending_pairs": 2,
-                                "capacity_sessions": 100,
-                                "bandwidth_bps": 1000000,
-                                "bandwidth_ema_alpha_basis_points": 2500,
-                                "capacity_bandwidth_bps": 100000000,
-                                "draining": false,
-                                "admission_open": true,
-                                "admission_rejections": 3,
-                                "probe_malformed": 4,
-                                "probe_unsupported": 5,
-                                "probe_rate_limited": 6,
-                                "probe_successful": 7,
-                                "telemetry_auth_failures": 8
-                            }))
+                            serde_json::to_vec(&test_relay_telemetry_payload(
+                                sequence,
+                                observed_at_unix_ms,
+                                fast_media_udp_port,
+                            ))
                             .unwrap(),
                             URL_SAFE_NO_PAD,
                         );
@@ -1295,6 +1669,56 @@ async fn start_wss_probe(
         probe_count,
         task,
     )
+}
+
+fn test_relay_telemetry_payload(
+    sequence: usize,
+    observed_at_unix_ms: u64,
+    fast_media_udp_port: Option<u16>,
+) -> serde_json::Value {
+    if let Some(udp_port) = fast_media_udp_port {
+        let mut payload: serde_json::Value = serde_json::from_str(include_str!(
+            "../contracts/relay-telemetry/v3/telemetry.example.json"
+        ))
+        .unwrap();
+        payload["sequence"] = serde_json::json!(sequence);
+        payload["observed_at_unix_ms"] = serde_json::json!(observed_at_unix_ms);
+        payload["uptime_seconds"] = serde_json::json!(sequence);
+        payload["fast_media"]["udp_port"] = serde_json::json!(udp_port);
+        payload["fast_media"]["active_allocations"] = serde_json::json!(0);
+        payload["fast_media"]["active_streams"] = serde_json::json!(0);
+        payload["fast_media"]["reserved_bytes_per_second"] = serde_json::json!(0);
+        payload["fast_media"]["peak_per_ip_reserved_bytes_per_second"] = serde_json::json!(0);
+        payload["fast_media"]["active_role_reservations"] = serde_json::json!(0);
+        payload["fast_media"]["minimum_remaining_ttl_seconds"] = serde_json::Value::Null;
+        payload["fast_media"]["expiring_within_30_seconds"] = serde_json::json!(0);
+        return payload;
+    }
+    serde_json::json!({
+        "telemetry_schema": 1,
+        "process_instance_id": "019d1111-5c11-7cb2-9b64-9cf25ab8cd10",
+        "sequence": sequence,
+        "observed_at_unix_ms": observed_at_unix_ms,
+        "uptime_seconds": sequence,
+        "version": "1.1.16-patch-v1.3.0",
+        "relay_probe_protocol": 1,
+        "relay_load_protocol": 1,
+        "load_basis_points": 1000,
+        "active_sessions": 10,
+        "pending_pairs": 2,
+        "capacity_sessions": 100,
+        "bandwidth_bps": 1000000,
+        "bandwidth_ema_alpha_basis_points": 2500,
+        "capacity_bandwidth_bps": 100000000,
+        "draining": false,
+        "admission_open": true,
+        "admission_rejections": 3,
+        "probe_malformed": 4,
+        "probe_unsupported": 5,
+        "probe_rate_limited": 6,
+        "probe_successful": 7,
+        "telemetry_auth_failures": 8
+    })
 }
 
 fn unauthorized_test_response() -> http::Response<Option<String>> {
@@ -1528,6 +1952,65 @@ fast_mode:
     authorization_ttl_seconds: 90
     max_bitrate_kbps: 50000
 "#
+    )
+}
+
+fn fast_media_renewal_config(
+    relay: &str,
+    probe_port: u16,
+    telemetry_secret: &Path,
+    fast_media_udp_port: u16,
+) -> String {
+    format!(
+        r#"version: 5
+relay_servers:
+  - {relay}
+secure_tcp:
+  mode: auto
+  handshake_timeout_ms: 3000
+  idle_timeout_ms: 15000
+  max_frame_bytes: 65536
+websocket_signal:
+  enabled: true
+  registration_timeout_ms: 3000
+  keepalive_interval_ms: 1000
+  idle_timeout_ms: 15000
+  max_frame_bytes: 65536
+  outbound_queue_capacity: 64
+  max_sessions: 100
+  max_sessions_per_effective_ip: 100
+  registration_rate_per_minute: 100
+  trusted_proxies:
+    - 127.0.0.1/32
+    - ::1/128
+  allowed_origins: []
+  relay_health:
+    interval_seconds: 5
+    timeout_ms: 2000
+    success_threshold: 1
+    failure_threshold: 1
+    endpoints:
+      - relay: {relay}
+        url: wss://localhost:{probe_port}/ws/telemetry
+        telemetry_secret_file: {telemetry_secret}
+        fast_media_udp_port: {fast_media_udp_port}
+connection_auth:
+  mode: enforce
+  issuer: https://api.example.test
+  audience: rustdesk-connect
+  token_use: access
+  required_scope: connect:initiate
+  jwks:
+    file: auth/jwks.json
+fast_mode:
+  relay:
+    fast_compat_enabled: true
+    fast_media_v1_enabled: true
+    authorization_ttl_seconds: 30
+    max_bitrate_kbps: 10000
+    relay_max_datagram: 1200
+"#,
+        telemetry_secret = telemetry_secret.display()
     )
 }
 
@@ -1987,6 +2470,422 @@ async fn receive_protocol(
     })
     .await
     .map_err(|_| "WebSocket protocol response timed out".to_owned())?
+}
+
+struct TestSecureTcpClient {
+    framed: Framed<TcpStream, BytesCodec>,
+    key: secretbox::Key,
+    send_sequence: u64,
+    receive_sequence: u64,
+}
+
+impl TestSecureTcpClient {
+    async fn connect(port: u16, signing_public: &sign::PublicKey) -> Self {
+        let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut framed = Framed::new(stream, BytesCodec::new());
+        let offer = framed.next().await.unwrap().unwrap();
+        let offer = RendezvousMessage::parse_from_bytes(&offer).unwrap();
+        let Some(rendezvous_message::Union::KeyExchange(exchange)) = offer.union else {
+            panic!("HBBS did not offer Secure TCP");
+        };
+        assert_eq!(exchange.keys.len(), 1);
+        let curve_public = sign::verify(&exchange.keys[0], signing_public)
+            .expect("HBBS Secure TCP key must verify with its advertised Ed25519 key");
+        let server_public =
+            box_::PublicKey::from_slice(&curve_public).expect("verified Secure TCP Curve25519 key");
+        let (client_public, client_secret) = box_::gen_keypair();
+        let key = secretbox::gen_key();
+        let sealed = box_::seal(
+            &key.0,
+            &box_::Nonce([0_u8; box_::NONCEBYTES]),
+            &server_public,
+            &client_secret,
+        );
+        let mut exchange = RendezvousMessage::new();
+        exchange.set_key_exchange(KeyExchange {
+            keys: vec![client_public.0.to_vec().into(), sealed.into()],
+            ..Default::default()
+        });
+        framed
+            .send(Bytes::from(exchange.write_to_bytes().unwrap()))
+            .await
+            .unwrap();
+        Self {
+            framed,
+            key,
+            send_sequence: 0,
+            receive_sequence: 0,
+        }
+    }
+
+    async fn send(&mut self, message: &RendezvousMessage) {
+        self.send_sequence += 1;
+        let ciphertext = secretbox::seal(
+            &message.write_to_bytes().unwrap(),
+            &secure_tcp_nonce(self.send_sequence),
+            &self.key,
+        );
+        self.framed.send(Bytes::from(ciphertext)).await.unwrap();
+    }
+
+    async fn receive(&mut self) -> RendezvousMessage {
+        let ciphertext = timeout(5_000, self.framed.next())
+            .await
+            .expect("Secure TCP response timed out")
+            .expect("Secure TCP connection closed")
+            .expect("Secure TCP framing failed");
+        self.receive_sequence += 1;
+        let plaintext = secretbox::open(
+            &ciphertext,
+            &secure_tcp_nonce(self.receive_sequence),
+            &self.key,
+        )
+        .expect("Secure TCP response authentication failed");
+        RendezvousMessage::parse_from_bytes(&plaintext).unwrap()
+    }
+}
+
+fn secure_tcp_nonce(sequence: u64) -> secretbox::Nonce {
+    let mut nonce = secretbox::Nonce([0_u8; secretbox::NONCEBYTES]);
+    nonce.0[..8].copy_from_slice(&sequence.to_le_bytes());
+    nonce
+}
+
+async fn plaintext_tcp_exchange_after_secure_offer(
+    port: u16,
+    message: RendezvousMessage,
+) -> RendezvousMessage {
+    let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let mut framed = Framed::new(stream, BytesCodec::new());
+    let offer = framed.next().await.unwrap().unwrap();
+    assert!(matches!(
+        RendezvousMessage::parse_from_bytes(&offer).unwrap().union,
+        Some(rendezvous_message::Union::KeyExchange(_))
+    ));
+    framed
+        .send(Bytes::from(message.write_to_bytes().unwrap()))
+        .await
+        .unwrap();
+    let response = timeout(5_000, framed.next())
+        .await
+        .expect("plaintext renewal response timed out")
+        .expect("plaintext renewal connection closed")
+        .expect("plaintext renewal framing failed");
+    RendezvousMessage::parse_from_bytes(&response).unwrap()
+}
+
+fn request_relay_message(
+    target_id: &str,
+    session_uuid: &str,
+    relay: &str,
+    token: &str,
+) -> RendezvousMessage {
+    let mut message = RendezvousMessage::new();
+    message.set_request_relay(RequestRelay {
+        id: target_id.to_owned(),
+        uuid: session_uuid.to_owned(),
+        relay_server: format!("client-must-not-select-{relay}"),
+        token: token.to_owned(),
+        fast_relay_authorization: Bytes::from_static(b"untrusted-controller-grant"),
+        ..Default::default()
+    });
+    message
+}
+
+fn expect_request_relay(
+    message: RendezvousMessage,
+    session_uuid: &str,
+    relay: &str,
+) -> RequestRelay {
+    let Some(rendezvous_message::Union::RequestRelay(request)) = message.union else {
+        panic!("expected RequestRelay");
+    };
+    assert_eq!(request.uuid, session_uuid);
+    assert_eq!(request.relay_server, relay);
+    assert!(!request.fast_relay_authorization.is_empty());
+    request
+}
+
+fn expect_relay_response_message(
+    message: RendezvousMessage,
+    session_uuid: &str,
+    relay: &str,
+) -> RelayResponse {
+    let Some(rendezvous_message::Union::RelayResponse(response)) = message.union else {
+        panic!("expected RelayResponse");
+    };
+    assert_eq!(response.uuid, session_uuid);
+    assert_eq!(response.relay_server, relay);
+    assert!(!response.fast_relay_authorization.is_empty());
+    response
+}
+
+fn verify_fast_media_grant(
+    signed: &[u8],
+    server_public: &sign::PublicKey,
+    session_uuid: &str,
+    relay: &str,
+    udp_port: u16,
+    role: u32,
+) -> FastRelayAuthorization {
+    assert!(signed.len() <= 4096);
+    let payload = sign::verify(signed, server_public)
+        .expect("FastMedia authorization must verify with HBBS signing key");
+    let authorization = FastRelayAuthorization::parse_from_bytes(&payload).unwrap();
+    assert_eq!(authorization.version, 1);
+    assert_eq!(authorization.session_uuid, session_uuid);
+    assert!(authorization.allow_fast_compat);
+    assert!(authorization.allow_fast_media_v1);
+    assert_eq!(authorization.relay_server, relay);
+    assert_eq!(authorization.relay_udp_protocol, 1);
+    assert_eq!(authorization.relay_udp_port, u32::from(udp_port));
+    assert_eq!(authorization.relay_allocation_id.len(), 16);
+    assert_eq!(authorization.relay_max_datagram, 1200);
+    assert_eq!(authorization.relay_endpoint_role, role);
+    assert_eq!(authorization.fast_media_relay_renewal, 1);
+    authorization
+}
+
+fn parse_fast_media_grant(
+    signed: &[u8],
+    server_public: &sign::PublicKey,
+    session_uuid: &str,
+    relay: &str,
+    udp_port: u16,
+    role: u32,
+) -> FastRelayAuthorization {
+    let authorization =
+        verify_fast_media_grant(signed, server_public, session_uuid, relay, udp_port, role);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    assert!(authorization.expires_at > now);
+    assert!(authorization.expires_at <= now.saturating_add(30));
+    assert_eq!(authorization.relay_session_id, 0);
+    assert_eq!(authorization.renewal_sequence, 0);
+    assert!(authorization.previous_authorization_sha256.is_empty());
+    authorization
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fast_media_renewal_request(
+    token: &str,
+    session_uuid: &str,
+    relay: &str,
+    relay_session_id: u64,
+    request_id: [u8; 16],
+    controller_signed: &[u8],
+    target_signed: &[u8],
+    controller: &FastRelayAuthorization,
+) -> FastMediaRenewalRequest {
+    FastMediaRenewalRequest {
+        protocol_version: 1,
+        session_uuid: session_uuid.to_owned(),
+        relay_allocation_id: controller.relay_allocation_id.clone(),
+        relay_session_id,
+        current_renewal_sequence: controller.renewal_sequence,
+        controller_authorization_sha256: Sha256::digest(controller_signed).to_vec().into(),
+        target_authorization_sha256: Sha256::digest(target_signed).to_vec().into(),
+        request_id: request_id.to_vec().into(),
+        token: token.to_owned(),
+        relay_server: relay.to_owned(),
+        relay_udp_protocol: controller.relay_udp_protocol,
+        relay_max_datagram: controller.relay_max_datagram,
+        current_max_bitrate_kbps: controller.max_bitrate_kbps,
+        requester_role: 1,
+        ..Default::default()
+    }
+}
+
+fn expect_fast_media_renewal_response(message: RendezvousMessage) -> FastMediaRenewalResponse {
+    let Some(rendezvous_message::Union::FastMediaRenewalResponse(response)) = message.union else {
+        panic!("expected FastMediaRenewalResponse");
+    };
+    response
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assert_renewed_pair(
+    response: &FastMediaRenewalResponse,
+    server_public: &sign::PublicKey,
+    previous_controller: &[u8],
+    previous_target: &[u8],
+    session_uuid: &str,
+    relay: &str,
+    udp_port: u16,
+    relay_session_id: u64,
+) {
+    assert_eq!(
+        response.status.enum_value().ok(),
+        Some(FastMediaRenewalStatus::FAST_MEDIA_RENEWAL_STATUS_OK)
+    );
+    assert_eq!(response.protocol_version, 1);
+    assert_eq!(response.session_uuid, session_uuid);
+    assert_eq!(response.relay_server, relay);
+    assert_eq!(response.relay_udp_protocol, 1);
+    assert_eq!(response.relay_max_datagram, 1200);
+    assert_eq!(response.relay_session_id, relay_session_id);
+    assert_eq!(response.renewal_sequence, 1);
+    assert_eq!(response.relay_allocation_id.len(), 16);
+    assert!(!response.controller_authorization.is_empty());
+    assert!(!response.target_authorization.is_empty());
+    assert!(response.renew_after < response.expires_at);
+    assert!(response.fallback_before < response.expires_at);
+    let controller = verify_fast_media_grant(
+        &response.controller_authorization,
+        server_public,
+        session_uuid,
+        relay,
+        udp_port,
+        1,
+    );
+    let target = verify_fast_media_grant(
+        &response.target_authorization,
+        server_public,
+        session_uuid,
+        relay,
+        udp_port,
+        2,
+    );
+    for authorization in [&controller, &target] {
+        assert_eq!(
+            authorization.relay_allocation_id,
+            response.relay_allocation_id
+        );
+        assert_eq!(authorization.relay_session_id, relay_session_id);
+        assert_eq!(authorization.renewal_sequence, 1);
+        assert_eq!(authorization.expires_at, response.expires_at);
+        assert_eq!(authorization.max_bitrate_kbps, response.max_bitrate_kbps);
+    }
+    assert_eq!(
+        controller.previous_authorization_sha256.as_ref(),
+        Sha256::digest(previous_controller).as_slice()
+    );
+    assert_eq!(
+        target.previous_authorization_sha256.as_ref(),
+        Sha256::digest(previous_target).as_slice()
+    );
+}
+
+fn fast_media_udp_client() -> StdUdpSocket {
+    let socket = StdUdpSocket::bind(("127.0.0.1", 0)).unwrap();
+    socket
+        .set_read_timeout(Some(std::time::Duration::from_millis(350)))
+        .unwrap();
+    socket
+}
+
+fn bind_generated_grant(
+    socket: &StdUdpSocket,
+    relay: SocketAddr,
+    role: u8,
+    relay_session_id: u64,
+    allocation_id: &[u8],
+    nonce: [u8; 16],
+    signed: &[u8],
+) {
+    let cookie = generated_cookie(socket, relay, role, relay_session_id, allocation_id, nonce);
+    let mut packet = generated_akr1_header(3, role, relay_session_id, allocation_id);
+    packet.extend_from_slice(&nonce);
+    packet.extend_from_slice(&cookie);
+    packet.extend_from_slice(&(signed.len() as u16).to_le_bytes());
+    packet.extend_from_slice(signed);
+    socket.send_to(&packet, relay).unwrap();
+    let bound = receive_fast_media_udp(socket).expect("real HBBR did not return AKR1 Bound");
+    assert_eq!(bound.len(), 32);
+    assert_eq!(&bound[..4], b"AKR1");
+    assert_eq!(bound[5], 4);
+    assert_eq!(bound[6], role);
+}
+
+fn generated_cookie(
+    socket: &StdUdpSocket,
+    relay: SocketAddr,
+    role: u8,
+    relay_session_id: u64,
+    allocation_id: &[u8],
+    nonce: [u8; 16],
+) -> [u8; 8] {
+    let mut hello = generated_akr1_header(1, role, relay_session_id, allocation_id);
+    hello.extend_from_slice(&nonce);
+    hello.extend_from_slice(&[0; 8]);
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        socket.send_to(&hello, relay).unwrap();
+        if let Some(response) = receive_fast_media_udp(socket) {
+            assert_eq!(response.len(), 56);
+            assert_eq!(&response[..4], b"AKR1");
+            assert_eq!(response[5], 2);
+            assert_eq!(response[6], role);
+            assert_eq!(&response[32..48], nonce.as_slice());
+            return response[48..56].try_into().unwrap();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "real HBBR UDP listener did not start"
+        );
+    }
+}
+
+fn generated_akr1_header(
+    kind: u8,
+    role: u8,
+    relay_session_id: u64,
+    allocation_id: &[u8],
+) -> Vec<u8> {
+    assert_eq!(allocation_id.len(), 16);
+    let mut header = Vec::with_capacity(32);
+    header.extend_from_slice(b"AKR1");
+    header.push(1);
+    header.push(kind);
+    header.push(role);
+    header.push(0);
+    header.extend_from_slice(&relay_session_id.to_le_bytes());
+    header.extend_from_slice(allocation_id);
+    header
+}
+
+fn generated_akf1(relay_session_id: u64, role: u8, sequence: u64) -> Vec<u8> {
+    let mut packet = vec![0x5a; 22 + 16 + 51];
+    packet[..4].copy_from_slice(b"AKF1");
+    packet[4] = 1;
+    packet[5] = role - 1;
+    packet[6..14].copy_from_slice(&relay_session_id.to_le_bytes());
+    packet[14..22].copy_from_slice(&sequence.to_le_bytes());
+    packet
+}
+
+fn send_generated_media(
+    socket: &StdUdpSocket,
+    relay: SocketAddr,
+    relay_session_id: u64,
+    allocation_id: &[u8],
+    role: u8,
+    akf1: &[u8],
+) {
+    let mut packet = generated_akr1_header(5, role, relay_session_id, allocation_id);
+    packet.extend_from_slice(akf1);
+    socket.send_to(&packet, relay).unwrap();
+}
+
+fn receive_fast_media_udp(socket: &StdUdpSocket) -> Option<Vec<u8>> {
+    let mut bytes = vec![0_u8; 8192];
+    match socket.recv_from(&mut bytes) {
+        Ok((size, _)) => {
+            bytes.truncate(size);
+            Some(bytes)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            None
+        }
+        Err(error) => panic!("FastMedia UDP receive failed: {error}"),
+    }
 }
 
 async fn assert_persistent_websocket_auth_denials(

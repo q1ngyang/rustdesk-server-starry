@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from write_release_summary import build_summary
+from check_fast_media_renewal_contract import main as check_fast_media_renewal_contract
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +100,35 @@ def check_json_contracts() -> None:
     assert set(telemetry_example["fast_media"]) == set(fast_media["required"])
     assert telemetry_example["fast_media"]["protocol"] == 1
 
+    telemetry_v3 = read_json(CONTRACTS / "relay-telemetry/v3/telemetry.schema.json")
+    assert isinstance(telemetry_v3, dict)
+    assert telemetry_v3.get("additionalProperties") is False
+    assert telemetry_v3["properties"]["telemetry_schema"]["const"] == 3
+    fast_media_v3 = telemetry_v3["properties"]["fast_media"]
+    assert fast_media_v3["additionalProperties"] is False
+    assert {
+        "renewal_protocol",
+        "replay_window_packets",
+        "maximum_forward_sequence_jump",
+        "max_session_seconds",
+        "reserved_bytes_per_second",
+        "renewal_grants_accepted",
+        "post_expiry_rebinds",
+        "admission_rejected_per_ip",
+        "minimum_remaining_ttl_seconds",
+    } <= set(fast_media_v3["required"])
+    telemetry_v3_example = read_json(
+        CONTRACTS / "relay-telemetry/v3/telemetry.example.json"
+    )
+    assert isinstance(telemetry_v3_example, dict)
+    assert set(telemetry_v3_example) == set(telemetry_v3["required"])
+    assert telemetry_v3_example["telemetry_schema"] == 3
+    assert set(telemetry_v3_example["fast_media"]) == set(
+        fast_media_v3["required"]
+    )
+    assert telemetry_v3_example["fast_media"]["renewal_protocol"] == 1
+    assert telemetry_v3_example["fast_media"]["replay_window_packets"] == 2_048
+
 
 def check_openapi_surface() -> None:
     text = (CONTRACTS / "control/v1/openapi.yaml").read_text(encoding="utf-8")
@@ -183,8 +213,10 @@ def check_openapi_surface() -> None:
     assert capabilities["capabilities"]["profile_activation_lease"] == 1
     assert capabilities["capabilities"]["relay_probe_protocol"] == 1
     assert capabilities["capabilities"]["relay_load_protocol"] == 1
-    assert capabilities["capabilities"]["relay_telemetry_schema"] == 2
+    assert capabilities["protocol"]["version"] == "1.1.0"
+    assert capabilities["capabilities"]["relay_telemetry_schema"] == 3
     assert capabilities["capabilities"]["fast_media_relay_udp"] == 1
+    assert capabilities["capabilities"]["fast_media_relay_renewal"] == 1
     assert capabilities["capabilities"]["starry_pairing"] == 1
     assert capabilities["capabilities"]["relay_enrollment"] == 1
 
@@ -207,12 +239,13 @@ def check_openapi_surface() -> None:
         "relay_probe_protocol": 1,
         "relay_load_protocol": 1,
         "fast_media_relay_udp": 1,
+        "fast_media_relay_renewal": 1,
     }
     assert relays["relays"][0]["quality_candidate"] is True
     assert relays["relays"][0]["websocket"]["stale"] is False
     assert relays["relays"][0]["websocket"]["age_seconds"] >= 0
     assert relays["relays"][0]["websocket"]["url"].endswith("/ws/telemetry")
-    assert relays["relays"][0]["websocket"]["telemetry_schema"] == 2
+    assert relays["relays"][0]["websocket"]["telemetry_schema"] == 3
     assert relays["relays"][0]["websocket"]["pending_pairs"] >= 0
     assert relays["relays"][0]["websocket"]["bandwidth_ema_alpha_basis_points"] == 2_500
     assert {
@@ -234,7 +267,10 @@ def check_openapi_surface() -> None:
     assert relays["profile_activation"]["protocol_version"] == 1
     assert relays["profile_activation"]["burst_limit"] == 12
     assert relays["relays"][0]["fast_media_udp"]["active_streams"] >= 0
+    assert relays["relays"][0]["fast_media_udp"]["renewal_protocol"] == 1
+    assert relays["relays"][0]["fast_media_udp"]["replay_window_packets"] == 2_048
     assert relays["fast_relay"]["active_fast_media_authorizations"] >= 0
+    assert relays["fast_relay"]["renewal_protocol_version"] == 1
     assert relays["fast_relay"]["fast_media_v1_enabled"] is False
     assert relays["relays"][0]["websocket"]["load_basis_points"] <= 10000
     assert isinstance(simulation, dict) and simulation["selection"]["non_binding"] is True
@@ -316,6 +352,10 @@ def check_patch_v131_frozen_candidate() -> None:
     ], "patch-v1.3.1 must have exactly one canonical contract candidate summary"
 
     manifest = read_json(summary_path)
+    assert (
+        hashlib.sha256(summary_path.read_bytes()).hexdigest()
+        == "67cc28287ed8c6fedfc37b88c6b0ecbc95a734a4644a34bfbb2d85e6d801df67"
+    ), "the immutable patch-v1.3.1 summary itself changed"
     assert isinstance(manifest, dict)
     assert manifest["manifest_schema"] == 1
     assert manifest["id"] == "patch-v1.3.1-contract-candidate"
@@ -384,7 +424,14 @@ def check_patch_v131_frozen_candidate() -> None:
     assert {item["id"]: item["path"] for item in frozen_files} == expected_files
     assert len({item["id"] for item in frozen_files}) == len(frozen_files)
     assert len({item["path"] for item in frozen_files}) == len(frozen_files)
+    superseded_additively_in_v132 = {
+        "control_openapi",
+        "control_capabilities_fixture",
+        "control_relays_fixture",
+    }
     for item in frozen_files:
+        if item["id"] in superseded_additively_in_v132:
+            continue
         digest = "sha256:" + hashlib.sha256(
             (ROOT / item["path"]).read_bytes()
         ).hexdigest()
@@ -492,13 +539,17 @@ def check_release_version() -> None:
     )
     candidate = contracts["contract_candidate"]
     assert isinstance(candidate, dict)
-    manifest_path = CONTRACTS / "patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+    manifest_path = CONTRACTS / f"patch-v{patch_version}/CONTRACT-RELEASE-SUMMARY.json"
     manifest = read_json(manifest_path)
     assert candidate["digest"] == (
         "sha256:" + hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     )
     assert candidate["path"] == (
-        "contracts/patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+        f"contracts/patch-v{patch_version}/CONTRACT-RELEASE-SUMMARY.json"
+    )
+    assert contracts["relay_telemetry_schema"]["id"] == "relay-telemetry/v3"
+    assert contracts["fast_media_renewal_protocol"]["id"] == (
+        "fast-media-renewal/v1"
     )
     for key, value in manifest.items():
         assert candidate[key] == value
@@ -696,6 +747,7 @@ def main() -> None:
     check_fast_relay_protocol()
     check_fast_media_and_pairing_protocols()
     check_profile_activation_protocol()
+    check_fast_media_renewal_contract()
     print("Starry contracts are structurally valid and least-privilege surface checks passed")
 
 

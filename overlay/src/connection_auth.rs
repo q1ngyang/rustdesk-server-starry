@@ -31,6 +31,7 @@ static METRICS: AuthMetrics = AuthMetrics::new();
 pub(crate) enum ConnectionAttemptKind {
     PunchHole,
     RequestRelay,
+    FastMediaRenewal,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

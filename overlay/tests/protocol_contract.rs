@@ -1,7 +1,8 @@
 use hbb_common::{
     protobuf::{Message as _, MessageField},
     rendezvous_proto::{
-        punch_hole_response, rendezvous_message, DeactivatePeer, FastRelayAuthorization, NatType,
+        punch_hole_response, rendezvous_message, DeactivatePeer, FastMediaRenewalRequest,
+        FastMediaRenewalResponse, FastMediaRenewalStatus, FastRelayAuthorization, NatType,
         PunchHoleRequest, PunchHoleResponse, RegisterPeer, RegisterPk, RegisterPkResponse,
         RelayProbeReport, RelayProbeRequest, RelayProbeResponse, RelayProbeResult,
         RelayQualityCancel, RelayQualityCandidate, RelayQualityDecision, RelayQualityOffer,
@@ -253,6 +254,101 @@ fn fast_media_role_grants_round_trip_tags_seven_through_twelve() {
 }
 
 #[test]
+fn fast_media_renewal_fields_and_envelopes_round_trip_additively() {
+    let allocation_id = vec![0xa5; 16];
+    let request_id = vec![0x44; 16];
+    let controller_digest = vec![0x22; 32];
+    let target_digest = vec![0x33; 32];
+    let previous_digest = vec![0x11; 32];
+    let grant = FastRelayAuthorization {
+        version: 1,
+        session_uuid: "fast-media-session-1".to_owned(),
+        expires_at: 1_800_000_150,
+        allow_fast_compat: true,
+        allow_fast_media_v1: true,
+        max_bitrate_kbps: 40_000,
+        relay_udp_protocol: 1,
+        relay_server: "relay-a.example:21117".to_owned(),
+        relay_udp_port: 21_119,
+        relay_allocation_id: allocation_id.clone().into(),
+        relay_max_datagram: 1_200,
+        relay_endpoint_role: 1,
+        fast_media_relay_renewal: 1,
+        relay_session_id: 77,
+        renewal_sequence: 9,
+        previous_authorization_sha256: previous_digest.clone().into(),
+        ..Default::default()
+    };
+    let grant = FastRelayAuthorization::parse_from_bytes(&grant.write_to_bytes().unwrap()).unwrap();
+    assert_eq!(grant.fast_media_relay_renewal, 1);
+    assert_eq!(grant.relay_session_id, 77);
+    assert_eq!(grant.renewal_sequence, 9);
+    assert_eq!(
+        grant.previous_authorization_sha256.as_ref(),
+        previous_digest.as_slice()
+    );
+
+    let mut request_envelope = RendezvousMessage::new();
+    request_envelope.set_fast_media_renewal_request(FastMediaRenewalRequest {
+        protocol_version: 1,
+        session_uuid: "fast-media-session-1".to_owned(),
+        relay_allocation_id: allocation_id.clone().into(),
+        relay_session_id: 77,
+        current_renewal_sequence: 8,
+        controller_authorization_sha256: controller_digest.into(),
+        target_authorization_sha256: target_digest.into(),
+        request_id: request_id.clone().into(),
+        token: "authenticated-controller-token".to_owned(),
+        relay_server: "relay-a.example:21117".to_owned(),
+        relay_udp_protocol: 1,
+        relay_max_datagram: 1_200,
+        current_max_bitrate_kbps: 40_000,
+        requester_role: 1,
+        ..Default::default()
+    });
+    let decoded =
+        RendezvousMessage::parse_from_bytes(&request_envelope.write_to_bytes().unwrap()).unwrap();
+    let Some(rendezvous_message::Union::FastMediaRenewalRequest(request)) = decoded.union else {
+        panic!("renewal request oneof was not preserved");
+    };
+    assert_eq!(request.relay_session_id, 77);
+    assert_eq!(request.current_renewal_sequence, 8);
+    assert_eq!(request.request_id.as_ref(), request_id.as_slice());
+
+    let mut response_envelope = RendezvousMessage::new();
+    response_envelope.set_fast_media_renewal_response(FastMediaRenewalResponse {
+        protocol_version: 1,
+        status: FastMediaRenewalStatus::FAST_MEDIA_RENEWAL_STATUS_OK.into(),
+        session_uuid: "fast-media-session-1".to_owned(),
+        relay_allocation_id: allocation_id.into(),
+        relay_session_id: 77,
+        renewal_sequence: 9,
+        expires_at: 1_800_000_150,
+        request_id: request_id.into(),
+        controller_authorization: vec![0x61; 128].into(),
+        target_authorization: vec![0x62; 128].into(),
+        relay_server: "relay-a.example:21117".to_owned(),
+        relay_udp_protocol: 1,
+        relay_max_datagram: 1_200,
+        max_bitrate_kbps: 40_000,
+        renew_after: 1_800_000_120,
+        fallback_before: 1_800_000_140,
+        ..Default::default()
+    });
+    let decoded =
+        RendezvousMessage::parse_from_bytes(&response_envelope.write_to_bytes().unwrap()).unwrap();
+    let Some(rendezvous_message::Union::FastMediaRenewalResponse(response)) = decoded.union else {
+        panic!("renewal response oneof was not preserved");
+    };
+    assert_eq!(
+        response.status.enum_value().unwrap(),
+        FastMediaRenewalStatus::FAST_MEDIA_RENEWAL_STATUS_OK
+    );
+    assert_eq!(response.renewal_sequence, 9);
+    assert_eq!(response.max_bitrate_kbps, 40_000);
+}
+
+#[test]
 fn enhanced_offer_report_and_decision_round_trip_without_touching_legacy_fields() {
     let allocation_id = vec![0x41; 16];
     let stage_token = vec![0x42; 16];
@@ -498,6 +594,8 @@ fn parse_all_protocol_shapes(bytes: &[u8]) {
     let _ = RelayQualityDecision::parse_from_bytes(bytes);
     let _ = RelayQualityCancel::parse_from_bytes(bytes);
     let _ = FastRelayAuthorization::parse_from_bytes(bytes);
+    let _ = FastMediaRenewalRequest::parse_from_bytes(bytes);
+    let _ = FastMediaRenewalResponse::parse_from_bytes(bytes);
     let _ = RegisterPeer::parse_from_bytes(bytes);
     let _ = RegisterPk::parse_from_bytes(bytes);
     let _ = RegisterPkResponse::parse_from_bytes(bytes);

@@ -30,6 +30,7 @@ static STATE: Lazy<RwLock<HealthState>> = Lazy::new(|| RwLock::new(HealthState::
 const MAX_CONCURRENT_HEALTH_PROBES: usize = 8;
 const TELEMETRY_SCHEMA_V1: u32 = 1;
 const TELEMETRY_SCHEMA_V2: u32 = 2;
+const TELEMETRY_SCHEMA_V3: u32 = 3;
 const TELEMETRY_CLOCK_SKEW_MILLIS: u64 = 30_000;
 const MIN_TELEMETRY_SECRET_BYTES: usize = 32;
 const MAX_TELEMETRY_SECRET_BYTES: usize = 1_024;
@@ -149,6 +150,33 @@ pub(crate) struct RelayLoadTelemetry {
     pub(crate) fast_media_replay_rejected: Option<u64>,
     pub(crate) fast_media_expired_allocations: Option<u64>,
     pub(crate) fast_media_listener_failures: Option<u64>,
+    pub(crate) fast_media_renewal_protocol: Option<u32>,
+    pub(crate) fast_media_replay_window_packets: Option<u32>,
+    pub(crate) fast_media_maximum_forward_sequence_jump: Option<u64>,
+    pub(crate) fast_media_max_session_seconds: Option<u64>,
+    pub(crate) fast_media_transition_seconds: Option<u64>,
+    pub(crate) fast_media_post_expiry_recovery_seconds: Option<u64>,
+    pub(crate) fast_media_per_ip_bytes_per_second: Option<u64>,
+    pub(crate) fast_media_global_bytes_per_second: Option<u64>,
+    pub(crate) fast_media_reserved_bytes_per_second: Option<u64>,
+    pub(crate) fast_media_peak_per_ip_reserved_bytes_per_second: Option<u64>,
+    pub(crate) fast_media_active_role_reservations: Option<u64>,
+    pub(crate) fast_media_renewal_grants_accepted: Option<u64>,
+    pub(crate) fast_media_renewal_grants_replayed: Option<u64>,
+    pub(crate) fast_media_renewal_rejected_invalid: Option<u64>,
+    pub(crate) fast_media_renewal_rejected_binding: Option<u64>,
+    pub(crate) fast_media_renewal_rejected_sequence: Option<u64>,
+    pub(crate) fast_media_renewal_rejected_expired: Option<u64>,
+    pub(crate) fast_media_post_expiry_rebinds: Option<u64>,
+    pub(crate) fast_media_replay_rejected_duplicate: Option<u64>,
+    pub(crate) fast_media_replay_rejected_too_old: Option<u64>,
+    pub(crate) fast_media_replay_rejected_jump: Option<u64>,
+    pub(crate) fast_media_admission_accepted: Option<u64>,
+    pub(crate) fast_media_admission_rejected_allocation: Option<u64>,
+    pub(crate) fast_media_admission_rejected_per_ip: Option<u64>,
+    pub(crate) fast_media_admission_rejected_global: Option<u64>,
+    pub(crate) fast_media_minimum_remaining_ttl_seconds: Option<u64>,
+    pub(crate) fast_media_expiring_within_30_seconds: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -206,6 +234,60 @@ struct FastMediaTelemetryEnvelope {
     replay_rejected: u64,
     expired_allocations: u64,
     listener_failures: u64,
+    #[serde(default)]
+    renewal_protocol: Option<u32>,
+    #[serde(default)]
+    replay_window_packets: Option<u32>,
+    #[serde(default)]
+    maximum_forward_sequence_jump: Option<u64>,
+    #[serde(default)]
+    max_session_seconds: Option<u64>,
+    #[serde(default)]
+    transition_seconds: Option<u64>,
+    #[serde(default)]
+    post_expiry_recovery_seconds: Option<u64>,
+    #[serde(default)]
+    per_ip_bytes_per_second: Option<u64>,
+    #[serde(default)]
+    global_bytes_per_second: Option<u64>,
+    #[serde(default)]
+    reserved_bytes_per_second: Option<u64>,
+    #[serde(default)]
+    peak_per_ip_reserved_bytes_per_second: Option<u64>,
+    #[serde(default)]
+    active_role_reservations: Option<u64>,
+    #[serde(default)]
+    renewal_grants_accepted: Option<u64>,
+    #[serde(default)]
+    renewal_grants_replayed: Option<u64>,
+    #[serde(default)]
+    renewal_rejected_invalid: Option<u64>,
+    #[serde(default)]
+    renewal_rejected_binding: Option<u64>,
+    #[serde(default)]
+    renewal_rejected_sequence: Option<u64>,
+    #[serde(default)]
+    renewal_rejected_expired: Option<u64>,
+    #[serde(default)]
+    post_expiry_rebinds: Option<u64>,
+    #[serde(default)]
+    replay_rejected_duplicate: Option<u64>,
+    #[serde(default)]
+    replay_rejected_too_old: Option<u64>,
+    #[serde(default)]
+    replay_rejected_jump: Option<u64>,
+    #[serde(default)]
+    admission_accepted: Option<u64>,
+    #[serde(default)]
+    admission_rejected_allocation: Option<u64>,
+    #[serde(default)]
+    admission_rejected_per_ip: Option<u64>,
+    #[serde(default)]
+    admission_rejected_global: Option<u64>,
+    #[serde(default)]
+    minimum_remaining_ttl_seconds: Option<u64>,
+    #[serde(default)]
+    expiring_within_30_seconds: Option<u64>,
 }
 
 struct TelemetryRequestContext {
@@ -636,6 +718,87 @@ fn relay_telemetry<T>(
                 .as_ref()
                 .map(|value| value.expired_allocations),
             fast_media_listener_failures: fast_media.as_ref().map(|value| value.listener_failures),
+            fast_media_renewal_protocol: fast_media
+                .as_ref()
+                .and_then(|value| value.renewal_protocol),
+            fast_media_replay_window_packets: fast_media
+                .as_ref()
+                .and_then(|value| value.replay_window_packets),
+            fast_media_maximum_forward_sequence_jump: fast_media
+                .as_ref()
+                .and_then(|value| value.maximum_forward_sequence_jump),
+            fast_media_max_session_seconds: fast_media
+                .as_ref()
+                .and_then(|value| value.max_session_seconds),
+            fast_media_transition_seconds: fast_media
+                .as_ref()
+                .and_then(|value| value.transition_seconds),
+            fast_media_post_expiry_recovery_seconds: fast_media
+                .as_ref()
+                .and_then(|value| value.post_expiry_recovery_seconds),
+            fast_media_per_ip_bytes_per_second: fast_media
+                .as_ref()
+                .and_then(|value| value.per_ip_bytes_per_second),
+            fast_media_global_bytes_per_second: fast_media
+                .as_ref()
+                .and_then(|value| value.global_bytes_per_second),
+            fast_media_reserved_bytes_per_second: fast_media
+                .as_ref()
+                .and_then(|value| value.reserved_bytes_per_second),
+            fast_media_peak_per_ip_reserved_bytes_per_second: fast_media
+                .as_ref()
+                .and_then(|value| value.peak_per_ip_reserved_bytes_per_second),
+            fast_media_active_role_reservations: fast_media
+                .as_ref()
+                .and_then(|value| value.active_role_reservations),
+            fast_media_renewal_grants_accepted: fast_media
+                .as_ref()
+                .and_then(|value| value.renewal_grants_accepted),
+            fast_media_renewal_grants_replayed: fast_media
+                .as_ref()
+                .and_then(|value| value.renewal_grants_replayed),
+            fast_media_renewal_rejected_invalid: fast_media
+                .as_ref()
+                .and_then(|value| value.renewal_rejected_invalid),
+            fast_media_renewal_rejected_binding: fast_media
+                .as_ref()
+                .and_then(|value| value.renewal_rejected_binding),
+            fast_media_renewal_rejected_sequence: fast_media
+                .as_ref()
+                .and_then(|value| value.renewal_rejected_sequence),
+            fast_media_renewal_rejected_expired: fast_media
+                .as_ref()
+                .and_then(|value| value.renewal_rejected_expired),
+            fast_media_post_expiry_rebinds: fast_media
+                .as_ref()
+                .and_then(|value| value.post_expiry_rebinds),
+            fast_media_replay_rejected_duplicate: fast_media
+                .as_ref()
+                .and_then(|value| value.replay_rejected_duplicate),
+            fast_media_replay_rejected_too_old: fast_media
+                .as_ref()
+                .and_then(|value| value.replay_rejected_too_old),
+            fast_media_replay_rejected_jump: fast_media
+                .as_ref()
+                .and_then(|value| value.replay_rejected_jump),
+            fast_media_admission_accepted: fast_media
+                .as_ref()
+                .and_then(|value| value.admission_accepted),
+            fast_media_admission_rejected_allocation: fast_media
+                .as_ref()
+                .and_then(|value| value.admission_rejected_allocation),
+            fast_media_admission_rejected_per_ip: fast_media
+                .as_ref()
+                .and_then(|value| value.admission_rejected_per_ip),
+            fast_media_admission_rejected_global: fast_media
+                .as_ref()
+                .and_then(|value| value.admission_rejected_global),
+            fast_media_minimum_remaining_ttl_seconds: fast_media
+                .as_ref()
+                .and_then(|value| value.minimum_remaining_ttl_seconds),
+            fast_media_expiring_within_30_seconds: fast_media
+                .as_ref()
+                .and_then(|value| value.expiring_within_30_seconds),
         },
     ))
 }
@@ -652,6 +815,54 @@ fn validate_telemetry(envelope: &TelemetryEnvelope) -> Result<(), ProbeFailure> 
         TELEMETRY_SCHEMA_V1 => envelope.fast_media.is_none(),
         TELEMETRY_SCHEMA_V2 => envelope.fast_media.as_ref().is_some_and(|fast_media| {
             fast_media.protocol == 1
+                && fast_media.renewal_protocol.is_none()
+                && (!fast_media.healthy || (fast_media.enabled && fast_media.udp_port > 0))
+                && (!fast_media.enabled || fast_media.udp_port > 0)
+        }),
+        TELEMETRY_SCHEMA_V3 => envelope.fast_media.as_ref().is_some_and(|fast_media| {
+            fast_media.protocol == 1
+                && fast_media.renewal_protocol == Some(1)
+                && fast_media.replay_window_packets == Some(2_048)
+                && fast_media.maximum_forward_sequence_jump == Some(1_048_576)
+                && fast_media
+                    .max_session_seconds
+                    .is_some_and(|value| (600..=86_400).contains(&value))
+                && fast_media
+                    .transition_seconds
+                    .is_some_and(|value| (5..=60).contains(&value))
+                && fast_media
+                    .post_expiry_recovery_seconds
+                    .is_some_and(|value| (10..=120).contains(&value))
+                && fast_media
+                    .per_ip_bytes_per_second
+                    .is_some_and(|value| value >= 64 * 1_024)
+                && fast_media
+                    .global_bytes_per_second
+                    .is_some_and(|value| value >= 1_024 * 1_024)
+                && fast_media
+                    .reserved_bytes_per_second
+                    .zip(fast_media.global_bytes_per_second)
+                    .is_some_and(|(reserved, capacity)| reserved <= capacity)
+                && fast_media
+                    .peak_per_ip_reserved_bytes_per_second
+                    .zip(fast_media.per_ip_bytes_per_second)
+                    .is_some_and(|(reserved, capacity)| reserved <= capacity)
+                && fast_media.active_role_reservations.is_some()
+                && fast_media.renewal_grants_accepted.is_some()
+                && fast_media.renewal_grants_replayed.is_some()
+                && fast_media.renewal_rejected_invalid.is_some()
+                && fast_media.renewal_rejected_binding.is_some()
+                && fast_media.renewal_rejected_sequence.is_some()
+                && fast_media.renewal_rejected_expired.is_some()
+                && fast_media.post_expiry_rebinds.is_some()
+                && fast_media.replay_rejected_duplicate.is_some()
+                && fast_media.replay_rejected_too_old.is_some()
+                && fast_media.replay_rejected_jump.is_some()
+                && fast_media.admission_accepted.is_some()
+                && fast_media.admission_rejected_allocation.is_some()
+                && fast_media.admission_rejected_per_ip.is_some()
+                && fast_media.admission_rejected_global.is_some()
+                && fast_media.expiring_within_30_seconds.is_some()
                 && (!fast_media.healthy || (fast_media.enabled && fast_media.udp_port > 0))
                 && (!fast_media.enabled || fast_media.udp_port > 0)
         }),
@@ -1397,6 +1608,45 @@ mod tests {
         assert_eq!(telemetry.fast_media_active_allocations, Some(2));
         assert_eq!(telemetry.fast_media_active_streams, Some(1));
         assert_eq!(telemetry.fast_media_replay_rejected, Some(16));
+    }
+
+    #[test]
+    fn telemetry_v3_fixture_exposes_renewal_only_after_authenticated_validation() {
+        sodiumoxide::init().unwrap();
+        let context = TelemetryRequestContext {
+            nonce: "2031425364758697a8b9cadbecfd0e1f".to_owned(),
+            key: auth::Key::from_slice(&[19_u8; auth::KEYBYTES]).unwrap(),
+        };
+        let mut envelope: serde_json::Value = serde_json::from_str(include_str!(
+            "../../contracts/relay-telemetry/v3/telemetry.example.json"
+        ))
+        .unwrap();
+        envelope["observed_at_unix_ms"] = serde_json::json!(unix_millis());
+        let payload = base64::encode_config(
+            serde_json::to_vec(&envelope).unwrap(),
+            base64::URL_SAFE_NO_PAD,
+        );
+        let canonical = format!(
+            "starry-telemetry-response-v1\n{}\n{}",
+            context.nonce, payload
+        );
+        let signature = hex_encode(auth::authenticate(canonical.as_bytes(), &context.key).as_ref());
+        let response = http::Response::builder()
+            .header("x-starry-telemetry", payload)
+            .header("x-starry-telemetry-auth", signature)
+            .body(())
+            .unwrap();
+        let (_, _, _, telemetry) = relay_telemetry(&response, &context).unwrap();
+        assert_eq!(telemetry.telemetry_schema, TELEMETRY_SCHEMA_V3);
+        assert_eq!(telemetry.fast_media_renewal_protocol, Some(1));
+        assert_eq!(telemetry.fast_media_replay_window_packets, Some(2_048));
+        assert_eq!(
+            telemetry.fast_media_maximum_forward_sequence_jump,
+            Some(1_048_576)
+        );
+        assert_eq!(telemetry.fast_media_max_session_seconds, Some(43_200));
+        assert_eq!(telemetry.fast_media_renewal_grants_accepted, Some(840));
+        assert_eq!(telemetry.fast_media_minimum_remaining_ttl_seconds, Some(41));
     }
 
     #[test]

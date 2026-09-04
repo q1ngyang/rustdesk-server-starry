@@ -51,7 +51,7 @@ const MAX_CONNECTIONS: usize = 256;
 const CONNECTION_DEADLINE_SECONDS: u64 = 30;
 const SHUTDOWN_DEADLINE_SECONDS: u64 = 8;
 const REQUESTS_PER_MINUTE: u32 = 120;
-const STARRY_PATCH_VERSION: &str = "1.3.1";
+const STARRY_PATCH_VERSION: &str = "1.3.2";
 const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v5/config.schema.json");
 const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v5/config.ui-schema.json");
 
@@ -658,9 +658,10 @@ async fn capabilities(
         "relay_active_probe": 1,
         "relay_probe_protocol": 1,
         "relay_load_protocol": 1,
-        "relay_telemetry_schema": 2,
+        "relay_telemetry_schema": 3,
         "fast_relay_authorization": 1,
         "fast_media_relay_udp": 1,
+        "fast_media_relay_renewal": 1,
         "starry_pairing": 1,
         "config_downgrade_preview": 1,
         "profile_activation_lease": 1,
@@ -684,7 +685,7 @@ async fn capabilities(
         }
     }
     Ok(Json(json!({
-        "protocol": {"name": "starry-control", "version": "1.0.0", "major": 1},
+        "protocol": {"name": "starry-control", "version": "1.1.0", "major": 1},
         "instance": {
             "id": state.instance_id,
             "role": "hbbs",

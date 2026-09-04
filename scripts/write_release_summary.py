@@ -20,8 +20,17 @@ def sha256(relative: str) -> str:
     return "sha256:" + hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
 
 
-def contract_candidate() -> dict[str, object]:
-    path = "contracts/patch-v1.3.1/CONTRACT-RELEASE-SUMMARY.json"
+def patch_tuple(value: str) -> tuple[int, int, int]:
+    parts = value.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise ValueError("patch version must contain three numeric components")
+    return tuple(int(part) for part in parts)  # type: ignore[return-value]
+
+
+def contract_candidate(patch_version: str) -> dict[str, object]:
+    path = f"contracts/patch-v{patch_version}/CONTRACT-RELEASE-SUMMARY.json"
+    if not (ROOT / path).is_file():
+        raise ValueError(f"frozen contract candidate is missing for patch-v{patch_version}")
     manifest = json.loads((ROOT / path).read_text(encoding="utf-8"))
     return {
         "path": path,
@@ -63,6 +72,9 @@ def build_summary(
         raise ValueError("upstream ref must be a non-empty token")
     if release_channel not in {"preview", "stable"}:
         raise ValueError("release channel must be preview or stable")
+    patch_version = release_tag.rsplit("-patch-v", 1)[1]
+    patch_release = patch_tuple(patch_version)
+    telemetry_version = 3 if patch_release >= (1, 3, 2) else 2
 
     return {
         "schema_version": 1,
@@ -81,7 +93,7 @@ def build_summary(
             "platforms": {"linux/amd64": image_linux_amd64_digest},
         },
         "contracts": {
-            "contract_candidate": contract_candidate(),
+            "contract_candidate": contract_candidate(patch_version),
             "control_openapi": {
                 "id": "control/v1",
                 "path": "contracts/control/v1/openapi.yaml",
@@ -106,10 +118,12 @@ def build_summary(
                 ),
             },
             "relay_telemetry_schema": {
-                "id": "relay-telemetry/v2",
-                "path": "contracts/relay-telemetry/v2/telemetry.schema.json",
+                "id": f"relay-telemetry/v{telemetry_version}",
+                "path": (
+                    f"contracts/relay-telemetry/v{telemetry_version}/telemetry.schema.json"
+                ),
                 "digest": sha256(
-                    "contracts/relay-telemetry/v2/telemetry.schema.json"
+                    f"contracts/relay-telemetry/v{telemetry_version}/telemetry.schema.json"
                 ),
             },
             "fast_relay_protocol": {
@@ -140,6 +154,42 @@ def build_summary(
                     "contracts/config/v5/downgrade-drain-state.schema.json"
                 ),
             },
+            **(
+                {
+                    "fast_media_renewal_protocol": {
+                        "id": "fast-media-renewal/v1",
+                        "status": "FROZEN",
+                        "runtime_release_status": release_channel.upper(),
+                        "path": (
+                            "contracts/fast-media-renewal/v1/"
+                            "rendezvous-extension.proto"
+                        ),
+                        "digest": sha256(
+                            "contracts/fast-media-renewal/v1/"
+                            "rendezvous-extension.proto"
+                        ),
+                        "capability": {"fast_media_relay_renewal": 1},
+                    }
+                }
+                if patch_release >= (1, 3, 2)
+                else {}
+            ),
+        },
+        "runtime_gates": {
+            "preview": (
+                "source, controlled-clock, contract, overlay, lint, test, and build gates"
+            ),
+            "stable_latest": [
+                "real Akari controller/target long-session evidence",
+                "cross-network NAT/UDP migration and fault soak",
+                "hosted immutable artifact provenance",
+            ],
+        },
+        "kessoku": {
+            "minimum_version_for_renewal_aggregates": (
+                "3.0.9" if patch_release >= (1, 3, 2) else None
+            ),
+            "media_or_signing_path": False,
         },
     }
 
