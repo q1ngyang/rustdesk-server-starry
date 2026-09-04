@@ -34,7 +34,7 @@ the public RustDesk or reverse-proxy listener.
 
 The Linux archive/container and `rustdesk-server-starry-control-agent` DEB
 contain the Agent. The DEB installs but does not automatically enable its
-systemd service. No Windows Agent artifact is published in v1.3.1 because the
+systemd service. No Windows Agent artifact is published in v1.3.2 because the
 atomic transaction implementation is release-supported only on Unix filesystems.
 
 Start from [`config/control-agent.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/control-agent.example.yaml):
@@ -162,14 +162,15 @@ Verify in order:
 6. the listener is unreachable from public networks and HBBS `21115` remains
    loopback-only.
 
-For patch-v1.3.1, schema support has one canonical machine expression:
+For patch-v1.3.2, schema support has one canonical machine expression:
 `capabilities.config_schema: 5`. The `config` object separately reports
 `supported_schema_versions: [1,2,3,4,5]`, the currently active version, and
 the exact schema digest; Kessoku must not infer schema support from a Starry
 version string. Capability discovery also includes `relay_quality: 1`,
 `relay_active_probe: 1`, `relay_probe_protocol: 1`,
 `relay_load_protocol: 1`, `fast_relay_authorization: 1`,
-`fast_media_relay_udp: 1`, `relay_telemetry_schema: 2`,
+`fast_media_relay_udp: 1`, `fast_media_relay_renewal: 1`,
+`relay_telemetry_schema: 3`,
 `starry_pairing: 1`, `relay_enrollment: 1`, `config_downgrade_preview: 1`,
 `profile_activation_lease: 1`, and `peer_registry: 2`. Enrollment write
 capability and `relay_enrollment_health_activation: 1` appear only when the
@@ -189,9 +190,14 @@ Profile activation counters identify lease/ACK/renewal/deactivation/cleanup,
 stale, rate, TTL, and bounded-capacity outcomes; they never include a peer ID,
 UUID, public key, activation ID, or route lease.
 Kessoku should gate FastCompat on the authorization capability and gate
-FastMedia separately on schema v5, telemetry schema 2, typed Relay capability,
-and fresh UDP health. It then uses the same validate/plan/apply/audit
-transaction as every other configuration change.
+FastMedia separately on schema v5, typed Relay capability, and fresh UDP
+health. Bootstrap accepts telemetry schema 2; renewal additionally requires
+fresh authenticated schema 3 and `fast_media_relay_renewal: 1`. It then uses
+the same validate/plan/apply/audit transaction as every other configuration
+change. `process_instance_id` is retained inside Starry only for HBBR restart
+detection. Kessoku must discard it at ingestion and must not forward, persist,
+index, log, or display it. Renewal fields are bounded aggregates; grants and
+per-session objects never cross this API.
 
 The Agent can preview/export a v1.3.0-compatible schema-v4 document without
 side effects:

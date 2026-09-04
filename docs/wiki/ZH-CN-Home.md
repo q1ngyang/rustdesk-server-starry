@@ -31,7 +31,7 @@ API 登录成功不能证明 HBBS 信令传输正常；HBBS 注册成功也不�
 - 通过可靠 HBBR 数据路径实现 WSS↔WSS 与 WSS↔原生会话。
 - Akari 可选候选探测和双端 RTT/jitter/loss/load 评分；官方客户端仍只使用一个传统 Relay。
 - 面向 HBBS 精确最终 Relay 的默认关闭 FastCompat/FastMedia 签名授权；FastMedia 使用
-  角色授权并始终保留可靠路径。
+  角色授权、有界活动会话续期，并始终保留可靠路径。
 - 面向 Akari 的 generation-safe Profile activation：匹配 Ready ACK、不透明 route lease、
   仅当前路由显式注销和有上限的已验证快速重新注册；官方客户端保持现有注册路径。
 - 检查 `/ws/relay` 的证书与可用状态，只把可用中继服务器分配给 WSS 客户端。

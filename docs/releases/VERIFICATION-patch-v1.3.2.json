@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "patch_version": "1.3.2",
+  "release_channel": "preview",
+  "recorded_on": "2026-09-04",
+  "baseline": {
+    "tag": "1.1.16-patch-v1.3.1",
+    "commit": "1b8080bf074e3236cf9a3c0dfae2bdf16832249e",
+    "official_server_commit": "73523b31cfd25d77dee862e6fc9f5e1fb5e485ef",
+    "official_hbb_common_commit": "83419b6549636ee39dacef7776c473f5802e08d6"
+  },
+  "frozen_contract": {
+    "commits": [
+      "1844654a272d70112bbbc7774414320c98aa3b99",
+      "f65981fbf8c77dd93cfd026422e528128aa13d1c"
+    ],
+    "manifest": "contracts/patch-v1.3.2/CONTRACT-RELEASE-SUMMARY.json",
+    "manifest_sha256": "0158980c7c9b3e3d50cda29d5737fefc52a3324da492034542f91d8ac5c55784",
+    "status": "FROZEN"
+  },
+  "implementation_candidate": {
+    "commit": "e44f6a0380914454cc543ebb6cdb031f5b3e08f9",
+    "branch": "codex/patch-v1.3.2-fastmedia-renewal",
+    "dirty_worktree_pin_allowed": false
+  },
+  "validation": [
+    {
+      "gate": "fast_media_renewal_contract",
+      "command": "python3 scripts/check_fast_media_renewal_contract.py",
+      "result": "PASS"
+    },
+    {
+      "gate": "all_contracts_and_least_privilege",
+      "command": "python3 scripts/check_contracts.py",
+      "result": "PASS"
+    },
+    {
+      "gate": "documentation_links",
+      "command": "python3 scripts/check_docs.py",
+      "result": "PASS",
+      "detail": "43 bilingual pairs; 88 Markdown files after release documentation"
+    },
+    {
+      "gate": "documentation_tests",
+      "command": "python3 -m unittest discover -s scripts -p test_docs.py",
+      "result": "PASS",
+      "passed": 11
+    },
+    {
+      "gate": "rustfmt_ci_owned_files",
+      "command": "rustfmt --edition 2021 --check <CI-owned overlay files>",
+      "result": "PASS"
+    },
+    {
+      "gate": "library_tests",
+      "command": "cargo test --locked --lib -j1",
+      "result": "PASS",
+      "passed": 147
+    },
+    {
+      "gate": "hbbr_unit_tests",
+      "command": "cargo test --locked --bin hbbr -j1",
+      "result": "PASS",
+      "passed": 17
+    },
+    {
+      "gate": "protocol_contract_integration",
+      "command": "cargo test --locked --test protocol_contract -j1",
+      "result": "PASS",
+      "passed": 13
+    },
+    {
+      "gate": "websocket_signal_integration",
+      "command": "cargo test --locked --test websocket_signal -j1 -- --nocapture",
+      "result": "PASS",
+      "passed": 7,
+      "ignored_release_gate": 1
+    },
+    {
+      "gate": "one_thousand_websocket_registrations",
+      "command": "cargo test --locked --test websocket_signal -j1 hbbs_sustains_one_thousand_registered_idle_websockets -- --ignored --exact --nocapture --test-threads=1",
+      "result": "PASS",
+      "passed": 1
+    },
+    {
+      "gate": "directed_integrations",
+      "command": "cargo test --locked --test <mixed_relay|connection_auth_transport|local_control|control_agent|fast_media_relay> -j1 -- --nocapture",
+      "result": "PASS",
+      "passed": 6,
+      "detail": "mixed 1; connection auth 1; local control 1; Control Agent 2; real HBBR FastMedia 1"
+    },
+    {
+      "gate": "clippy_all_targets",
+      "command": "cargo clippy --locked --all-targets -j1",
+      "result": "PASS",
+      "detail": "non-deny warnings remain in the pinned upstream source"
+    },
+    {
+      "gate": "all_binary_check",
+      "command": "cargo check --locked --bins -j1",
+      "result": "PASS"
+    },
+    {
+      "gate": "all_binary_release_build",
+      "command": "cargo build --locked --bins --release -j1",
+      "result": "PASS"
+    },
+    {
+      "gate": "compose_examples",
+      "command": "docker compose --env-file <example> -f <compose> config --quiet",
+      "result": "PASS",
+      "passed": 5
+    },
+    {
+      "gate": "github_actions_lint",
+      "command": "actionlint 1.7.12",
+      "result": "PASS"
+    },
+    {
+      "gate": "full_git_history_secret_scan",
+      "command": "gitleaks 8.25.1 git . --config .gitleaks.toml --redact --no-banner --exit-code 1",
+      "result": "PASS",
+      "detail": "30 commits and approximately 3.53 MB scanned before the release-documentation commit; final commit is rescanned during handoff"
+    },
+    {
+      "gate": "source_sbom_generation",
+      "command": "syft 1.50.0 scan dir:. -o spdx-json=<temporary-evidence-path>",
+      "result": "PASS"
+    },
+    {
+      "gate": "clean_official_overlay_apply_twice",
+      "command": "python3 scripts/apply_overlay.py <clean-official-tree>",
+      "result": "PASS",
+      "first_tree_sha256": "09d0d5b2d4252ea6b6f9584e8caaf7d83a33ccfb10411ccd06a758800e9b9032",
+      "second_tree_sha256": "09d0d5b2d4252ea6b6f9584e8caaf7d83a33ccfb10411ccd06a758800e9b9032",
+      "first_status_sha256": "27aabe333716e03a673aca4f00d2a85090b642549645339cc7ae6ae283d21bb2",
+      "second_status_sha256": "27aabe333716e03a673aca4f00d2a85090b642549645339cc7ae6ae283d21bb2"
+    }
+  ],
+  "preview_gates": {
+    "source_and_controlled_clock": "PASS",
+    "contract_and_overlay": "PASS",
+    "lint_test_and_build": "PASS"
+  },
+  "stable_latest_gates": {
+    "real_akari_dual_role_long_session": "BLOCKED",
+    "cross_network_nat_udp_fault_soak": "BLOCKED",
+    "hosted_immutable_artifact_provenance": "BLOCKED"
+  },
+  "kessoku": {
+    "minimum_version_for_renewal_aggregates": "3.0.9",
+    "media_or_signing_path": false,
+    "process_instance_id_policy": "discard_at_ingress_never_forward_persist_index_log_or_display"
+  },
+  "artifact_statement": "No immutable v1.3.2 tag or hosted image digest is claimed by this source-only preview evidence."
+}

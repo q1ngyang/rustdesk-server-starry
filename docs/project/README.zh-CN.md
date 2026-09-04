@@ -24,7 +24,8 @@ Starry 为 **HBBS** 增加以下能力：
 - 面向 Akari 的候选 Relay 主动探测，以双端 RTT、jitter、loss 和可信 HBBR load 综合
   评分，并使用网段缓存、迟滞和单 Relay 兼容兜底；
 - 面向 Akari FastCompat/FastMediaV1 的默认关闭短期 Ed25519 授权；只有鉴权严格允许且
-  服务端最终 Relay 已选定后才签发，并提供独立监督的 HBBR AKR1 UDP 数据面；
+  服务端最终 Relay 已选定后才签发，并提供独立监督的 HBBR AKR1 UDP 数据面与有界、
+  单调的活动会话续期；
 - 面向 Akari 的 generation-safe Profile Activation Lease，包括匹配 Ready ACK 后提交、
   仅当前 lease 显式注销、有上限的已验证快速重新注册，并保持官方客户端默认兼容；
 - 配置结构版本 5：只有所有相关子系统确认成功后才启用新配置，失败时保留最近一次有效配置；
@@ -48,14 +49,15 @@ Starry 为 **HBBS** 增加以下能力：
 协议层。Starry 不会让第三方 API 代替中继服务器，也不会替代 RustDesk 客户端。可选
 FastMedia UDP listener 与普通 HBBR 数据流互相独立，后者始终是可靠回退。
 
-当前开发版本：**patch-v1.3.1（发布候选阻断中）**。参见
-[`patch-v1.3.1` 版本说明](../releases/RELEASE-NOTES-patch-v1.3.1.zh-CN.md)和
+当前开发版本：**patch-v1.3.2 preview**。参见
+[`patch-v1.3.2` 版本说明](../releases/RELEASE-NOTES-patch-v1.3.2.zh-CN.md)和
 [`更新日志`](../releases/CHANGELOG.zh-CN.md)。Docker 镜像发布于
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry)。
 
-patch-v1.3.1 候选矩阵包括 Docker `linux/amd64`、Linux x86_64 二进制和 amd64 DEB
-安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.3.1
-正式发布文件。FastMedia 端到端回退/重入与完整发布门禁通过前不会发布本候选。
+patch-v1.3.2 候选矩阵包括 Docker `linux/amd64`、Linux x86_64 二进制和 amd64 DEB
+安装包。ARM 只尽力保持源码兼容，Windows 只有实验性构建检查；两者都不属于 v1.3.2
+正式发布文件。preview 保持 Fast 开关默认关闭；真实 Akari 长会话、跨网 NAT/UDP
+故障 soak 和托管产物 provenance 通过前不得发布 stable/latest。
 
 > 这是非官方社区项目，与 RustDesk、MaxMind、任何 MMDB 镜像提供方或任何 AI
 > 服务提供方均无隶属或背书关系。镜像不内置 GeoLite2 数据库；部署者应自行选择合法、
@@ -85,6 +87,7 @@ patch-v1.3.1 候选矩阵包括 Docker `linux/amd64`、Linux x86_64 二进制和
 | [Profile Activation Lease v1](../reference/PROFILE-ACTIVATION-LEASE-v1.zh-CN.md) | Akari 匹配 ACK 切换规则、当前路由注销、多节点 lease、可观测性、发布与回滚。 |
 | [极速 Relay 授权 v1](../reference/FAST-RELAY-AUTHORIZATION-v1.zh-CN.md) | 服务端选 Relay、增量字段 1–12、兼容性、隐私和签发门禁。 |
 | [FastMedia Relay UDP v1](../reference/FAST-MEDIA-RELAY-UDP-v1.zh-CN.md) | AKR1 cookie/bind/forward/rebind wire 与资源契约。 |
+| [FastMedia 活动会话续期 v1](../reference/FAST-MEDIA-RENEWAL-v1.zh-CN.md) | HBBS 签名的双角色续期、单调授权链、过渡、replay、准入与可靠回退契约。 |
 | [Starry Pairing v1](../reference/STARRY-PAIRING-v1.zh-CN.md) | SP1 Control Agent/Relay 引导、持久化、手工兼容和降级。 |
 | [地理位置规则入门](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Basics) | 国家规则、优先级、双向匹配、兜底规则与 `test-geo`。 |
 | [地理位置规则进阶](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-GEO-Rules-Advanced) | 城市、ASN、运营商、嵌套表达式、引号和常用写法。 |

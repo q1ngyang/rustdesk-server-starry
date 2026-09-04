@@ -31,7 +31,8 @@ Starry extends **HBBS** with:
   trusted HBBR load scoring, prefix-cache hysteresis, and a legacy single-Relay fallback;
 - default-off, short-lived Ed25519 authorization for Akari FastCompat and
   role-bound FastMediaV1 after exact auth allow and the final server-selected
-  Relay, with a separately supervised HBBR AKR1 UDP data plane;
+  Relay, with a separately supervised HBBR AKR1 UDP data plane and bounded,
+  monotonic active-session renewal;
 - generation-safe Profile Activation Leases for Akari, including a matching
   Ready ACK, explicit current-lease deactivation, bounded verified rapid
   re-registration, and official-client-compatible defaults;
@@ -61,18 +62,18 @@ not turn a third-party API into a Relay and does not replace the RustDesk
 client. The optional FastMedia UDP listener is independent from the ordinary
 HBBR stream, which always remains the reliable fallback.
 
-Current development release: **patch-v1.3.1 preview**. See
-the [`patch-v1.3.1` release notes](docs/releases/RELEASE-NOTES-patch-v1.3.1.md) and
+Current development release: **patch-v1.3.2 preview**. See
+the [`patch-v1.3.2` release notes](docs/releases/RELEASE-NOTES-patch-v1.3.2.md) and
 [`changelog`](docs/releases/CHANGELOG.md). Docker images are published at
 [`ghcr.io/q1ngyang/rustdesk-server-starry`](https://github.com/q1ngyang/rustdesk-server-starry/pkgs/container/rustdesk-server-starry).
 
-The patch-v1.3.1 candidate matrix is Docker `linux/amd64` plus Linux
+The patch-v1.3.2 candidate matrix is Docker `linux/amd64` plus Linux
 x86_64 binaries and amd64 DEB packages. ARM is best-effort source
 compatibility; Windows is an experimental non-blocking build. Neither is a
-promised v1.3.1 artifact. The preview is opt-in, keeps both Fast switches off
+promised v1.3.2 artifact. The preview is opt-in, keeps both Fast switches off
 by default, and is published only as a GitHub prerelease and the rolling
-`preview` image. Stable approval still requires the end-to-end FastMedia and
-real-device release gates.
+`preview` image. Stable approval still requires immutable real-Akari
+long-session, cross-network NAT/UDP fault-soak, and hosted-provenance gates.
 
 > This is an unofficial community project and is not affiliated with or
 > endorsed by RustDesk, MaxMind, any MMDB mirror provider, or any AI service
@@ -107,6 +108,7 @@ sources, container manual, release notes, and technical references.
 | [Profile Activation Lease v1](docs/reference/PROFILE-ACTIVATION-LEASE-v1.md) | Akari matching-ACK switch rule, current-route deactivation, multi-node leases, observability, rollout, and rollback. |
 | [Fast Relay authorization v1](docs/reference/FAST-RELAY-AUTHORIZATION-v1.md) | Server-selected Relay grants, additive fields 1–12, compatibility, privacy, and issuance gates. |
 | [FastMedia Relay UDP v1](docs/reference/FAST-MEDIA-RELAY-UDP-v1.md) | AKR1 cookie/bind/forward/rebind wire and resource contract. |
+| [FastMedia active-session renewal v1](docs/reference/FAST-MEDIA-RENEWAL-v1.md) | HBBS-signed role renewal, monotonic grant chain, transition, replay, admission, and reliable fallback contract. |
 | [Starry Pairing v1](docs/reference/STARRY-PAIRING-v1.md) | SP1 Control Agent/Relay bootstrap, persistence, manual compatibility, and downgrade. |
 | [GEO rules: basics](https://github.com/q1ngyang/rustdesk-server-starry/wiki/GEO-Rules-Basics) | Country rules, priority, symmetry, fallback, and `test-geo`. |
 | [GEO rules: advanced](https://github.com/q1ngyang/rustdesk-server-starry/wiki/GEO-Rules-Advanced) | City, ASN, ISP, nested expressions, quoting, and design patterns. |

@@ -16,6 +16,11 @@ STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE=10000
 STARRY_RELAY_DRAINING_FILE=/run/starry/hbbr.draining
 STARRY_RELAY_PUBLIC_ENDPOINT=relay.example.com:21117
 STARRY_RELAY_FAST_MEDIA_UDP_PORT=21119
+STARRY_RELAY_FAST_MEDIA_MAX_SESSION_TTL_SECONDS=43200
+STARRY_RELAY_FAST_MEDIA_RENEWAL_TRANSITION_SECONDS=15
+STARRY_RELAY_FAST_MEDIA_POST_EXPIRY_RECOVERY_SECONDS=30
+STARRY_RELAY_FAST_MEDIA_PER_IP_BYTES_PER_SECOND=33554432
+STARRY_RELAY_FAST_MEDIA_GLOBAL_BYTES_PER_SECOND=536870912
 ```
 
 轮换密钥时，先临时把相关 Relay 作为 legacy fallback，挂载新文件并滚动 HBBR，再滚动或 reload HBBS endpoint。v1 只有一个活动 HMAC key，未协调的原地文件替换可能产生短暂但安全的 fail-closed 遥测空窗。
@@ -40,17 +45,38 @@ adaptive 流程计数在没有关联失败时也只用于诊断：
 `estimated_probe_attempts_saved` 衡量分阶段策略节省的探测工作量。
 `p2p_cancellations` 通常是健康信号，不应单独触发告警。
 
-telemetry schema 2 中，已启用 FastMedia listener 连续超过两个 interval 不健康、
-`listener_failures` 持续增长，或在有实际 active 负载时 `rate_limited`、
-`replay_rejected`、`grant_rejected` 持续增长，适合告警。HBBS 声明 UDP port 与新鲜
-telemetry 端口不一致也应告警。`hello_accepted`、单次 cookie/bind 失败、rebind、累计
-forwarded packet/byte、active allocation/stream 和偶发 drop 主要用于诊断/容量规划，除非
-同时出现 fallback 或用户故障。AP 迁移测试中 rebind 上升是预期行为；listener 重启不
-代表可靠 HBBR 会话失败。
+telemetry schema 3 中，已启用 FastMedia listener 连续超过两个 interval 不健康、
+`listener_failures` 持续增长，或实际负载下 renewal-expired、admission、rate、replay、
+grant rejection 持续增长，适合告警。`minimum_remaining_ttl_seconds` 过低、临近到期数量
+上升、per-IP/global reservation 接近配置上限也可告警。HBBS 声明 UDP port 与新鲜
+telemetry 端口不一致同样应告警。schema 2 仍可证明 bootstrap-only FastMedia，但不能
+证明续期能力。
+
+accepted/idempotent renewal、单次 cookie/bind 失败、rebind、角色过渡、replay 拒绝分类、
+累计 forwarded packet/byte、active allocation/stream 和偶发 drop 主要用于诊断/容量规划，
+除非同时出现可靠回退或用户故障。AP 迁移测试中 rebind 上升是预期行为；listener 重启
+不代表可靠 HBBR 会话失败。
 
 所有 Control 维度都有界：offer/fallback reason 是固定字段；每 Relay selection 最多 256 个配置 Relay key，另有 overflow 计数。API 不返回客户端 IP、session/allocation 标识、nonce 或原始 report。
 
 ## 滚动升级与回滚
+
+patch-v1.3.2 活动会话续期按以下顺序：
+
+1. 两个 Fast 开关保持关闭，先滚动 HBBR；验证普通 Native/WS/WSS 转发、认证 telemetry
+   schema 3、renewal protocol 1、匹配 UDP endpoint、sequence 单调及有界预算。
+2. 滚动 HBBS，再滚动 Control Agent；验证 typed capability
+   `fast_media_relay_renewal = 1`、新鲜 Relay inventory、有界固定维度且无 secret/session/
+   地址字段。Starry 可用 `process_instance_id` 判断重启；Kessoku 必须在入口丢弃，不能
+   透传、持久化、索引、写日志或显示。
+3. 最后滚动支持续期的 Akari；对有界双端 canary，并要求 renewal 丢失、UDP blocked、
+   listener restart、admission failure 和回退/重入全过程可靠桌面流保持连接。
+
+v1.3.2→v1.3.1 时，先停止签发续期，让客户端回退；用 activation ACK 关闭 FastMedia，
+并等待 allocation/grant drain。先回滚 HBBS，再回滚 HBBR。schema v5 和持久身份兼容；
+旧二进制忽略字段 13–16 与 telemetry-v3 增量。不得删除配对/enrollment 状态。
+
+以下 v1.3.1 顺序仍是历史 v1.3.0 迁移路径。
 
 patch-v1.3.1 升级顺序：
 

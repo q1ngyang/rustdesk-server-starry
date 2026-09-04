@@ -29,7 +29,7 @@ Agent 不是账户 API，也不是 HBBS 数据面的必需组件。停止 Agent 
 ## Linux 安装
 
 Linux archive/container 和 `rustdesk-server-starry-control-agent` DEB 包含 Agent。DEB 安装
-后不会自动 enable systemd service。v1.3.1 不发布 Windows Agent，因为原子配置事务只在
+后不会自动 enable systemd service。v1.3.2 不发布 Windows Agent，因为原子配置事务只在
 Unix filesystem 上属于发布支持范围。
 
 从 [`config/control-agent.example.yaml`](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/config/control-agent.example.yaml)开始：
@@ -135,12 +135,13 @@ telemetry、capacity/draining 与 FastMedia UDP。
    production counter；
 6. 公网无法访问 listener，HBBS `21115` 继续只在 loopback。
 
-patch-v1.3.1 的 schema 支持只有一个规范机器表达：`capabilities.config_schema: 5`。
+patch-v1.3.2 的 schema 支持只有一个规范机器表达：`capabilities.config_schema: 5`。
 `config` 对象另外返回 `supported_schema_versions: [1,2,3,4,5]`、当前 active version 和
 精确 schema digest；Kessoku 不得从 Starry 版本字符串推断 schema。其他能力包含
 `relay_quality: 1`、`relay_active_probe: 1`、
 `relay_probe_protocol: 1`、`relay_load_protocol: 1`、`fast_relay_authorization: 1`、
-`fast_media_relay_udp: 1`、`relay_telemetry_schema: 2`、
+`fast_media_relay_udp: 1`、`fast_media_relay_renewal: 1`、
+`relay_telemetry_schema: 3`、
 `starry_pairing: 1`、`relay_enrollment: 1`、`config_downgrade_preview: 1`、
 `profile_activation_lease: 1` 与 `peer_registry: 2`。只有 Agent write-enabled 且具有
 Relay CA 时才公布 enrollment write capability 与
@@ -153,8 +154,12 @@ Relay CA 时才公布 enrollment write capability 与
 绝不暴露客户端完整 IP、allocation/session UUID、stage token、nonce 或原始报告。极速 Relay 计数用于
 区分签发、完全重试复用、送达和 fail-closed 原因，绝不包含
 令牌、会话 UUID 或签名授权。Kessoku 以授权 capability 控制 FastCompat，并分别以
-schema v5、telemetry schema 2、typed Relay capability 和新鲜 UDP 健康控制 FastMedia，
-随后使用与其他配置相同的 validate/plan/apply/audit 事务。
+schema v5、typed Relay capability 和新鲜 UDP 健康控制 FastMedia。bootstrap 可使用
+telemetry schema 2；续期还要求新鲜认证 schema 3 与
+`fast_media_relay_renewal: 1`，随后使用与其他配置相同的 validate/plan/apply/audit
+事务。`process_instance_id` 只在 Starry 内用于识别 HBBR 重启；Kessoku 必须在入口
+丢弃，不得透传、持久化、索引、记录日志或显示。续期字段只有有界聚合，grant 与单会话
+对象不得进入该 API。
 
 Agent 可无副作用预览/导出 v1.3.0 可读的 schema v4：
 

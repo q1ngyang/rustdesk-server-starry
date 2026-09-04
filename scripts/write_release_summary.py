@@ -190,6 +190,9 @@ def build_summary(
                 "3.0.9" if patch_release >= (1, 3, 2) else None
             ),
             "media_or_signing_path": False,
+            "process_instance_id_policy": (
+                "discard_at_ingress_never_forward_persist_index_log_or_display"
+            ),
         },
     }
 

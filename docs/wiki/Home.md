@@ -35,7 +35,8 @@ these layers separate so that deployment and diagnosis stay evidence-based.
 - WSS-to-WSS and WSS-to-native sessions through the bundled HBBR.
 - Opt-in Akari candidate probing and dual-end RTT/jitter/loss/load scoring while official clients keep one legacy Relay.
 - Default-off signed FastCompat/FastMedia authorization for the exact Relay
-  selected by HBBS; FastMedia uses role grants and keeps the reliable path.
+  selected by HBBS; FastMedia uses role grants, bounded active-session
+  renewal, and keeps the reliable path.
 - Generation-safe Akari Profile activation with a matching Ready ACK, an opaque
   route lease, explicit current-route deactivation, and bounded verified rapid
   re-registration; official clients retain their existing registration path.

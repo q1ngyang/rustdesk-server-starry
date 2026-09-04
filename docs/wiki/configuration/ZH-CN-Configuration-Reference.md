@@ -34,7 +34,7 @@ Starry 从 HBBS 数据目录下的 `starry/config.yaml` 读取配置。容器中
 
 | 字段 | 必填 | 可用值 | 含义 |
 | --- | --- | --- | --- |
-| `version` | 是 | `1`、`2`、`3`、`4`、`5` | 配置结构版本。只有 patch-v1.3.1 FastMedia 策略使用 `5`。 |
+| `version` | 是 | `1`、`2`、`3`、`4`、`5` | 配置结构版本。v1.3.2 保持 patch-v1.3.1 schema `5` 字节不变。 |
 
 结构版本 `1` 支持 Relay、Secure TCP、MMDB 和 Geo，并拒绝 `websocket_signal` 与
 `connection_auth`；版本 `2` 增加可选 WebSocket Signal，但仍拒绝 `connection_auth`；
@@ -386,7 +386,7 @@ fast_mode:
 | 字段 | 默认值 | 有效范围或规则 |
 | --- | ---: | --- |
 | `fast_compat_enabled` | `false` | 要求连接鉴权为 `audit` 或 `enforce`，并启用 `secure_tcp.mode: auto` 或 WebSocket 信令。Relay Quality 有 decision 时保持权威，否则 HBBS 只签普通 GEO/failover 最终选择。 |
-| `fast_media_v1_enabled` | `false` | 仅 schema v5。除 FastCompat 安全门禁外，还要求至少一个可选 Relay 具有新鲜认证 telemetry schema 2、明确 `fast_media_relay_udp = 1`、声明 UDP port 且 listener 健康。 |
+| `fast_media_v1_enabled` | `false` | 仅 schema v5。bootstrap 要求新鲜认证 telemetry schema 2 与 `fast_media_relay_udp = 1`；活动续期还要求 schema 3 与 `fast_media_relay_renewal = 1`。声明 UDP port 必须匹配健康 listener。 |
 | `authorization_ttl_seconds` | `90` | `30..300`；功能关闭时也会校验，重试不延长有效期。 |
 | `max_bitrate_kbps` | `50000` | `1000..200000`；签名编码源上限，HBBR wire allowance 不超过 `ceil(source × 1.45)`。 |
 | `relay_max_datagram` | `1200` | 仅 schema v5，`608..1400`；含 32 字节 AKR1 header 的完整 UDP payload。 |
@@ -396,6 +396,22 @@ decision 时，两者必须完全一致，否则使用服务端普通 GEO/failov
 签发角色 1 controller 与角色 2 target，双端在 HBBR 绑定后才开始；旧六字段
 FastCompat 继续兼容。任一门禁缺失都不签 FastMedia，普通 Relay 继续。官方客户端忽略
 tag 64。
+
+patch-v1.3.2 不增加 YAML 字段；以下 HBBR 环境限制控制可续期 allocation，并出现在
+认证 telemetry v3 中：
+
+| 环境变量 | 默认值 | 有效范围 | 含义 |
+| --- | ---: | ---: | --- |
+| `STARRY_RELAY_FAST_MEDIA_MAX_SESSION_TTL_SECONDS` | `43200` | `600..86400` | 从创建起计算的绝对寿命；续期不能制造永久会话。 |
+| `STARRY_RELAY_FAST_MEDIA_RENEWAL_TRANSITION_SECONDS` | `15` | `5..60` | 双角色授权 sequence 相差 1 的最长有界过渡期。 |
+| `STARRY_RELAY_FAST_MEDIA_POST_EXPIRY_RECOVERY_SECONDS` | `30` | `10..120` | 角色授权到期后为有效续期 rebind 保留的恢复期；过期 grant 永远不能授权媒体。 |
+| `STARRY_RELAY_FAST_MEDIA_PER_IP_BYTES_PER_SECOND` | `33554432` | `65536..1073741824` | 规范化源 IP 聚合 wire-rate 准入预算；同 NAT 角色累加。 |
+| `STARRY_RELAY_FAST_MEDIA_GLOBAL_BYTES_PER_SECOND` | `536870912` | `1048576..8589934592` | 全局预留 wire-rate 准入预算。 |
+
+只有 HBBS 认证并验证过的新鲜 telemetry v3 才能打开 typed 续期能力；公开 probe、版本
+字符串和 Control API 输入都不能。详见
+[FastMedia 活动会话续期 v1](../../reference/FAST-MEDIA-RENEWAL-v1.zh-CN.md)和
+[Relay telemetry v3](../../reference/RELAY-TELEMETRY-v3.zh-CN.md)。
 
 若 WSS 在反向代理终止 TLS，必须禁止公网直接访问 HBBS 明文 WebSocket 监听端口。线协议、
 重放、资源和隐私要求见

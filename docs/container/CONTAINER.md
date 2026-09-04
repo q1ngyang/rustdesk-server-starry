@@ -16,9 +16,9 @@ Deployment links:
 
 ## What the image contains
 
-The patch-v1.3.1 development image is built and runtime-tested for `linux/amd64`
+The patch-v1.3.2 preview image is built and runtime-tested for `linux/amd64`
 from one pinned official RustDesk Server revision plus the Starry HBBS overlay.
-ARM remains best-effort source compatibility and is not a promised v1.3.1
+ARM remains best-effort source compatibility and is not a promised v1.3.2
 image platform.
 
 | Command | Origin | Intended use |
@@ -46,7 +46,7 @@ Available release tags use this form:
 For example:
 
 ```text
-1.1.16-patch-v1.3.1
+1.1.16-patch-v1.3.2
 ```
 
 - Use an immutable release tag for normal production deployments.
@@ -58,7 +58,7 @@ For example:
 Pull the current documented release:
 
 ```sh
-docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1
+docker pull ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.2
 ```
 
 Public GHCR images can be pulled anonymously. Inspect the resolved digest and
@@ -66,11 +66,11 @@ platforms before rollout:
 
 ```sh
 docker image inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.2 \
   --format '{{json .RepoDigests}}'
 
 docker buildx imagetools inspect \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.2
 ```
 
 ## Recommended quick start
@@ -213,7 +213,7 @@ testing:
 
 ```sh
 docker run --rm \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.2 \
   hbbs --help
 ```
 
@@ -227,7 +227,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v /opt/rustdesk-server-starry/data:/root \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.2 \
   hbbs --starry-config=/root/starry/config.yaml
 ```
 
@@ -243,7 +243,7 @@ docker run -d \
   -e STARRY_REQUIRE_PERSISTENT_STATE=1 \
   -v /opt/rustdesk-server-starry/relay:/var/lib/rustdesk-server-starry/relay \
   -v /etc/machine-id:/etc/machine-id:ro \
-  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.1 \
+  ghcr.io/q1ngyang/rustdesk-server-starry:1.1.16-patch-v1.3.2 \
   starry-relay-entrypoint -k _
 ```
 
@@ -284,6 +284,12 @@ WSS-to-WSS, and both mixed WSS/native directions as applicable. See
 5. Recreate the services, inspect logs, run management checks, and complete a
    real client session.
 6. Keep the previous images and backup until acceptance is complete.
+
+For patch-v1.3.2 to patch-v1.3.1, stop renewal issuance, let clients return to
+the reliable stream, disable FastMedia with a matching apply ACK, and drain
+grants/allocations. Roll HBBS back before HBBR. Schema v5 and persisted
+identity are unchanged; v1.3.1 ignores renewal fields and telemetry-v3
+additions. Preserve all pairing/enrollment files.
 
 For patch-v1.3.1 to patch-v1.3.0, disable FastMedia, obtain the matching apply
 ACK, wait for grants/allocations/streams to drain, ensure every paired

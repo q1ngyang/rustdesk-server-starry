@@ -1013,7 +1013,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-only
-            org.opencontainers.image.description=patch-v1.3.1 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, SP1 pairing, and an optional mTLS Control Agent; the same image bundles HBBR with compatible reliable Relay plus opt-in FastMedia UDP, active probes, and load telemetry, while account/API services and MMDB data are not included
+            org.opencontainers.image.description=patch-v1.3.2 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, SP1 pairing, and an optional mTLS Control Agent; the same image bundles HBBR with compatible reliable Relay plus opt-in FastMedia UDP, bounded active-session renewal, active probes, and authenticated load telemetry, while account/API services and MMDB data are not included
           annotations: |
             index:org.opencontainers.image.title=rustdesk-server-starry
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -1022,7 +1022,7 @@ jobs:
             index:org.opencontainers.image.version=${{ needs.resolve.outputs.release_tag }}
             index:org.opencontainers.image.revision=${{ github.sha }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-            index:org.opencontainers.image.description=patch-v1.3.1 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, SP1 pairing, and an optional mTLS Control Agent; the same image bundles HBBR with compatible reliable Relay plus opt-in FastMedia UDP, active probes, and load telemetry, while account/API services and MMDB data are not included
+            index:org.opencontainers.image.description=patch-v1.3.2 Starry HBBS with connection authentication, GEO Relay quality scoring, safe configuration activation, WebSocket signalling, SP1 pairing, and an optional mTLS Control Agent; the same image bundles HBBR with compatible reliable Relay plus opt-in FastMedia UDP, bounded active-session renewal, active probes, and authenticated load telemetry, while account/API services and MMDB data are not included
 
       - name: Record image and OpenAPI/schema publication summary
         env:

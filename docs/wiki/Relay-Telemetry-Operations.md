@@ -16,6 +16,11 @@ STARRY_RELAY_PROBE_GLOBAL_PER_MINUTE=10000
 STARRY_RELAY_DRAINING_FILE=/run/starry/hbbr.draining
 STARRY_RELAY_PUBLIC_ENDPOINT=relay.example.com:21117
 STARRY_RELAY_FAST_MEDIA_UDP_PORT=21119
+STARRY_RELAY_FAST_MEDIA_MAX_SESSION_TTL_SECONDS=43200
+STARRY_RELAY_FAST_MEDIA_RENEWAL_TRANSITION_SECONDS=15
+STARRY_RELAY_FAST_MEDIA_POST_EXPIRY_RECOVERY_SECONDS=30
+STARRY_RELAY_FAST_MEDIA_PER_IP_BYTES_PER_SECOND=33554432
+STARRY_RELAY_FAST_MEDIA_GLOBAL_BYTES_PER_SECOND=536870912
 ```
 
 Rotate a secret by temporarily accepting the old trust domain as legacy fallback, rolling HBBR with the new mounted file, then rolling/reloading HBBS endpoints. Because v1 has one active HMAC key, an in-place file replacement without coordinated process reload can cause a short fail-closed telemetry gap.
@@ -42,20 +47,47 @@ to override the primary, and `estimated_probe_attempts_saved` measures the
 work avoided by staging. `p2p_cancellations` is normally healthy and must not
 be alerted on by itself.
 
-For telemetry schema 2, alert when an enabled FastMedia listener stays
+For telemetry schema 3, alert when an enabled FastMedia listener stays
 unhealthy for more than two intervals, `listener_failures` continues rising,
-or a material active workload has sustained `rate_limited`, `replay_rejected`,
-or `grant_rejected` growth. Alert when HBBS configuration advertises a UDP port
-but fresh telemetry reports another port. Treat `hello_accepted`, individual
-cookie/bind failures, rebinds, forwarded packet/byte totals, active
-allocations/streams, and occasional drops as diagnostic or capacity-planning
-signals unless correlated with fallback or user-visible failure. A rebind rise
-during an AP migration test is expected; a listener restart is not proof that
-the reliable HBBR session failed.
+or a material workload has sustained renewal-expired, admission, rate, replay,
+or grant-rejection growth. Low `minimum_remaining_ttl_seconds`, a rising
+approaching-expiry count, and per-IP/global reservations near their configured
+limits are also alert candidates. Alert when HBBS advertises a UDP port but
+fresh telemetry reports another port. Schema 2 remains valid for
+bootstrap-only FastMedia but never proves renewal capability.
+
+Treat accepted/idempotent renewals, individual cookie/bind failures, rebinds,
+role transitions, replay rejection classes, forwarded packet/byte totals,
+active allocations/streams, and occasional drops as diagnostic or
+capacity-planning signals unless correlated with reliable fallback or a
+user-visible failure. A rebind rise during AP migration is expected; a
+listener restart is not proof that the reliable HBBR session failed.
 
 All Control dimensions are bounded. Offer/fallback reasons are fixed fields, and per-Relay selections contain at most 256 configured Relay keys plus an overflow counter. The API never returns client IPs, session/allocation identifiers, nonces, or raw reports.
 
 ## Rolling upgrade and rollback
+
+patch-v1.3.2 active-session renewal uses this order:
+
+1. Keep both Fast switches disabled and roll HBBR first. Verify ordinary
+   Native/WS/WSS forwarding, authenticated telemetry schema 3, renewal
+   protocol 1, matching UDP endpoint, monotonic sequence, and bounded budgets.
+2. Roll HBBS, then Control Agent. Verify typed capability
+   `fast_media_relay_renewal = 1`, fresh Relay inventory, fixed aggregate
+   dimensions, and no secret/session/address fields. Starry may use
+   `process_instance_id` for restart detection; Kessoku must discard it at
+   ingestion and never forward, persist, index, log, or display it.
+3. Roll renewal-capable Akari last. Canary a bounded pair and require the
+   reliable desktop stream to survive renewal loss, UDP block, listener
+   restart, admission failure, and fallback/re-entry.
+
+For v1.3.2→v1.3.1, stop issuing renewals, let clients fall back, disable
+FastMedia with an activation ACK, and drain allocations/grants. Roll HBBS
+back, then HBBR. Schema v5 and persistent identity remain compatible; old
+binaries ignore fields 13–16 and telemetry-v3 additions. Do not delete pairing
+or enrollment state.
+
+The following v1.3.1 sequence remains the historical v1.3.0 migration path.
 
 patch-v1.3.1 upgrade order:
 

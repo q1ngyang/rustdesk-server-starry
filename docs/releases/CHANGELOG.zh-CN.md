@@ -3,7 +3,29 @@
 [English](CHANGELOG.md) | **简体中文**
 
 本文记录 Starry overlay 的变化。完整产物版本由官方 RustDesk Server 版本与 Starry
-patch 版本组合，例如 `1.1.16-patch-v1.3.1`。
+patch 版本组合，例如 `1.1.16-patch-v1.3.2`。
+
+## patch-v1.3.2 — preview
+
+完整说明：[`RELEASE-NOTES-patch-v1.3.2.zh-CN.md`](RELEASE-NOTES-patch-v1.3.2.zh-CN.md)
+
+### 新增
+
+- 冻结 FastMedia 活动会话续期 v1：HBBS 签名 controller/target 授权链、认证
+  Secure TCP/WSS 交换、精确幂等 replay、单调 expiry/cap 及可靠回退。
+- 认证 Relay telemetry v3 与 Control API 1.1 有界聚合，覆盖 renewal、replay、
+  admission reservation、剩余 TTL 与 typed capability
+  `fast_media_relay_renewal = 1`。
+- HBBR 可续期 allocation 生命周期默认 12 小时、最大 24 小时，并增加有界到期恢复、
+  角色过渡、2048 包 AKF1 replay window 及 per-role/per-IP/global wire-rate 准入。
+
+### 兼容与状态
+
+- 精确基于已发布 `1.1.16-patch-v1.3.1` tag；Relay Quality v1、schema v5、授权
+  字段 1–12、AKR1 kind 1–5、官方客户端、旧 Akari 和普通 Native/WS/WSS Relay 不变。
+- 源码、可控时钟、contract、overlay、lint、test、build 闸门只批准 opt-in preview；
+  immutable 真实 Akari 长会话、跨网 NAT/UDP 故障 soak 与托管产物 provenance 通过前，
+  stable/latest 保持阻塞。
 
 ## patch-v1.3.1 — 预览版
 

@@ -19,7 +19,7 @@ ignore logs or activation acknowledgements.
 
 | Field | Required | Accepted values | Meaning |
 | --- | --- | --- | --- |
-| `version` | Yes | `1`, `2`, `3`, `4`, `5` | Configuration schema. Use `5` only for patch-v1.3.1 FastMedia policy. |
+| `version` | Yes | `1`, `2`, `3`, `4`, `5` | Configuration schema. v1.3.2 keeps patch-v1.3.1 schema `5` byte-identical. |
 
 Schema `1` supports Relay, Secure TCP, MMDB, and Geo settings and rejects
 `websocket_signal` and `connection_auth`. Schema `2` adds optional WebSocket
@@ -392,7 +392,7 @@ fast_mode:
 | Field | Default | Valid range or rule |
 | --- | ---: | --- |
 | `fast_compat_enabled` | `false` | Requires connection authentication in `audit` or `enforce` and either `secure_tcp.mode: auto` or enabled WebSocket signalling. Relay Quality is authoritative when it decides; otherwise HBBS signs only its ordinary GEO/failover selection. |
-| `fast_media_v1_enabled` | `false` | Schema v5 only. Requires the FastCompat security gates plus at least one selectable Relay with authenticated fresh telemetry schema 2, explicit capability `fast_media_relay_udp = 1`, declared UDP port, and healthy listener. |
+| `fast_media_v1_enabled` | `false` | Schema v5 only. Bootstrap requires authenticated fresh telemetry schema 2 and `fast_media_relay_udp = 1`; active renewal additionally requires schema 3 and `fast_media_relay_renewal = 1`. The declared UDP port must match a healthy listener. |
 | `authorization_ttl_seconds` | `90` | `30..300`; checked even while the feature is disabled. Retries do not extend expiry. |
 | `max_bitrate_kbps` | `50000` | `1000..200000`; signed encoded-source ceiling. HBBR wire allowance is at most `ceil(source × 1.45)`. |
 | `relay_max_datagram` | `1200` | Schema v5 only, `608..1400`; complete UDP payload including the 32-byte AKR1 header. |
@@ -404,6 +404,22 @@ FastMedia produces role 1 controller and role 2 target grants and begins only
 after both bind at HBBR. FastCompat-only six-field grants remain compatible.
 Any missing prerequisite produces no FastMedia grant and preserves the
 ordinary Relay flow. Official clients ignore tag 64.
+
+patch-v1.3.2 adds no YAML key. These HBBR environment limits govern renewable
+allocations and are included in authenticated telemetry v3:
+
+| Environment variable | Default | Accepted range | Meaning |
+| --- | ---: | ---: | --- |
+| `STARRY_RELAY_FAST_MEDIA_MAX_SESSION_TTL_SECONDS` | `43200` | `600..86400` | Absolute lifetime from allocation creation; renewal cannot make a session immortal. |
+| `STARRY_RELAY_FAST_MEDIA_RENEWAL_TRANSITION_SECONDS` | `15` | `5..60` | Maximum bounded period while role grant sequences differ by one. |
+| `STARRY_RELAY_FAST_MEDIA_POST_EXPIRY_RECOVERY_SECONDS` | `30` | `10..120` | Retention after role-grant expiry for a valid renewed rebind; expired grants never authorize media. |
+| `STARRY_RELAY_FAST_MEDIA_PER_IP_BYTES_PER_SECOND` | `33554432` | `65536..1073741824` | Aggregate normalized-source-IP wire-rate admission budget. Same-NAT roles add together. |
+| `STARRY_RELAY_FAST_MEDIA_GLOBAL_BYTES_PER_SECOND` | `536870912` | `1048576..8589934592` | Global reserved wire-rate admission budget. |
+
+Only HBBS-authenticated telemetry v3 can turn on the typed renewal capability.
+The public probe, a version string, and Control API input cannot do so. See
+[FastMedia active-session renewal v1](../../reference/FAST-MEDIA-RENEWAL-v1.md)
+and [Relay telemetry v3](../../reference/RELAY-TELEMETRY-v3.md).
 
 If WSS terminates at a reverse proxy, deny direct public access to HBBS's
 plaintext WebSocket listener. See the

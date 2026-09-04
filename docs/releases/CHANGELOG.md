@@ -4,7 +4,33 @@
 
 This file records Starry overlay changes. The full artifact version combines
 the official RustDesk Server version with the Starry patch version, for example
-`1.1.16-patch-v1.3.1`.
+`1.1.16-patch-v1.3.2`.
+
+## patch-v1.3.2 — preview
+
+Release notes: [`RELEASE-NOTES-patch-v1.3.2.md`](RELEASE-NOTES-patch-v1.3.2.md)
+
+### Added
+
+- Frozen FastMedia active-session renewal v1: HBBS-signed controller/target
+  grant chains, authenticated Secure TCP/WSS exchange, exact idempotent replay,
+  monotonic expiry/cap semantics, and reliable fallback.
+- Authenticated Relay telemetry v3 and Control API 1.1 bounded aggregates for
+  renewal, replay, admission reservations, remaining TTL, and typed capability
+  `fast_media_relay_renewal = 1`.
+- Bounded 12-hour-default/24-hour-maximum renewable HBBR allocation lifecycle,
+  post-expiry recovery, role transition, 2,048-packet AKF1 replay window, and
+  per-role/per-IP/global wire-rate admission.
+
+### Compatibility and status
+
+- Built from the published `1.1.16-patch-v1.3.1` tag. Relay Quality v1,
+  schema v5, authorization fields 1–12, AKR1 kinds 1–5, official clients, old
+  Akari, and ordinary Native/WS/WSS Relay behavior are unchanged.
+- Source, controlled-clock, contract, overlay, lint, test, and build gates
+  approve only an opt-in preview. Stable/latest remain blocked on immutable
+  real-Akari long-session, cross-network NAT/UDP fault-soak, and hosted
+  artifact-provenance evidence.
 
 ## patch-v1.3.1 — preview
 

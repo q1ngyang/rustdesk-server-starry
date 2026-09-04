@@ -3,8 +3,8 @@
 **English** | [简体中文](https://github.com/q1ngyang/rustdesk-server-starry/wiki/ZH-CN-Upgrade-and-Rollback)
 
 An upgrade changes two versions: the official RustDesk Server base and the
-Starry patch. A tag such as `1.1.16-patch-v1.3.1` means official server
-`1.1.16` plus Starry patch `1.3.1`. Pin that complete tag, and record the image
+Starry patch. A tag such as `1.1.16-patch-v1.3.2` means official server
+`1.1.16` plus Starry patch `1.3.2`. Pin that complete tag, and record the image
 digest used in production.
 
 ## Upgrade rules
@@ -21,16 +21,40 @@ digest used in production.
 
 ## Read the current patch notes
 
+- [patch-v1.3.2 preview notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.2.md)
 - [patch-v1.3.1 release-candidate notes](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.1.md)
 - [Changelog](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.md)
 
-Patch v1.3.1 adds role-authorized FastMedia Relay UDP, telemetry schema 2,
-schema v5, and SP1 pairing on top of the frozen v1.3.0 candidate Relay probes,
+Patch v1.3.2 adds HBBS-signed active-session renewal and telemetry schema 3
+without changing schema v5. It is based exactly on the published v1.3.1 tag,
+which adds role-authorized FastMedia Relay UDP, telemetry schema 2, schema v5,
+and SP1 pairing on top of the frozen v1.3.0 candidate Relay probes,
 two-endpoint RTT/jitter/loss scoring, trusted HBBR load telemetry, and signed FastCompat authorization for
 compatible Akari/Kessoku deployments. Official clients and schema v1-v4 keep
 their prior registration and reliable Relay flow. FastMedia and pairing are
 independent and default-off; this candidate remains blocked until the real
 fallback/re-entry release gate passes.
+
+## patch-v1.3.2 upgrade and rollback
+
+There is no YAML migration: config schema v5 is byte-identical. Roll HBBR
+first with FastMedia disabled; require authenticated fresh telemetry schema 3,
+renewal protocol 1, a matching healthy UDP endpoint, and ordinary Native/WSS/
+mixed Relay tests. Roll HBBS second, then Control Agent, and renewal-capable
+Akari last. Only then canary FastMedia for a bounded client/Relay cohort. A
+version string is never a capability signal.
+
+For rollback, stop renewal issuance and let Akari move media to the reliable
+stream before the grant safety deadline. Disable FastMedia and require the
+activation ACK; drain grants/allocations, then roll HBBS back to
+`1.1.16-patch-v1.3.1` followed by HBBR. Preserve all Agent/Relay identities,
+YAML/PEM/JWKS, enrollment state, and ordinary Relay configuration. v1.3.1
+ignores authorization fields 13–16 and telemetry-v3 additions. Re-upgrade
+HBBR then HBBS and require fresh telemetry v3 before reenabling renewal.
+
+The v1.3.2 preview does not authorize stable/latest. Those channels require
+immutable real-Akari controller/target long-session evidence, cross-network
+NAT/UDP migration and fault soak, and hosted tag/image provenance.
 
 ## patch-v1.3.1 upgrade and downgrade
 

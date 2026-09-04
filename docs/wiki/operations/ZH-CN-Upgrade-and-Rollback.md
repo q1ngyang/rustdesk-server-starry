@@ -3,7 +3,7 @@
 [English](https://github.com/q1ngyang/rustdesk-server-starry/wiki/Upgrade-and-Rollback) | **简体中文**
 
 升级同时涉及两个版本：官方 RustDesk Server 基线和 Starry patch。例如
-`1.1.16-patch-v1.3.1` 表示官方服务端 `1.1.16` 加 Starry patch `1.3.1`。生产环境
+`1.1.16-patch-v1.3.2` 表示官方服务端 `1.1.16` 加 Starry patch `1.3.2`。生产环境
 应锁定完整标签，并记录实际镜像摘要。
 
 ## 升级原则
@@ -18,14 +18,33 @@
 
 ## 当前 patch 说明
 
+- [patch-v1.3.2 preview 说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.2.zh-CN.md)
 - [patch-v1.3.1 发布候选说明](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/RELEASE-NOTES-patch-v1.3.1.zh-CN.md)
 - [中文更新日志](https://github.com/q1ngyang/rustdesk-server-starry/blob/main/docs/releases/CHANGELOG.zh-CN.md)
 
-patch v1.3.1 在冻结 v1.3.0 的候选 Relay 探测、双端 RTT/jitter/loss 评分、可信 HBBR
+patch v1.3.2 在 schema v5 不变的前提下增加 HBBS 签名活动会话续期和 telemetry
+schema 3，并精确基于已发布 v1.3.1 tag。v1.3.1 在冻结 v1.3.0 的候选 Relay 探测、
+双端 RTT/jitter/loss 评分、可信 HBBR
 负载遥测、签名 FastCompat 授权和匹配 ACK Profile Activation Lease 之上，增加角色授权
 FastMedia Relay UDP、telemetry schema 2、schema v5 和 SP1 pairing。
 官方客户端与 schema v1-v4 保持原注册和可靠 Relay；FastMedia/pairing 独立且默认关闭。
 真实回退/重入门禁通过前候选继续 BLOCKED。
+
+## patch-v1.3.2 升级与回滚
+
+无需迁移 YAML：config schema v5 字节不变。FastMedia 保持关闭，先滚动 HBBR；要求
+新鲜认证 telemetry schema 3、renewal protocol 1、匹配且健康的 UDP endpoint，并通过
+普通 Native/WSS/mixed Relay。再滚动 HBBS、Control Agent，最后滚动支持续期的 Akari；
+之后才对有界 Relay/客户端组 canary。不得把版本字符串当 capability。
+
+回滚时先停止签发续期，让 Akari 在安全期限前把媒体切到可靠流；关闭 FastMedia 并取得
+activation ACK，等待 grant/allocation drain。先把 HBBS 回滚到
+`1.1.16-patch-v1.3.1`，再回滚 HBBR。保留所有 Agent/Relay identity、YAML/PEM/JWKS、
+enrollment 状态和普通 Relay 配置。v1.3.1 会忽略授权字段 13–16 与 telemetry-v3 增量。
+再次升级时仍按 HBBR→HBBS，并在恢复续期前要求新鲜 telemetry v3。
+
+v1.3.2 preview 不授权 stable/latest；后者仍需不可变真实 Akari controller/target 长会话、
+跨网 NAT/UDP 迁移与故障 soak，以及托管 tag/image provenance。
 
 ## patch-v1.3.1 升级与降级
 
