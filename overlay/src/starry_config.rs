@@ -12,7 +12,7 @@ use std::{
 pub const DEFAULT_CONFIG_PATH: &str = "starry/config.yaml";
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const MIN_CONFIG_VERSION: u8 = 1;
-pub const CONFIG_VERSION: u8 = 5;
+pub const CONFIG_VERSION: u8 = 6;
 const EXAMPLE_CONFIG: &str = include_str!("starry_config.example.yaml");
 
 static STATE: Lazy<RwLock<ConfigState>> = Lazy::new(|| {
@@ -151,6 +151,7 @@ pub struct StarryConfig {
     pub connection_auth: ConnectionAuthConfig,
     pub relay_quality: RelayQualityConfig,
     pub fast_mode: FastModeConfig,
+    pub relay_reallocation: RelayReallocationConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -173,6 +174,8 @@ struct StarryConfigWire {
     relay_quality: Option<RelayQualityConfig>,
     #[serde(default)]
     fast_mode: Option<FastModeConfigWire>,
+    #[serde(default)]
+    relay_reallocation: Option<RelayReallocationConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -306,7 +309,7 @@ impl Default for RelayHealthConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RelayEndpointConfig {
     pub relay: String,
@@ -315,6 +318,74 @@ pub struct RelayEndpointConfig {
     pub telemetry_secret_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast_media_udp_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relay_server_aliases: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub probe_url_aliases: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RelayReallocationPolicyConfig {
+    #[default]
+    Auto,
+    Fixed,
+    ForceAuto,
+    ForceFixed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RelayReallocationConfig {
+    pub enabled: bool,
+    pub policy: RelayReallocationPolicyConfig,
+    pub allowed_initiator_roles: Vec<String>,
+    pub required_scope: String,
+    pub require_peer_confirmation: bool,
+    pub fixed_node_id: String,
+    pub max_candidates: usize,
+    pub probe_timeout_ms: u32,
+    pub prepare_timeout_ms: u32,
+    pub commit_timeout_ms: u32,
+    pub rollback_timeout_ms: u32,
+    pub total_timeout_ms: u32,
+    pub drain_grace_ms: u32,
+    pub cooldown_seconds: u64,
+    pub max_active: usize,
+    pub per_session_per_minute: u32,
+    pub per_ip_per_minute: u32,
+    pub global_per_minute: u32,
+}
+
+impl Default for RelayReallocationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            policy: RelayReallocationPolicyConfig::Auto,
+            allowed_initiator_roles: vec!["controller".to_owned(), "target".to_owned()],
+            required_scope: "starry.relay.reallocate".to_owned(),
+            require_peer_confirmation: true,
+            fixed_node_id: String::new(),
+            max_candidates: 3,
+            probe_timeout_ms: 5_000,
+            prepare_timeout_ms: 8_000,
+            commit_timeout_ms: 10_000,
+            rollback_timeout_ms: 5_000,
+            total_timeout_ms: 30_000,
+            drain_grace_ms: 2_000,
+            cooldown_seconds: 30,
+            max_active: 10_000,
+            per_session_per_minute: 2,
+            per_ip_per_minute: 20,
+            global_per_minute: 1_000,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1108,7 +1179,7 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
             "SCHEMA_UNSUPPORTED",
             "/version",
             format!(
-                "unsupported version {}; expected 1, 2, 3, 4, or {CONFIG_VERSION}",
+                "unsupported version {}; expected 1 through {CONFIG_VERSION}",
                 wire.version
             ),
         ));
@@ -1157,6 +1228,15 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
             .iter()
             .any(|endpoint| endpoint.fast_media_udp_port.is_some())
     });
+    let has_v6_endpoint_fields = wire.websocket_signal.as_ref().is_some_and(|signal| {
+        signal.relay_health.endpoints.iter().any(|endpoint| {
+            endpoint.node_id.is_some()
+                || endpoint.display_name.is_some()
+                || endpoint.region.is_some()
+                || !endpoint.relay_server_aliases.is_empty()
+                || !endpoint.probe_url_aliases.is_empty()
+        })
+    });
     if wire.version < 5
         && (wire
             .fast_mode
@@ -1174,6 +1254,16 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
             ),
         ));
     }
+    if wire.version < 6 && (wire.relay_reallocation.is_some() || has_v6_endpoint_fields) {
+        return Err(Diagnostics::single(
+            "FIELD_REQUIRES_SCHEMA_V6",
+            "/relay_reallocation",
+            format!(
+                "version {} does not allow Relay Reallocation; upgrade the document to version 6",
+                wire.version
+            ),
+        ));
+    }
     let config = StarryConfig {
         version: wire.version,
         relay_servers: wire.relay_servers,
@@ -1184,6 +1274,7 @@ pub fn validate_config(parsed: ParsedConfig) -> Result<ValidatedConfig, Diagnost
         connection_auth: wire.connection_auth.unwrap_or_default(),
         relay_quality: wire.relay_quality.unwrap_or_default(),
         fast_mode: wire.fast_mode.unwrap_or_default().into_config(),
+        relay_reallocation: wire.relay_reallocation.unwrap_or_default(),
     };
     let config = validate(config)
         .map_err(|err| Diagnostics::single("CONFIG_INVALID", diagnostic_pointer(&err), err))?;
@@ -1221,7 +1312,104 @@ fn validate(mut config: StarryConfig) -> Result<StarryConfig, String> {
         &config.websocket_signal.relay_health,
     )?;
     validate_fast_mode(&config)?;
+    validate_relay_reallocation(&mut config)?;
     Ok(config)
+}
+
+fn validate_relay_reallocation(config: &mut StarryConfig) -> Result<(), String> {
+    let reallocation = &config.relay_reallocation;
+    if !reallocation.enabled {
+        return Ok(());
+    }
+    if config.version < 6 {
+        return Err("relay_reallocation.enabled requires schema version 6".to_owned());
+    }
+    if config.connection_auth.mode == ConnectionAuthMode::Off
+        || (config.secure_tcp.mode == SecureTcpMode::Off && !config.websocket_signal.enabled)
+    {
+        return Err(
+            "relay_reallocation requires authenticated Secure TCP or WSS signalling".to_owned(),
+        );
+    }
+    if !(1..=5).contains(&reallocation.max_candidates)
+        || !(100..=5_000).contains(&reallocation.probe_timeout_ms)
+        || !(1_000..=30_000).contains(&reallocation.prepare_timeout_ms)
+        || !(1_000..=30_000).contains(&reallocation.commit_timeout_ms)
+        || !(1_000..=30_000).contains(&reallocation.rollback_timeout_ms)
+        || !(3_000..=60_000).contains(&reallocation.total_timeout_ms)
+        || reallocation.total_timeout_ms
+            < reallocation
+                .probe_timeout_ms
+                .saturating_add(reallocation.prepare_timeout_ms)
+                .saturating_add(reallocation.commit_timeout_ms)
+        || reallocation.drain_grace_ms > 30_000
+        || !(1..=1_000_000).contains(&reallocation.max_active)
+        || !(1..=10).contains(&reallocation.per_session_per_minute)
+        || !(1..=1_000).contains(&reallocation.per_ip_per_minute)
+        || !(1..=100_000).contains(&reallocation.global_per_minute)
+    {
+        return Err(
+            "relay_reallocation contains an invalid or unachievable bounded limit".to_owned(),
+        );
+    }
+    let roles = reallocation
+        .allowed_initiator_roles
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    if roles.is_empty()
+        || roles.len() != reallocation.allowed_initiator_roles.len()
+        || roles
+            .iter()
+            .any(|role| !matches!(*role, "controller" | "target"))
+        || reallocation.required_scope != "starry.relay.reallocate"
+        || !reallocation.require_peer_confirmation
+    {
+        return Err("relay_reallocation requires unique controller/target roles, scope starry.relay.reallocate, and peer confirmation".to_owned());
+    }
+    let mut node_ids = HashSet::new();
+    let mut relay_aliases = HashSet::new();
+    let mut probe_aliases = HashSet::new();
+    for endpoint in &config.websocket_signal.relay_health.endpoints {
+        let Some(node_id) = endpoint.node_id.as_deref() else {
+            return Err("relay_reallocation requires node_id for every health endpoint".to_owned());
+        };
+        if node_id.is_empty() || node_id.len() > 64 || !node_ids.insert(node_id.to_owned()) {
+            return Err(
+                "relay_reallocation node_id values must be unique, non-empty and at most 64 bytes"
+                    .to_owned(),
+            );
+        }
+        if endpoint.display_name.as_deref().is_none_or(str::is_empty)
+            || endpoint.region.as_deref().is_none_or(str::is_empty)
+        {
+            return Err("relay_reallocation requires configured display_name and region; host inference is forbidden".to_owned());
+        }
+        for relay in std::iter::once(&endpoint.relay).chain(endpoint.relay_server_aliases.iter()) {
+            if !relay_aliases.insert(relay.to_ascii_lowercase()) {
+                return Err("relay_reallocation relay_server identities and aliases must be globally unique".to_owned());
+            }
+        }
+        for url in std::iter::once(&endpoint.url).chain(endpoint.probe_url_aliases.iter()) {
+            if !probe_aliases.insert(url.to_ascii_lowercase()) {
+                return Err(
+                    "relay_reallocation probe URL identities and aliases must be globally unique"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    if matches!(
+        reallocation.policy,
+        RelayReallocationPolicyConfig::Fixed | RelayReallocationPolicyConfig::ForceFixed
+    ) && !node_ids.contains(&reallocation.fixed_node_id)
+    {
+        return Err(
+            "relay_reallocation.fixed_node_id must name a configured node for fixed policies"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn validate_fast_mode(config: &StarryConfig) -> Result<(), String> {

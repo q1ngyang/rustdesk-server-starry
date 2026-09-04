@@ -1,0 +1,36 @@
+{
+  "contract_version": 1,
+  "capability_version": 1,
+  "config_schema_version": 6,
+  "enabled": true,
+  "policy": "force-auto",
+  "allowed_initiator_roles": ["controller", "target"],
+  "required_scope": "starry.relay.reallocate",
+  "require_peer_confirmation": true,
+  "active_transactions": 2,
+  "configured_nodes": 2,
+  "relays": [
+    {
+      "node_id": "relay-a",
+      "display_name": "Singapore Relay",
+      "region": "ap-southeast",
+      "metadata_state": "complete",
+      "health": "healthy",
+      "quality": "good",
+      "capabilities": {"relay_probe_protocol": 1, "relay_load_protocol": 1, "fast_media_relay_udp": 1, "fast_media_relay_renewal": 1, "relay_reallocation_eligible": true},
+      "transports": ["native", "wss", "mixed"]
+    },
+    {
+      "node_id": "legacy-fallback",
+      "display_name": null,
+      "region": null,
+      "metadata_state": "missing",
+      "health": "unknown",
+      "quality": "unknown",
+      "capabilities": {"relay_probe_protocol": null, "relay_load_protocol": null, "fast_media_relay_udp": null, "fast_media_relay_renewal": null, "relay_reallocation_eligible": false},
+      "transports": ["native"]
+    }
+  ],
+  "aggregates": {"requested": 10, "accepted": 7, "idempotent": 1, "simultaneous": 1, "conflicts": 1, "rate_limited": 1, "binding_mismatch": 0, "prepared": 6, "ready_accepted": 10, "ready_rejected": 1, "committed": 4, "commit_acked": 3, "rolled_back": 3, "expired": 1, "generation_changed": 1, "peer_timeout": 1, "connect_failed": 1, "fastmedia_fenced": 6},
+  "runtime_release_status": "IMPLEMENTATION_PENDING"
+}

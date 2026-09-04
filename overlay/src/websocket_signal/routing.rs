@@ -271,6 +271,15 @@ pub(crate) async fn try_send(peer_id: &str, bytes: Vec<u8>) -> bool {
     }
 }
 
+pub(crate) async fn try_send_route(route_addr: SocketAddr, bytes: Vec<u8>) -> bool {
+    let writer = CONNECTIONS
+        .read()
+        .await
+        .get(&route_addr)
+        .map(|entry| entry.writer.clone());
+    writer.is_some_and(|writer| writer.send_binary(bytes).is_ok())
+}
+
 pub(crate) async fn remove_if_current(
     peer_id: &str,
     generation: u64,

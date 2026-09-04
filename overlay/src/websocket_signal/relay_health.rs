@@ -1309,6 +1309,7 @@ mod tests {
                 url: "wss://relay-a.example.com/ws/relay".to_owned(),
                 telemetry_secret_file: None,
                 fast_media_udp_port: None,
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -1719,6 +1720,7 @@ mod tests {
                     url: "wss://relay-stale.example.com/ws/relay".to_owned(),
                     telemetry_secret_file: None,
                     fast_media_udp_port: None,
+                    ..Default::default()
                 }],
                 ..Default::default()
             },
@@ -1747,6 +1749,7 @@ mod tests {
                     url: "wss://relay-restart.example.com/ws/telemetry".to_owned(),
                     telemetry_secret_file: Some("/run/secrets/test".to_owned()),
                     fast_media_udp_port: None,
+                    ..Default::default()
                 }],
                 ..Default::default()
             },

@@ -1,0 +1,109 @@
+{
+  "ui:order": [
+    "version",
+    "relay_servers",
+    "secure_tcp",
+    "mmdb",
+    "geo",
+    "websocket_signal",
+    "connection_auth",
+    "relay_quality",
+    "fast_mode",
+    "relay_reallocation"
+  ],
+  "version": {
+    "ui:widget": "select"
+  },
+  "connection_auth": {
+    "mode": {
+      "ui:widget": "radio",
+      "ui:help": "A deployment-level MUST_LOGIN enforce floor cannot be lowered here."
+    },
+    "jwks": {
+      "file": {
+        "ui:widget": "text",
+        "ui:help": "Read-only last-known-good path; key material is never returned."
+      },
+      "ca_file": {
+        "ui:widget": "text",
+        "ui:readonly": true
+      },
+      "cert_file": {
+        "ui:widget": "text",
+        "ui:readonly": true
+      },
+      "key_file": {
+        "ui:widget": "password",
+        "ui:readonly": true
+      },
+      "url": {
+        "ui:placeholder": "https://api.example.com/api/internal/v1/auth/jwks"
+      }
+    },
+    "introspection": {
+      "ca_file": {
+        "ui:widget": "text",
+        "ui:readonly": true
+      },
+      "cert_file": {
+        "ui:widget": "text",
+        "ui:readonly": true
+      },
+      "key_file": {
+        "ui:widget": "password",
+        "ui:readonly": true
+      },
+      "url": {
+        "ui:placeholder": "https://api.example.com/api/internal/v1/auth/introspect"
+      }
+    }
+  },
+  "relay_quality": {
+    "enabled": {
+      "ui:widget": "radio"
+    },
+    "legacy_fallback_relays": {
+      "ui:help": "Explicit Relay servers reserved for ordinary fallback; they never consume quality-candidate slots."
+    },
+    "probe_timeout_ms": {
+      "ui:widget": "updown"
+    },
+    "max_telemetry_age_seconds": {
+      "ui:widget": "updown"
+    },
+    "weights": {
+      "ui:help": "RTT, jitter, loss, and load weights are basis points and must sum to 10000."
+    }
+  },
+  "relay_reallocation": {
+    "enabled": {"ui:widget":"radio"},
+    "policy": {"ui:widget":"select"},
+    "allowed_initiator_roles": {"ui:widget":"checkboxes"},
+    "required_scope": {"ui:readonly":true},
+    "require_peer_confirmation": {"ui:readonly":true},
+    "fixed_node_id": {"ui:help":"Opaque configured node ID; never enter a hostname or URL."},
+    "ui:help": "Manual selector requests one bounded HBBS-coordinated re-evaluation. Candidate names and regions are explicit configuration, and raw telemetry is never exposed."
+  },
+  "fast_mode": {
+    "relay": {
+      "fast_compat_enabled": {
+        "ui:widget": "radio",
+        "ui:help": "Issues a short-lived grant for the server-selected Relay; Relay Quality remains authoritative when it has a final decision."
+      },
+      "authorization_ttl_seconds": {
+        "ui:widget": "updown"
+      },
+      "max_bitrate_kbps": {
+        "ui:widget": "updown"
+      },
+      "fast_media_v1_enabled": {
+        "ui:widget": "radio",
+        "ui:help": "Requires authenticated fresh HBBR telemetry with fast_media_relay_udp=1 and a healthy configured UDP endpoint."
+      },
+      "relay_max_datagram": {
+        "ui:widget": "updown",
+        "ui:help": "Authorized outer AKR1 datagram size, including the 32-byte Relay header (608–1400 bytes)."
+      }
+    }
+  }
+}

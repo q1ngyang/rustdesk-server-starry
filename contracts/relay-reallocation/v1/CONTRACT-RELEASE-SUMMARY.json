@@ -1,0 +1,54 @@
+{
+  "manifest_schema": 1,
+  "id": "relay-reallocation-v1-frozen-contract",
+  "contract_status": "FROZEN",
+  "runtime_release_status": "IMPLEMENTATION_PENDING",
+  "contract_version": 1,
+  "control_api_version": "1.2.0",
+  "control_openapi_contract_version": 2,
+  "config_schema_version": 6,
+  "capability": {"expression": "capabilities.relay_reallocation", "value": 1, "version_string_inference_forbidden": true},
+  "source_binding": {
+    "type": "git_commit_containing_this_summary",
+    "remote": "origin",
+    "branch": "codex/patch-v1.3.2-fastmedia-renewal",
+    "source_parent_commit": "0be8e32568b17f31a79a311a1e774d4ab30a2ee9",
+    "baseline_tag": "1.1.16-patch-v1.3.1",
+    "baseline_commit": "1b8080bf074e3236cf9a3c0dfae2bdf16832249e",
+    "replacement_policy": "immutable; a higher protocol or patch contract version is required"
+  },
+  "summary_hash_semantics": "SHA-256 of RFC8785-style key-sorted compact UTF-8 JSON after replacing summary_sha256 with the empty string",
+  "summary_sha256": "dd429de6869e9744814065eeb14dabd6eb261cb94ec3c3a4a48ebed42e3b0a6d",
+  "canonical_set_sha256": "e3ad4e8c7f247954e91b10ca85f04b051d44d551503274b5f7ba8debe4f83dd2",
+  "inherited_contracts": [
+    {"name": "relay_quality", "version": 1, "sha256": "19380d18aebf91a6856e43009291c79cf002d7c843b9fd7fa92c570916b2734c"},
+    {"name": "fast_relay_authorization", "version": 1, "sha256": "18d44b252bdf698fa96f32703eb44b76499f2b32661daf28695a1318622e7845"},
+    {"name": "fast_media_relay_udp", "version": 1, "sha256": "794e103e8d5367d265dd1c34c57f40c45332583f3c62bf802554e76314bc0902"},
+    {"name": "fast_media_relay_renewal", "version": 1, "sha256": "7cacf95b29492d8387574c5c7ea9d6057e8be7691b473f83f8d6bad4f3376b84"},
+    {"name": "relay_telemetry_schema", "version": 3, "sha256": "b5fed29637aeafa3fd359906e04f1a3a1c6872ee2ca5f560e90a0d9105204d2e"}
+  ],
+  "files": [
+    {"path": "contracts/relay-reallocation/v1/rendezvous-extension.proto", "sha256": "fd375ec1a4201778c2e1b1aa15d5a39f342760342a62ca89b5ae7dc0b924afca"},
+    {"path": "contracts/relay-reallocation/v1/contract.json", "sha256": "27c549028f1ae1031a1e40cc780862291dda5af1403f5c880d819f067d559dd0"},
+    {"path": "contracts/relay-reallocation/v1/FROZEN", "sha256": "e5ffbaafe6fd0787a2de44d0d41bbddbfaf327746a82072bb5effc31ab434214"},
+    {"path": "contracts/config/v6/config.schema.json", "sha256": "0da9f9ec322f9fbb516ec768fa9704281fc2974a2cbe205211e5903e0941301b"},
+    {"path": "contracts/config/v6/config.ui-schema.json", "sha256": "76910495a04cb08c7ecf0efbc49045b298d99967520f70d95793cd98746b3654"},
+    {"path": "contracts/control/v2/openapi.yaml", "sha256": "cda740c53e2ac1e5ca4c9e6b020918f798b814e9ecaf6887608869aa6502fa60"},
+    {"path": "contracts/relay-reallocation/v1/fixtures/capabilities.json", "sha256": "8c5c86bf3c11d8e9251c7bdf070baec4914ba8d0570f72ea8fba28eca130af47"},
+    {"path": "contracts/relay-reallocation/v1/fixtures/capability-missing.json", "sha256": "f4751b14cc7c386e1cf42b038d40d1f626210e0c19fbf62d0f5556d2261331a2"},
+    {"path": "contracts/relay-reallocation/v1/fixtures/capability-unknown-version.json", "sha256": "8320e9becbb8a383803dfea82aee31602fae80caf588c7aa13ef19f084b22a90"},
+    {"path": "contracts/relay-reallocation/v1/fixtures/config-document.json", "sha256": "aa00477f1ae88cb03b4d12bbc35ce0967ba4cf82debe424668e5c6958a4c96e0"},
+    {"path": "contracts/relay-reallocation/v1/fixtures/legacy-control-v1.json", "sha256": "6e41ad3ccb2eedb14c868b263b75ed5e62edb90ab2b21397bbcea106d6d906ba"},
+    {"path": "contracts/relay-reallocation/v1/fixtures/legacy-starry-config-v5.json", "sha256": "f2295c41675864b1d294451d91f5ffa410ac5a2e51ef303697fb3cb6bc30ac2a"},
+    {"path": "contracts/relay-reallocation/v1/fixtures/relays-status.json", "sha256": "0c5a9a6f2f82f342975b3b1fb5a809c32198f07e8edd2c7eff68043620747abd"},
+    {"path": "scripts/check_relay_reallocation_contract.py", "sha256": "7b85fa5fbf0c37292020511d0c3581e834365a6a30c6d599d0236fdd47b07e9d"},
+    {"path": "docs/relay-reallocation-v1.md", "sha256": "295b99c69cd4d1d2156d3e408e7e1a6110efb1601d578dc102a857b29874cd3c"},
+    {"path": "docs/relay-reallocation-v1.zh-CN.md", "sha256": "d365cdb6d3a3a37230ff5a49ca0a0e6d4615a939ad14b6a09e17361d25e34f7d"}
+  ],
+  "gates": {
+    "akari_integration": "BLOCKED",
+    "kessoku_integration": "BLOCKED",
+    "runtime_integration": "BLOCKED",
+    "runtime_publishable": false
+  }
+}

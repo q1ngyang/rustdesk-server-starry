@@ -32,6 +32,7 @@ pub(crate) enum ConnectionAttemptKind {
     PunchHole,
     RequestRelay,
     FastMediaRenewal,
+    RelayReallocation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

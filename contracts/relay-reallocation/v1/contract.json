@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Starry Relay Reallocation v1 canonical semantics",
+  "status": "FROZEN",
+  "contract_version": 1,
+  "control_api": {"version": "1.2.0", "openapi_contract_version": 2},
+  "config_schema_version": 6,
+  "capability": {"name": "relay_reallocation", "version": 1, "missing": "unsupported", "unknown": "fail_closed_keep_current_session"},
+  "rendezvous_oneof_tags": {"request": 108, "probe_offer": 109, "probe_report": 110, "candidate_snapshot": 111, "prepare": 112, "ready": 113, "commit": 114, "commit_ack": 115, "rollback": 116},
+  "capability_bindings": {"RequestRelay.relay_reallocation_protocol": 103, "RelayResponse.relay_reallocation_protocol": 102},
+  "configuration": {
+    "enabled_default": false,
+    "policies": ["auto", "fixed", "force-auto", "force-fixed"],
+    "allowed_initiator_roles_default": ["controller", "target"],
+    "required_scope": "starry.relay.reallocate",
+    "require_peer_confirmation": true,
+    "timeouts_ms": {"probe": [100, 5000, 5000], "prepare": [1000, 30000, 8000], "commit": [1000, 30000, 10000], "rollback": [1000, 30000, 5000], "total": [3000, 60000, 30000]},
+    "cooldown_seconds": [0, 3600, 30],
+    "limits": {"max_candidates": [1, 5, 3], "max_active": [1, 1000000, 10000], "per_session_per_minute": [1, 10, 2], "per_ip_per_minute": [1, 1000, 20], "global_per_minute": [1, 100000, 1000]}
+  },
+  "relay_metadata": {
+    "node_id": "required_unique_when_enabled",
+    "display_name": "required_configured_nonempty_when_enabled; never inferred from host",
+    "region": "required_configured_nonempty_when_enabled; never inferred from host",
+    "missing_semantics": "relay is excluded from reallocation candidates and may remain ordinary fallback",
+    "aliases": "explicit, finite, globally unique, and bound to one node_id"
+  },
+  "candidate_health": {"required": true, "fresh": true, "relay_probe_protocol": 1, "official_hbbr": "ordinary_fallback_only"},
+  "aggregate_dimensions": ["requested", "accepted", "idempotent", "simultaneous", "conflicts", "rate_limited", "binding_mismatch", "prepared", "ready_accepted", "ready_rejected", "committed", "commit_acked", "rolled_back", "expired", "generation_changed", "peer_timeout", "connect_failed", "fastmedia_fenced"],
+  "frozen_dependencies": {"relay_quality": 1, "fast_relay_authorization": 1, "fast_media_relay_udp": 1, "fast_media_relay_renewal": 1, "relay_telemetry_schema": 3},
+  "wire_limits": {"request_id_bytes": 16, "reallocation_id_bytes": 16, "stage_token_bytes": 16, "prepare_token_bytes": 16, "path_binding_sha256_bytes": 32, "max_candidates_hard": 5, "max_reports_per_endpoint": 5},
+  "conflict_order": ["lower_request_deadline_unix_ms", "controller_role", "lexicographically_lower_request_id"],
+  "phases": ["probing", "prepare", "ready_both", "commit", "commit_acked_both", "drain_old"],
+  "rollback": "Until both byte-identical commit payloads are acknowledged, the old reliable session remains authoritative. Reject, timeout, route loss, generation change, binding disagreement or new-path failure rolls both endpoints back or directs both to reconnect.",
+  "fast_path": "Prepare fences the old renewal chain. Commit uses a fresh relay allocation, FastMedia session ID, authorization generation, keys and replay domain. Old grants and late renewal responses cannot install in the new generation.",
+  "privacy_forbidden": ["session_uuid", "request_id", "reallocation_id", "allocation_id", "client_address", "ip", "probe_url", "raw_report", "nonce", "token", "grant", "key", "capacity", "bandwidth"],
+  "transport_identity": "probe_url and relay_server are exact configured values. Aliases are explicit finite config lists bound to one node_id; clients must not derive aliases, follow redirects, resolve arbitrary hosts or accept a report-selected endpoint.",
+  "compatibility": "Missing or unknown capability, legacy/official client, official HBBR, old HBBS, or offline Kessoku leaves the current reliable path unchanged."
+}

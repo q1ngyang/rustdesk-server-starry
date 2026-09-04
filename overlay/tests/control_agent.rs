@@ -333,7 +333,8 @@ fn control_agent_enforces_dual_auth_and_atomic_config_transactions() {
                 Some(REQUEST_ID)
             );
             assert_eq!(capabilities.body["instance"]["id"], instance_id);
-            assert_eq!(capabilities.body["capabilities"]["config_schema"], 5);
+            assert_eq!(capabilities.body["capabilities"]["config_schema"], 6);
+            assert_eq!(capabilities.body["capabilities"]["relay_reallocation"], 1);
             assert_eq!(capabilities.body["capabilities"]["config_transaction"], 1);
             assert_eq!(capabilities.body["capabilities"]["peer_registry"], 2);
             assert_eq!(capabilities.body["capabilities"]["relay_probe_protocol"], 1);

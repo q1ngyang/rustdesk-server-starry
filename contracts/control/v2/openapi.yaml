@@ -1,0 +1,150 @@
+openapi: 3.1.0
+info:
+  title: Starry Control API Relay Reallocation extension
+  version: 1.2.0
+  description: Additive, privacy-safe extension to frozen Starry Control API v1.1.0.
+servers:
+  - url: https://starry-control.example.test/control/v1
+security:
+  - mutualTLS: []
+    serviceJWT: []
+paths:
+  /capabilities:
+    get:
+      operationId: getCapabilitiesV12
+      x-required-scope: starry.control.read
+      responses:
+        "200":
+          description: Typed capability negotiation.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Capabilities"}
+  /relay-reallocation/status:
+    get:
+      operationId: getRelayReallocationStatus
+      x-required-scope: starry.relay.read
+      responses:
+        "200":
+          description: Privacy-safe configured Relay and bounded aggregate state; never per-session data.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RelayReallocationStatus"}
+components:
+  securitySchemes:
+    mutualTLS: {type: mutualTLS}
+    serviceJWT: {type: http, scheme: bearer, bearerFormat: JWT}
+  schemas:
+    Capabilities:
+      type: object
+      additionalProperties: false
+      required: [protocol, capabilities, config]
+      properties:
+        protocol:
+          type: object
+          additionalProperties: false
+          required: [name, version, major]
+          properties:
+            name: {const: starry-control}
+            version: {const: 1.2.0}
+            major: {const: 1}
+        capabilities:
+          type: object
+          additionalProperties: false
+          required: [config_schema, relay_reallocation]
+          properties:
+            config_schema: {type: integer, const: 6}
+            relay_reallocation: {type: integer, const: 1}
+            relay_quality: {type: integer, const: 1}
+            relay_probe_protocol: {type: integer, const: 1}
+            relay_load_protocol: {type: integer, const: 1}
+            relay_telemetry_schema: {type: integer, const: 3}
+            fast_relay_authorization: {type: integer, const: 1}
+            fast_media_relay_udp: {type: integer, const: 1}
+            fast_media_relay_renewal: {type: integer, const: 1}
+        config:
+          type: object
+          additionalProperties: false
+          required: [supported_schema_versions, active_schema_version, schema_digest]
+          properties:
+            supported_schema_versions:
+              type: array
+              minItems: 6
+              maxItems: 6
+              prefixItems: [{const: 1}, {const: 2}, {const: 3}, {const: 4}, {const: 5}, {const: 6}]
+              items: false
+            active_schema_version: {type: integer, enum: [1, 2, 3, 4, 5, 6]}
+            schema_digest: {type: string, pattern: "^[a-f0-9]{64}$"}
+    RelayCapability:
+      type: object
+      additionalProperties: false
+      required: [relay_probe_protocol, relay_load_protocol, fast_media_relay_udp, fast_media_relay_renewal, relay_reallocation_eligible]
+      properties:
+        relay_probe_protocol: {type: [integer, "null"], enum: [1, null]}
+        relay_load_protocol: {type: [integer, "null"], enum: [1, null]}
+        fast_media_relay_udp: {type: [integer, "null"], enum: [1, null]}
+        fast_media_relay_renewal: {type: [integer, "null"], enum: [1, null]}
+        relay_reallocation_eligible: {type: boolean}
+    RelaySummary:
+      type: object
+      additionalProperties: false
+      required: [node_id, display_name, region, metadata_state, health, quality, capabilities, transports]
+      properties:
+        node_id: {type: string, minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"}
+        display_name: {type: [string, "null"], minLength: 1, maxLength: 96}
+        region: {type: [string, "null"], minLength: 1, maxLength: 64}
+        metadata_state: {type: string, enum: [complete, missing]}
+        health: {type: string, enum: [healthy, degraded, stale, unavailable, unknown]}
+        quality: {type: string, enum: [good, fair, poor, unknown]}
+        capabilities: {$ref: "#/components/schemas/RelayCapability"}
+        transports:
+          type: array
+          uniqueItems: true
+          maxItems: 3
+          items: {type: string, enum: [native, wss, mixed]}
+    ReallocationAggregates:
+      type: object
+      additionalProperties: false
+      required: [requested, accepted, idempotent, simultaneous, conflicts, rate_limited, binding_mismatch, prepared, ready_accepted, ready_rejected, committed, commit_acked, rolled_back, expired, generation_changed, peer_timeout, connect_failed, fastmedia_fenced]
+      properties:
+        requested: {$ref: "#/components/schemas/Counter"}
+        accepted: {$ref: "#/components/schemas/Counter"}
+        idempotent: {$ref: "#/components/schemas/Counter"}
+        simultaneous: {$ref: "#/components/schemas/Counter"}
+        conflicts: {$ref: "#/components/schemas/Counter"}
+        rate_limited: {$ref: "#/components/schemas/Counter"}
+        binding_mismatch: {$ref: "#/components/schemas/Counter"}
+        prepared: {$ref: "#/components/schemas/Counter"}
+        ready_accepted: {$ref: "#/components/schemas/Counter"}
+        ready_rejected: {$ref: "#/components/schemas/Counter"}
+        committed: {$ref: "#/components/schemas/Counter"}
+        commit_acked: {$ref: "#/components/schemas/Counter"}
+        rolled_back: {$ref: "#/components/schemas/Counter"}
+        expired: {$ref: "#/components/schemas/Counter"}
+        generation_changed: {$ref: "#/components/schemas/Counter"}
+        peer_timeout: {$ref: "#/components/schemas/Counter"}
+        connect_failed: {$ref: "#/components/schemas/Counter"}
+        fastmedia_fenced: {$ref: "#/components/schemas/Counter"}
+    RelayReallocationStatus:
+      type: object
+      additionalProperties: false
+      required: [contract_version, capability_version, config_schema_version, enabled, policy, allowed_initiator_roles, required_scope, require_peer_confirmation, active_transactions, configured_nodes, relays, aggregates, runtime_release_status]
+      properties:
+        contract_version: {const: 1}
+        capability_version: {const: 1}
+        config_schema_version: {const: 6}
+        enabled: {type: boolean}
+        policy: {type: string, enum: [auto, fixed, force-auto, force-fixed]}
+        allowed_initiator_roles:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items: {type: string, enum: [controller, target]}
+        required_scope: {const: starry.relay.reallocate}
+        require_peer_confirmation: {const: true}
+        active_transactions: {type: integer, minimum: 0, maximum: 1000000}
+        configured_nodes: {type: integer, minimum: 0, maximum: 256}
+        relays: {type: array, maxItems: 256, items: {$ref: "#/components/schemas/RelaySummary"}}
+        aggregates: {$ref: "#/components/schemas/ReallocationAggregates"}
+        runtime_release_status: {const: IMPLEMENTATION_PENDING}
+    Counter: {type: integer, format: int64, minimum: 0}

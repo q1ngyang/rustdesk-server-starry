@@ -1,0 +1,5 @@
+{
+  "version": 5,
+  "relay_servers": ["legacy.example.test:21117"],
+  "expected": {"relay_reallocation_enabled": false, "unknown_fields_required": false, "ordinary_relay_preserved": true}
+}

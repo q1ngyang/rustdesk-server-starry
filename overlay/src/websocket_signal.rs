@@ -292,6 +292,13 @@ pub(crate) async fn send_to_peer(peer_id: &str, message: &RendezvousMessage) -> 
     routing::try_send(peer_id, bytes).await
 }
 
+pub(crate) async fn send_to_route(route_addr: SocketAddr, message: &RendezvousMessage) -> bool {
+    let Ok(bytes) = message.write_to_bytes() else {
+        return false;
+    };
+    routing::try_send_route(route_addr, bytes).await
+}
+
 pub(crate) async fn remove_session(token: &SessionToken, reason: &str) -> bool {
     routing::remove_if_current(
         &token.peer_id,
@@ -454,6 +461,7 @@ mod tests {
             url: "wss://relay.example.test/ws/relay".to_owned(),
             telemetry_secret_file: None,
             fast_media_udp_port: None,
+            ..Default::default()
         });
         assert!(!config.enabled);
         assert!(!prepare(&config, false).unwrap().health_enabled);

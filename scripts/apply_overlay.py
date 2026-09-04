@@ -117,6 +117,7 @@ def copy_overlay(repo_root: Path, upstream: Path) -> None:
         "relay_enrollment.rs",
         "relay_observer.rs",
         "relay_quality.rs",
+        "relay_reallocation.rs",
         "secure_tcp.rs",
         "starry_config.rs",
         "websocket_signal.rs",
@@ -1754,6 +1755,10 @@ pub use dlopen;
         common_root / "protos/rendezvous.proto",
         upstream / "contracts/fast-media-renewal/v1/rendezvous-extension.proto",
     )
+    patch_relay_reallocation_proto(
+        common_root / "protos/rendezvous.proto",
+        upstream / "contracts/relay-reallocation/v1/rendezvous-extension.proto",
+    )
     patch_profile_activation_proto(common_root / "protos/rendezvous.proto")
 
 
@@ -2054,6 +2059,37 @@ def patch_fast_media_renewal_proto(proto: Path, contract: Path) -> None:
     )
 
 
+def patch_relay_reallocation_proto(proto: Path, contract: Path) -> None:
+    contract_text = contract.read_text(encoding="utf-8")
+    enum_marker = "enum RelayReallocationEndpointRole {"
+    bindings_marker = "// RendezvousMessage.oneof Union additions:"
+    if enum_marker not in contract_text or bindings_marker not in contract_text:
+        raise RuntimeError(f"Relay reallocation contract has no canonical definitions: {contract}")
+    content = proto.read_text(encoding="utf-8")
+    if "message RelayReallocationRequest" in content and "  bytes token = 10;" in content:
+        content = content.replace("  bytes token = 10;", "  string token = 10;", 1)
+        proto.write_text(content, encoding="utf-8")
+    if enum_marker not in content:
+        definitions = contract_text[contract_text.index(enum_marker) :]
+        definitions = definitions[: definitions.index(bindings_marker)].rstrip()
+        replace_once(proto, "message RendezvousMessage {\n", definitions + "\n\nmessage RendezvousMessage {\n")
+    add_proto_field(proto, "RequestRelay", "uint32 relay_reallocation_protocol = 103;", 103)
+    add_proto_field(proto, "RelayResponse", "uint32 relay_reallocation_protocol = 102;", 102)
+    arms = (
+        ("RelayReallocationRequest relay_reallocation_request = 108;", 108),
+        ("RelayReallocationProbeOffer relay_reallocation_probe_offer = 109;", 109),
+        ("RelayReallocationProbeReport relay_reallocation_probe_report = 110;", 110),
+        ("RelayReallocationCandidateSnapshot relay_reallocation_candidate_snapshot = 111;", 111),
+        ("RelayReallocationPrepare relay_reallocation_prepare = 112;", 112),
+        ("RelayReallocationReady relay_reallocation_ready = 113;", 113),
+        ("RelayReallocationCommit relay_reallocation_commit = 114;", 114),
+        ("RelayReallocationCommitAck relay_reallocation_commit_ack = 115;", 115),
+        ("RelayReallocationRollback relay_reallocation_rollback = 116;", 116),
+    )
+    for arm, tag in arms:
+        add_proto_oneof_arm(proto, "RendezvousMessage", "union", arm, tag)
+
+
 def patch_modules(upstream: Path) -> None:
     lib = upstream / "src/lib.rs"
     lib_text = lib.read_text(encoding="utf-8")
@@ -2142,6 +2178,13 @@ def patch_modules(upstream: Path) -> None:
             "mod relay_observer;\n",
             "mod relay_observer;\nmod relay_quality;\n",
         )
+    lib_text = lib.read_text(encoding="utf-8")
+    if "mod relay_reallocation;" not in lib_text:
+        replace_once(
+            lib,
+            "mod relay_quality;\n",
+            "mod relay_quality;\nmod relay_reallocation;\n",
+        )
 
     lib_text = lib.read_text(encoding="utf-8")
     if "mod fast_relay;" not in lib_text:
@@ -2191,7 +2234,7 @@ def patch_rendezvous(upstream: Path) -> None:
     rendezvous = upstream / "src/rendezvous_server.rs"
     content = rendezvous.read_text(encoding="utf-8")
     full_starry_import = (
-        "use crate::{allocation_explain, connection_auth, fast_relay, geo_relay, local_control, profile_activation, relay_observer, "
+        "use crate::{allocation_explain, connection_auth, fast_relay, geo_relay, local_control, profile_activation, relay_reallocation, relay_observer, "
         "relay_quality, secure_tcp, starry_config, websocket_signal};"
     )
     if full_starry_import not in content:
@@ -6528,6 +6571,129 @@ def patch_relay_quality_rendezvous(upstream: Path) -> None:
         )
 
 
+def patch_relay_reallocation_rendezvous(upstream: Path) -> None:
+    rendezvous = upstream / "src/rendezvous_server.rs"
+    content = rendezvous.read_text(encoding="utf-8")
+    if "for dispatch in relay_reallocation::expire()" not in content:
+        replace_once(
+            rendezvous,
+            "                    for dispatch in relay_quality::finalize_expired() {\n"
+            "                        self.dispatch_relay_quality(dispatch).await;\n"
+            "                    }\n",
+            "                    for dispatch in relay_quality::finalize_expired() {\n"
+            "                        self.dispatch_relay_quality(dispatch).await;\n"
+            "                    }\n"
+            "                    for dispatch in relay_reallocation::expire() {\n"
+            "                        self.dispatch_relay_reallocation(dispatch).await;\n"
+            "                    }\n",
+        )
+    if "profile_activation, relay_reallocation," not in content:
+        replace_once(rendezvous, "profile_activation, relay_observer,", "profile_activation, relay_reallocation, relay_observer,")
+    content = rendezvous.read_text(encoding="utf-8")
+    if "fn relay_reallocation_message(" not in content:
+        replace_once(
+            rendezvous, "    fn relay_quality_message(\n",
+            "    fn relay_reallocation_message(payload: relay_reallocation::ResultPayload) -> RendezvousMessage {\n"
+            "        let mut message = RendezvousMessage::new();\n"
+            "        match payload {\n"
+            "            relay_reallocation::ResultPayload::Prepare(value) => message.set_relay_reallocation_prepare(value),\n"
+            "            relay_reallocation::ResultPayload::Commit(value) => message.set_relay_reallocation_commit(value),\n"
+            "            relay_reallocation::ResultPayload::Rollback(value) => message.set_relay_reallocation_rollback(value),\n"
+            "        }\n        message\n    }\n\n"
+            "    async fn dispatch_relay_reallocation(&mut self, dispatch: relay_reallocation::Dispatch) {\n"
+            "        if let Some(snapshot) = dispatch.snapshot.clone() {\n"
+            "            let mut snapshot_message = RendezvousMessage::new(); snapshot_message.set_relay_reallocation_candidate_snapshot(snapshot);\n"
+            "            if dispatch.controller_websocket { let _ = websocket_signal::send_to_route(dispatch.controller_route, &snapshot_message).await; } else { allow_err!(self.send_to_tcp_sync(snapshot_message.clone(), dispatch.controller_route).await); }\n"
+            "            if dispatch.target_websocket { let _ = websocket_signal::send_to_route(dispatch.target_route, &snapshot_message).await; } else { self.tx.send(Data::Msg(snapshot_message.into(), dispatch.target_route)).ok(); }\n"
+            "        }\n"
+            "        let message = Self::relay_reallocation_message(dispatch.payload);\n"
+            "        if dispatch.controller_websocket { let _ = websocket_signal::send_to_route(dispatch.controller_route, &message).await; }\n"
+            "        else { allow_err!(self.send_to_tcp_sync(message.clone(), dispatch.controller_route).await); }\n"
+            "        if dispatch.target_websocket { let _ = websocket_signal::send_to_route(dispatch.target_route, &message).await; }\n"
+            "        else { self.tx.send(Data::Msg(message.into(), dispatch.target_route)).ok(); }\n"
+            "    }\n\n    fn relay_quality_message(\n",
+        )
+    content = rendezvous.read_text(encoding="utf-8")
+    if "if let Some(snapshot) = dispatch.snapshot.clone()" not in content:
+        replace_once(
+            rendezvous,
+            "    async fn dispatch_relay_reallocation(&mut self, dispatch: relay_reallocation::Dispatch) {\n"
+            "        let message = Self::relay_reallocation_message(dispatch.payload);\n",
+            "    async fn dispatch_relay_reallocation(&mut self, dispatch: relay_reallocation::Dispatch) {\n"
+            "        if let Some(snapshot) = dispatch.snapshot.clone() {\n"
+            "            let mut snapshot_message = RendezvousMessage::new(); snapshot_message.set_relay_reallocation_candidate_snapshot(snapshot);\n"
+            "            if dispatch.controller_websocket { let _ = websocket_signal::send_to_route(dispatch.controller_route, &snapshot_message).await; } else { allow_err!(self.send_to_tcp_sync(snapshot_message.clone(), dispatch.controller_route).await); }\n"
+            "            if dispatch.target_websocket { let _ = websocket_signal::send_to_route(dispatch.target_route, &snapshot_message).await; } else { self.tx.send(Data::Msg(snapshot_message.into(), dispatch.target_route)).ok(); }\n"
+            "        }\n"
+            "        let message = Self::relay_reallocation_message(dispatch.payload);\n",
+        )
+    content = rendezvous.read_text(encoding="utf-8")
+    anchor = "                    let fast_media_endpoint =\n                        relay_observer::fast_media_endpoint(&rf.relay_server);\n"
+    if "relay_reallocation::register_request(" not in content:
+        replace_once(rendezvous, anchor,
+            "                    if let Some((target_route, target_ip)) = target.as_ref() {\n"
+            "                        relay_reallocation::register_request(&rf.uuid, route_addr, effective_addr.ip(), *target_route, *target_ip, &peer_id, ws, websocket_target, &rf.relay_server, rf.relay_reallocation_protocol);\n"
+            "                    }\n" + anchor)
+    content = rendezvous.read_text(encoding="utf-8")
+    anchor = "                    rr.fast_relay_authorization =\n                        fast_relay::authorization_for_response(\n"
+    if "relay_reallocation::register_response(" not in content:
+        replace_once(rendezvous, anchor,
+            "                    relay_reallocation::register_response(&rr.uuid, route_addr, effective_addr.ip(), rr.relay_reallocation_protocol);\n" + anchor)
+    content = rendezvous.read_text(encoding="utf-8")
+    marker = "                Some(rendezvous_message::Union::FastMediaRenewalRequest(request)) => {\n"
+    if "Union::RelayReallocationRequest(request)" not in content:
+        handler = (
+            "                Some(rendezvous_message::Union::RelayReallocationRequest(request)) => {\n"
+            "                    let decision = connection_auth::authorize_connection_attempt(&request.token, connection_auth::ConnectionAttemptKind::RelayReallocation, signal_transport, effective_addr.ip()).await;\n"
+            "                    match relay_reallocation::begin(request, route_addr, effective_addr.ip(), decision.proceed && decision.verdict == \"allow\") {\n"
+            "                        Ok(mut dispatch) => {\n"
+            "                            if let relay_reallocation::ResultPayload::Prepare(prepare) = &mut dispatch.payload {\n"
+            "                                let controller_transport = if dispatch.controller_websocket { connection_auth::SignalTransport::WebSocket } else { connection_auth::SignalTransport::SecureTcp };\n"
+            "                                let endpoint = relay_observer::fast_media_endpoint(&prepare.new_relay_server);\n"
+            "                                prepare.target_authorization = fast_relay::authorization_for_request(&prepare.session_uuid, dispatch.controller_route, dispatch.controller_ip, dispatch.target_ip, &prepare.new_relay_server, controller_transport, &decision, None, endpoint, self.inner.sk.as_ref()).unwrap_or_default();\n"
+            "                                prepare.controller_authorization = fast_relay::authorization_for_response(&prepare.session_uuid, dispatch.target_ip, &prepare.new_relay_server).unwrap_or_default();\n"
+            "                                let _ = relay_reallocation::install_authorizations(&prepare.reallocation_id, prepare.controller_authorization.clone(), prepare.target_authorization.clone());\n"
+            "                            }\n"
+            "                            self.dispatch_relay_reallocation(dispatch).await\n"
+            "                        },\n"
+            "                        Err(rollback) => { let mut response = RendezvousMessage::new(); response.set_relay_reallocation_rollback(rollback); Self::send_to_sink(sink, response).await; }\n"
+            "                    }\n                    return true;\n                }\n"
+            "                Some(rendezvous_message::Union::RelayReallocationReady(ready)) => {\n"
+            "                    if let Some(dispatch) = relay_reallocation::ready(ready, route_addr, effective_addr.ip()) { self.dispatch_relay_reallocation(dispatch).await; }\n"
+            "                    return true;\n                }\n"
+            "                Some(rendezvous_message::Union::RelayReallocationCommitAck(ack)) => {\n"
+            "                    if let Some(dispatch) = relay_reallocation::commit_ack(ack, route_addr, effective_addr.ip()) { self.dispatch_relay_reallocation(dispatch).await; }\n"
+            "                    return true;\n                }\n"
+        )
+        if marker not in content:
+            raise RuntimeError("Relay reallocation has no authenticated message-loop anchor")
+        rendezvous.write_text(content.replace(marker, handler + marker), encoding="utf-8")
+    content = rendezvous.read_text(encoding="utf-8")
+    legacy_begin = "                        Ok(dispatch) => self.dispatch_relay_reallocation(dispatch).await,\n"
+    if legacy_begin in content:
+        replace_once(
+            rendezvous,
+            legacy_begin,
+            "                        Ok(mut dispatch) => {\n"
+            "                            if let relay_reallocation::ResultPayload::Prepare(prepare) = &mut dispatch.payload {\n"
+            "                                let controller_transport = if dispatch.controller_websocket { connection_auth::SignalTransport::WebSocket } else { connection_auth::SignalTransport::SecureTcp };\n"
+            "                                let endpoint = relay_observer::fast_media_endpoint(&prepare.new_relay_server);\n"
+            "                                prepare.target_authorization = fast_relay::authorization_for_request(&prepare.session_uuid, dispatch.controller_route, dispatch.controller_ip, dispatch.target_ip, &prepare.new_relay_server, controller_transport, &decision, None, endpoint, self.inner.sk.as_ref()).unwrap_or_default();\n"
+            "                                prepare.controller_authorization = fast_relay::authorization_for_response(&prepare.session_uuid, dispatch.target_ip, &prepare.new_relay_server).unwrap_or_default();\n"
+            "                            }\n"
+            "                            self.dispatch_relay_reallocation(dispatch).await\n"
+            "                        },\n",
+        )
+    content = rendezvous.read_text(encoding="utf-8")
+    if "relay_reallocation::install_authorizations(" not in content:
+        replace_once(
+            rendezvous,
+            "                                prepare.controller_authorization = fast_relay::authorization_for_response(&prepare.session_uuid, dispatch.target_ip, &prepare.new_relay_server).unwrap_or_default();\n",
+            "                                prepare.controller_authorization = fast_relay::authorization_for_response(&prepare.session_uuid, dispatch.target_ip, &prepare.new_relay_server).unwrap_or_default();\n"
+            "                                let _ = relay_reallocation::install_authorizations(&prepare.reallocation_id, prepare.controller_authorization.clone(), prepare.target_authorization.clone());\n",
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("upstream", type=Path, help="clean rustdesk-server checkout")
@@ -6555,6 +6721,7 @@ def main() -> None:
     patch_rendezvous(upstream)
     patch_profile_activation_hbbs(upstream)
     patch_relay_quality_rendezvous(upstream)
+    patch_relay_reallocation_rendezvous(upstream)
     print(f"rustdesk-server-starry overlay applied to {upstream}")
 
 

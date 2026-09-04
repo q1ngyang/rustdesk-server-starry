@@ -1,0 +1,34 @@
+{
+  "version": 6,
+  "relay_servers": ["relay-a.example.test:21117", "relay-b.example.test:21117"],
+  "secure_tcp": {"mode": "auto"},
+  "connection_auth": {"mode": "audit"},
+  "websocket_signal": {
+    "enabled": true,
+    "relay_health": {
+      "endpoints": [
+        {"relay": "relay-a.example.test:21117", "url": "wss://relay-a.example.test/ws/telemetry", "telemetry_secret_file": "/run/secrets/relay-a", "node_id": "relay-a", "display_name": "Relay A", "region": "test-east"},
+        {"relay": "relay-b.example.test:21117", "url": "wss://relay-b.example.test/ws/telemetry", "telemetry_secret_file": "/run/secrets/relay-b", "node_id": "relay-b", "display_name": "Relay B", "region": "test-west"}
+      ]
+    }
+  },
+  "relay_reallocation": {
+    "enabled": true,
+    "policy": "auto",
+    "allowed_initiator_roles": ["controller", "target"],
+    "required_scope": "starry.relay.reallocate",
+    "require_peer_confirmation": true,
+    "max_candidates": 3,
+    "probe_timeout_ms": 5000,
+    "prepare_timeout_ms": 8000,
+    "commit_timeout_ms": 10000,
+    "rollback_timeout_ms": 5000,
+    "total_timeout_ms": 30000,
+    "drain_grace_ms": 2000,
+    "cooldown_seconds": 30,
+    "max_active": 10000,
+    "per_session_per_minute": 2,
+    "per_ip_per_minute": 20,
+    "global_per_minute": 1000
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "protocol": {"name": "starry-control", "version": "1.2.0", "major": 1},
+  "capabilities": {
+    "config_schema": 6,
+    "relay_reallocation": 1,
+    "relay_quality": 1,
+    "relay_probe_protocol": 1,
+    "relay_load_protocol": 1,
+    "relay_telemetry_schema": 3,
+    "fast_relay_authorization": 1,
+    "fast_media_relay_udp": 1,
+    "fast_media_relay_renewal": 1
+  },
+  "config": {
+    "supported_schema_versions": [1, 2, 3, 4, 5, 6],
+    "active_schema_version": 6,
+    "schema_digest": "0da9f9ec322f9fbb516ec768fa9704281fc2974a2cbe205211e5903e0941301b"
+  }
+}

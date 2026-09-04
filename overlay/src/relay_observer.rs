@@ -2,7 +2,7 @@ use crate::{
     allocation_explain::{self, AllocationTrace, MatchedRule},
     fast_relay,
     geo_relay::{self, GeoRelaySelection, GeoRuntimeSnapshot},
-    profile_activation, relay_quality, starry_config,
+    profile_activation, relay_quality, relay_reallocation, starry_config,
     websocket_signal::{self, RelayRequirement, RuntimeHealthSnapshot},
 };
 use once_cell::sync::Lazy;
@@ -160,6 +160,7 @@ pub(crate) struct RelayRuntimeSnapshot {
     pub(crate) relays: Vec<RelayRuntimeView>,
     pub(crate) quality: relay_quality::RuntimeSnapshot,
     pub(crate) fast_relay: fast_relay::RuntimeSnapshot,
+    pub(crate) relay_reallocation: relay_reallocation::RuntimeSnapshot,
     pub(crate) profile_activation: profile_activation::RuntimeSnapshot,
     pub(crate) warning: String,
     #[serde(skip)]
@@ -754,6 +755,7 @@ fn build_snapshot(
         relays,
         quality: relay_quality::runtime_snapshot(),
         fast_relay: fast_relay::runtime_snapshot(),
+        relay_reallocation: relay_reallocation::runtime_snapshot(),
         profile_activation: profile_activation::runtime_snapshot(),
         warning: "Relay probes do not prove a complete two-client remote-control session."
             .to_owned(),

@@ -1,0 +1,210 @@
+// Starry Relay Reallocation v1 -- additive private rendezvous extension.
+// Canonical tag allocation: RendezvousMessage.oneof Union 108..116.
+// Relay Quality v1 tags 100..105 and FastMedia Renewal tags 106..107 are unchanged.
+syntax = "proto3";
+
+package rendezvous;
+
+enum RelayReallocationEndpointRole {
+  RELAY_REALLOCATION_ENDPOINT_ROLE_UNSPECIFIED = 0;
+  RELAY_REALLOCATION_ENDPOINT_ROLE_CONTROLLER = 1;
+  RELAY_REALLOCATION_ENDPOINT_ROLE_TARGET = 2;
+}
+
+enum RelayReallocationStatus {
+  RELAY_REALLOCATION_STATUS_UNSPECIFIED = 0;
+  RELAY_REALLOCATION_STATUS_OK = 1;
+  RELAY_REALLOCATION_STATUS_DISABLED = 2;
+  RELAY_REALLOCATION_STATUS_UNSUPPORTED = 3;
+  RELAY_REALLOCATION_STATUS_UNAUTHENTICATED = 4;
+  RELAY_REALLOCATION_STATUS_FORBIDDEN = 5;
+  RELAY_REALLOCATION_STATUS_RATE_LIMITED = 6;
+  RELAY_REALLOCATION_STATUS_STALE_GENERATION = 7;
+  RELAY_REALLOCATION_STATUS_BINDING_MISMATCH = 8;
+  RELAY_REALLOCATION_STATUS_NO_CANDIDATE = 9;
+  RELAY_REALLOCATION_STATUS_BUSY = 10;
+  RELAY_REALLOCATION_STATUS_EXPIRED = 11;
+  RELAY_REALLOCATION_STATUS_CONFLICT = 12;
+  RELAY_REALLOCATION_STATUS_PEER_REJECTED = 13;
+  RELAY_REALLOCATION_STATUS_PEER_TIMEOUT = 14;
+  RELAY_REALLOCATION_STATUS_CONNECT_FAILED = 15;
+  RELAY_REALLOCATION_STATUS_ROLLED_BACK = 16;
+}
+
+enum RelayReallocationAvailability {
+  RELAY_REALLOCATION_AVAILABILITY_UNSPECIFIED = 0;
+  RELAY_REALLOCATION_AVAILABILITY_AVAILABLE = 1;
+  RELAY_REALLOCATION_AVAILABILITY_DEGRADED = 2;
+  RELAY_REALLOCATION_AVAILABILITY_UNAVAILABLE = 3;
+}
+
+enum RelayReallocationQualityBand {
+  RELAY_REALLOCATION_QUALITY_BAND_UNSPECIFIED = 0;
+  RELAY_REALLOCATION_QUALITY_BAND_GOOD = 1;
+  RELAY_REALLOCATION_QUALITY_BAND_FAIR = 2;
+  RELAY_REALLOCATION_QUALITY_BAND_POOR = 3;
+  RELAY_REALLOCATION_QUALITY_BAND_UNKNOWN = 4;
+}
+
+// Sent only on an authenticated Secure TCP or WSS signalling route. preferred_node_id
+// is an opaque configured node ID, never a hostname or URL.
+message RelayReallocationRequest {
+  uint32 protocol_version = 1;          // exactly 1
+  string session_uuid = 2;
+  uint32 endpoint_role = 3;
+  string current_relay_server = 4;
+  uint64 current_session_generation = 5;
+  bytes request_id = 6;                 // exactly 16 random bytes
+  uint64 config_generation = 7;
+  string preferred_node_id = 8;         // empty for server-selected auto mode
+  uint64 deadline_unix_ms = 9;
+  string token = 10;                    // existing connection-auth token
+}
+
+message RelayReallocationProbeCandidate {
+  string node_id = 1;
+  string probe_url = 2;                 // exact configured transport identity
+  bytes probe_token = 3;                // HBBS random, stage-bound
+}
+
+message RelayReallocationProbeOffer {
+  uint32 protocol_version = 1;
+  bytes reallocation_id = 2;            // exactly 16 bytes
+  bytes request_id = 3;
+  string session_uuid = 4;
+  uint32 endpoint_role = 5;
+  uint64 current_session_generation = 6;
+  uint64 config_generation = 7;
+  bytes stage_token = 8;                 // exactly 16 bytes
+  uint64 deadline_unix_ms = 9;
+  repeated RelayReallocationProbeCandidate candidates = 10; // bounded by config
+}
+
+message RelayReallocationProbeResult {
+  string node_id = 1;
+  uint32 attempted = 2;
+  uint32 succeeded = 3;
+  uint32 rtt_ms = 4;
+  uint32 jitter_ms = 5;
+}
+
+message RelayReallocationProbeReport {
+  uint32 protocol_version = 1;
+  bytes reallocation_id = 2;
+  bytes request_id = 3;
+  string session_uuid = 4;
+  uint32 endpoint_role = 5;
+  uint64 current_session_generation = 6;
+  uint64 config_generation = 7;
+  bytes stage_token = 8;
+  repeated RelayReallocationProbeResult results = 9;
+}
+
+// Privacy-safe selector result. No URL, address, raw metric, load, capacity,
+// allocation, token, nonce or grant is present.
+message RelayReallocationCandidate {
+  string node_id = 1;
+  string display_name = 2;
+  string region = 3;
+  uint32 availability = 4;
+  uint32 quality_band = 5;
+  uint32 normalized_score = 6;           // 0..100, server interpretation
+  bool selected = 7;
+}
+
+message RelayReallocationCandidateSnapshot {
+  uint32 protocol_version = 1;
+  bytes request_id = 2;
+  uint32 status = 3;
+  uint64 config_generation = 4;
+  uint64 expires_at_unix_ms = 5;
+  repeated RelayReallocationCandidate candidates = 6;
+}
+
+message RelayReallocationPrepare {
+  uint32 protocol_version = 1;
+  bytes reallocation_id = 2;
+  bytes request_id = 3;
+  string session_uuid = 4;
+  uint32 endpoint_role = 5;
+  string old_relay_server = 6;
+  string new_relay_server = 7;
+  string new_node_id = 8;
+  uint64 old_session_generation = 9;
+  uint64 new_session_generation = 10;
+  uint64 config_generation = 11;
+  bytes prepare_token = 12;              // exactly 16 bytes
+  uint64 deadline_unix_ms = 13;
+  bytes controller_authorization = 14;
+  bytes target_authorization = 15;
+  uint64 new_fast_media_session_id = 16;
+}
+
+message RelayReallocationReady {
+  uint32 protocol_version = 1;
+  bytes reallocation_id = 2;
+  bytes request_id = 3;
+  string session_uuid = 4;
+  uint32 endpoint_role = 5;
+  uint64 old_session_generation = 6;
+  uint64 new_session_generation = 7;
+  uint64 config_generation = 8;
+  bytes prepare_token = 9;
+  bool accepted = 10;
+  bytes new_path_binding_sha256 = 11;    // digest of established reliable path binding
+}
+
+// HBBS serializes one common commit and sends identical bytes to both endpoints.
+message RelayReallocationCommit {
+  uint32 protocol_version = 1;
+  bytes reallocation_id = 2;
+  bytes request_id = 3;
+  string session_uuid = 4;
+  string relay_server = 5;               // ordinary relay_server, byte-identical
+  string node_id = 6;
+  uint64 old_session_generation = 7;
+  uint64 new_session_generation = 8;
+  uint64 config_generation = 9;
+  bytes path_binding_sha256 = 10;
+  bytes controller_authorization = 11;
+  bytes target_authorization = 12;
+  uint64 new_fast_media_session_id = 13;
+  uint32 reason_code = 14;               // stable server result; 7 = manual_override
+  uint64 drain_after_unix_ms = 15;
+}
+
+message RelayReallocationCommitAck {
+  uint32 protocol_version = 1;
+  bytes reallocation_id = 2;
+  bytes request_id = 3;
+  string session_uuid = 4;
+  uint32 endpoint_role = 5;
+  uint64 new_session_generation = 6;
+  uint64 config_generation = 7;
+  bytes path_binding_sha256 = 8;
+  bool installed = 9;
+}
+
+message RelayReallocationRollback {
+  uint32 protocol_version = 1;
+  bytes reallocation_id = 2;
+  bytes request_id = 3;
+  uint32 status = 4;
+  string relay_server = 5;               // old ordinary relay_server
+  uint64 session_generation = 6;
+  uint64 config_generation = 7;
+  bool reconnect_both = 8;
+}
+
+// RendezvousMessage.oneof Union additions:
+// RequestRelay: uint32 relay_reallocation_protocol = 103;
+// RelayResponse: uint32 relay_reallocation_protocol = 102;
+// RelayReallocationRequest relay_reallocation_request = 108;
+// RelayReallocationProbeOffer relay_reallocation_probe_offer = 109;
+// RelayReallocationProbeReport relay_reallocation_probe_report = 110;
+// RelayReallocationCandidateSnapshot relay_reallocation_candidate_snapshot = 111;
+// RelayReallocationPrepare relay_reallocation_prepare = 112;
+// RelayReallocationReady relay_reallocation_ready = 113;
+// RelayReallocationCommit relay_reallocation_commit = 114;
+// RelayReallocationCommitAck relay_reallocation_commit_ack = 115;
+// RelayReallocationRollback relay_reallocation_rollback = 116;

@@ -10,6 +10,41 @@ use hbb_common::{
     },
 };
 
+#[test]
+fn relay_reallocation_v1_is_additive_and_legacy_defaults_are_inert() {
+    use hbb_common::{bytes::Bytes, protobuf::Message as _, rendezvous_proto::*};
+    let request = RequestRelay::default();
+    let response = RelayResponse::default();
+    assert_eq!(request.relay_reallocation_protocol, 0);
+    assert_eq!(response.relay_reallocation_protocol, 0);
+
+    let commit = RelayReallocationCommit {
+        protocol_version: 1,
+        reallocation_id: Bytes::from_static(&[1; 16]),
+        request_id: Bytes::from_static(&[2; 16]),
+        session_uuid: "session".into(),
+        relay_server: "relay-b.example:21117".into(),
+        node_id: "relay-b".into(),
+        old_session_generation: 4,
+        new_session_generation: 5,
+        config_generation: 9,
+        path_binding_sha256: Bytes::from_static(&[3; 32]),
+        reason_code: 7,
+        ..Default::default()
+    };
+    let mut envelope = RendezvousMessage::new();
+    envelope.set_relay_reallocation_commit(commit.clone());
+    let wire = envelope.write_to_bytes().unwrap();
+    let decoded = RendezvousMessage::parse_from_bytes(&wire).unwrap();
+    let decoded = match decoded.union.unwrap() {
+        rendezvous_message::Union::RelayReallocationCommit(value) => value,
+        other => panic!("unexpected additive arm: {other:?}"),
+    };
+    assert_eq!(decoded, commit);
+    assert_eq!(decoded.relay_server, "relay-b.example:21117");
+    assert_eq!(decoded.reason_code, 7);
+}
+
 const DENIAL_TEXT: &str = "connection authorization failed";
 
 fn fixture(name: &str) -> Vec<u8> {

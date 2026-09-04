@@ -1,0 +1,4 @@
+{
+  "input": {"capabilities": {"config_schema": 6, "relay_reallocation": 2}},
+  "expected": {"relay_reallocation_supported": false, "action": "fail_closed_keep_current_reliable_session", "error": "UNSUPPORTED_CAPABILITY_VERSION"}
+}

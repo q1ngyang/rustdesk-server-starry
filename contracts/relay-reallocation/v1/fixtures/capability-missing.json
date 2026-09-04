@@ -1,0 +1,4 @@
+{
+  "input": {"capabilities": {"config_schema": 6}},
+  "expected": {"relay_reallocation_supported": false, "action": "keep_current_reliable_session", "error": null}
+}

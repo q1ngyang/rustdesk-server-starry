@@ -52,8 +52,8 @@ const CONNECTION_DEADLINE_SECONDS: u64 = 30;
 const SHUTDOWN_DEADLINE_SECONDS: u64 = 8;
 const REQUESTS_PER_MINUTE: u32 = 120;
 const STARRY_PATCH_VERSION: &str = "1.3.2";
-const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v5/config.schema.json");
-const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v5/config.ui-schema.json");
+const CONTROL_SCHEMA: &str = include_str!("../contracts/config/v6/config.schema.json");
+const CONTROL_UI_SCHEMA: &str = include_str!("../contracts/config/v6/config.ui-schema.json");
 
 fn starry_version() -> String {
     format!(
@@ -648,9 +648,9 @@ async fn capabilities(
     let active_schema = runtime
         .get("schema_version")
         .and_then(Value::as_u64)
-        .unwrap_or(5);
+        .unwrap_or(6);
     let mut capabilities = json!({
-        "config_schema": 5,
+        "config_schema": 6,
         "relay_inventory": 1,
         "allocation_simulation": 1,
         "connection_auth": 1,
@@ -662,6 +662,7 @@ async fn capabilities(
         "fast_relay_authorization": 1,
         "fast_media_relay_udp": 1,
         "fast_media_relay_renewal": 1,
+        "relay_reallocation": 1,
         "starry_pairing": 1,
         "config_downgrade_preview": 1,
         "profile_activation_lease": 1,
@@ -685,7 +686,7 @@ async fn capabilities(
         }
     }
     Ok(Json(json!({
-        "protocol": {"name": "starry-control", "version": "1.1.0", "major": 1},
+        "protocol": {"name": "starry-control", "version": "1.2.0", "major": 1},
         "instance": {
             "id": state.instance_id,
             "role": "hbbs",
@@ -694,7 +695,7 @@ async fn capabilities(
         },
         "capabilities": capabilities,
         "config": {
-            "supported_schema_versions": [1, 2, 3, 4, 5],
+            "supported_schema_versions": [1, 2, 3, 4, 5, 6],
             "active_schema_version": active_schema,
             "schema_digest": digest(CONTROL_SCHEMA.as_bytes())
         },
